@@ -1,0 +1,90 @@
+# CG4002 root .gitignore — see docs/REPO_PLAN.md §4 for the "never commit" list this implements.
+
+# --- Secrets / crypto material — never commit, no exceptions ---
+.env
+*.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+comms/certs/
+
+# --- Python ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+# PlatformIO's own venv, created by the CLI installer at the repo root on this machine (34 MB of
+# platform-specific binaries). Every clone recreates it; committing it would also break the other
+# laptop, whose paths and platform differ.
+pio-venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.hypothesis/
+
+# --- Logs (every subsystem logs to its own logs/, none of it is committed) ---
+logs/
+*.log
+*.jsonl
+
+# --- Node (tooling only; no subsystem ships a node app) ---
+node_modules/
+
+# --- Firmware (PlatformIO) ---
+firmware/.pio/
+firmware/**/.pio/
+
+# --- firmware_demo: solo Comms-subsystem demo, not the team's real firmware/ (see firmware_demo/README.md) ---
+firmware_demo/.pio/
+firmware_demo/**/.pio/
+
+# --- AI: datasets, generated artifacts, HLS/Vivado build output ---
+ai/data/raw/
+ai/data/processed/
+!ai/data/MANIFEST.md
+ai/hls/projects/
+ai/vivado/build/
+*.jou
+*.log
+.Xil/
+
+# --- Unity (visualizer) ---
+visualizer/CG4002Visualizer/Library/
+visualizer/CG4002Visualizer/Temp/
+visualizer/CG4002Visualizer/Logs/
+visualizer/CG4002Visualizer/Build/
+visualizer/CG4002Visualizer/Builds/
+visualizer/CG4002Visualizer/UserSettings/
+visualizer/CG4002Visualizer/MemoryCaptures/
+visualizer/CG4002Visualizer/obj/
+
+# --- visualizer_demo: solo Comms-subsystem demo, not the team's real visualizer/ ---
+visualizer_demo/CG4002VisualizerDemo/Library/
+visualizer_demo/CG4002VisualizerDemo/Temp/
+visualizer_demo/CG4002VisualizerDemo/Logs/
+visualizer_demo/CG4002VisualizerDemo/Build/
+visualizer_demo/CG4002VisualizerDemo/Builds/
+visualizer_demo/CG4002VisualizerDemo/UserSettings/
+visualizer_demo/CG4002VisualizerDemo/MemoryCaptures/
+visualizer_demo/CG4002VisualizerDemo/obj/
+
+*.csproj
+*.sln
+*.user
+
+# --- shared/generated is committed on purpose (REPO_PLAN.md §2) — do NOT ignore it here ---
+
+# --- Course material: third-party copyright, and 5 MB of PDFs that belong in no repo. Keep them on
+# --- disk locally; they are not part of the deliverable.
+lecture_slides/
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

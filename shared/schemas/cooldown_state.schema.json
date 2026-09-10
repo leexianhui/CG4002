@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cg4002.internal/schemas/cooldown_state.schema.json",
+  "title": "COOLDOWN_STATE",
+  "description": "engine -> both visualizers. See shared/protocol/app_messages.md §2.6.",
+  "type": "object",
+  "properties": {
+    "type": { "const": "COOLDOWN_STATE" },
+    "version": { "type": "integer", "const": 1 },
+    "timestamp": { "type": "integer", "minimum": 0 },
+    "playerId": { "type": "integer", "enum": [1, 2] },
+    "cooldowns": {
+      "type": "array",
+      "description": "One entry per action currently on cooldown. An action absent from this array is off cooldown.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "HORIZONTAL_SWING", "VERTICAL_SWING", "DIAGONAL_SWING",
+              "THRUST", "CHARGED_ATTACK", "CHARGED_THRUST", "SWING"
+            ]
+          },
+          "remainingMs": { "type": "integer", "minimum": 0 },
+          "totalMs": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["action", "remainingMs", "totalMs"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["type", "version", "timestamp", "playerId", "cooldowns"],
+  "additionalProperties": false
+}

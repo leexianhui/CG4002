@@ -1,0 +1,77 @@
+[project]
+name = "cg-comms"
+version = "0.1.0"
+description = "CG4002 Communications: relay, game engine, wire protocol, and mock layer"
+# 3.10, not 3.11, because the Ultra96's PYNQ image (Ubuntu 22.04) ships Python 3.10.4 and the engine
+# has to run there -- the venue WiFi isolates personal devices from each other, so the board is the
+# only host both laptops and both phones can reach (docs/COMMS_IMPLEMENTATION_PLAN.md §1). A >=3.11
+# pin makes `pip install` refuse outright on the one machine that matters most.
+#
+# Nothing in cg_comms actually needs 3.11: verified by parsing all 49 modules with
+# ast.parse(feature_version=(3,10)) and by an AST sweep for 3.11+ stdlib members (asyncio.timeout,
+# TaskGroup, enum.StrEnum, datetime.UTC, typing.Self, ExceptionGroup, tomllib, ...) -- all absent.
+# `X | None` annotations are fine at runtime on 3.10.
+requires-python = ">=3.10"
+dependencies = [
+  # BLE is the laptop-side device transport only (relay/app.py -> transport/ble.py). The engine never
+  # imports it, so a board install can skip it: pip install -e . --no-deps plus the rest by hand, or
+  # just accept the unused wheel. Kept a hard dep because the relay always needs it.
+  "bleak>=0.22",
+  "websockets>=12.0",
+  "cryptography>=42.0",
+  "pydantic>=2.6",
+  "pydantic-settings>=2.2",
+  "pyyaml>=6.0",
+  "structlog>=24.1",
+  # numpy 1.26 is the last line with cp310 aarch64 wheels readily available; without an upper bound
+  # pip on the board may try to build 2.x from source, which is a long, failure-prone compile there.
+  "numpy>=1.26,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+  "hypothesis>=6.98",
+  "ruff>=0.4",
+  "mypy>=1.9",
+]
+
+[project.scripts]
+cg-relay = "cg_comms.relay.app:main"
+cg-engine = "cg_comms.engine.app:main"
+cg-firebeetle-sim = "cg_comms.mock.firebeetle_sim:main"
+cg-ultra96-sim = "cg_comms.mock.ultra96_sim:main"
+cg-visualizer-sim = "cg_comms.mock.visualizer_sim:main"
+cg-latency-report = "cg_comms.tools.latency_report:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.mypy]
+# Match requires-python: type-check against the oldest interpreter we support, so a 3.11-only API
+# creeping in is caught here rather than on the Ultra96 at startup.
+python_version = "3.10"
+files = ["src/cg_comms/protocol", "src/cg_comms/engine"]
+strict = true
+
+[tool.ruff]
+line-length = 105
+src = ["src"]
+# Without this ruff infers the target from requires-python; pinning it keeps lint rules aligned with
+# the Ultra96's 3.10 interpreter even if the pin is later relaxed.
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "soak: slow/soak tests exercising sustained or compressed-time traffic; excluded by default, run explicitly via -m soak",
+]

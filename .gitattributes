@@ -1,0 +1,50 @@
+# CG4002 root .gitattributes — see docs/REPO_PLAN.md §2/§4.
+
+# Default: normalize text files to LF, let git decide what's text.
+* text=auto eol=lf
+
+# Source that must stay LF regardless of a contributor's Windows checkout settings.
+*.c    text eol=lf
+*.h    text eol=lf
+*.cpp  text eol=lf
+*.hpp  text eol=lf
+*.py   text eol=lf
+*.cs   text eol=lf
+*.md   text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.json text eol=lf
+*.sh   text eol=lf
+*.ini  text eol=lf
+
+# Windows batch files need CRLF.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# --- Unity: binary/merge-unfriendly asset types must not be text-normalized ---
+*.unity   merge=unityyamlmerge eol=lf
+*.prefab  merge=unityyamlmerge eol=lf
+*.asset   merge=unityyamlmerge eol=lf
+*.meta    merge=unityyamlmerge eol=lf
+*.anim    merge=unityyamlmerge eol=lf
+*.controller merge=unityyamlmerge eol=lf
+
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.psd  binary
+*.tga  binary
+*.tif  binary
+*.wav  binary
+*.mp3  binary
+*.ogg  binary
+*.ttf  binary
+*.otf  binary
+
+# --- Git LFS: large/binary artifacts (docs/REPO_PLAN.md §4) ---
+*.bit  filter=lfs diff=lfs merge=lfs -text
+*.hwh  filter=lfs diff=lfs merge=lfs -text
+*.fbx  filter=lfs diff=lfs merge=lfs -text
+*.onnx filter=lfs diff=lfs merge=lfs -text
+*.h5   filter=lfs diff=lfs merge=lfs -text

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cg4002.internal/schemas/sensor_window.schema.json",
+  "title": "SENSOR_WINDOW",
+  "description": "relay (laptop) -> Ultra96. See shared/protocol/app_messages.md §3.1. Row count of dominant/offhand is deliberately not fixed here - it is dictated by the trained model's input shape and may change without a protocol version bump (COMMS_IMPLEMENTATION_PLAN.md §16.2).",
+  "type": "object",
+  "$defs": {
+    "imuSample": {
+      "type": "array",
+      "description": "[accelX, accelY, accelZ, gyroX, gyroY, gyroZ], floats, converted from wire fixed-point.",
+      "items": { "type": "number" },
+      "minItems": 6,
+      "maxItems": 6
+    }
+  },
+  "properties": {
+    "type": { "const": "SENSOR_WINDOW" },
+    "version": { "type": "integer", "const": 1 },
+    "timestamp": { "type": "integer", "minimum": 0 },
+    "playerId": { "type": "integer", "enum": [1, 2] },
+    "requestId": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+    "weapon": { "type": "string", "enum": ["SWORD", "SPEAR", "MACE"] },
+    "windowStartTs": { "type": "integer", "minimum": 0 },
+    "windowEndTs": { "type": "integer", "minimum": 0 },
+    "sampleRateHz": { "type": "number", "exclusiveMinimum": 0 },
+    "dominant": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/imuSample" },
+      "minItems": 1
+    },
+    "offhand": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/imuSample" },
+      "minItems": 1
+    },
+    "stalePct": { "type": "number", "minimum": 0, "maximum": 100 }
+  },
+  "required": [
+    "type", "version", "timestamp", "playerId", "requestId", "weapon",
+    "windowStartTs", "windowEndTs", "sampleRateHz", "dominant", "offhand", "stalePct"
+  ],
+  "additionalProperties": false
+}

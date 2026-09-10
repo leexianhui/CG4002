@@ -1,0 +1,20 @@
+# Game Engine config (COMMS_IMPLEMENTATION_PLAN.md §3, §11, §12).
+# bearer_token is NOT set here — override via the CG_ENGINE_BEARER_TOKEN environment variable
+# (see comms/.env.example). Never commit an actual token into this file.
+
+host: 0.0.0.0
+port: 8443
+use_tls: true
+cert_path: certs/engine.crt
+key_path: certs/engine.key
+logs_dir: logs
+
+backpressure:
+  raw_ingest_depth: 256
+  windower_depth: 100
+  ultra96_depth: 4
+  engine_event_depth: 512
+
+reorder_delay_ms: 60
+late_drop_ms: 500
+send_queue_depth: 32

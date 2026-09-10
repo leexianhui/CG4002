@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cg4002.internal/schemas/action_result.schema.json",
+  "title": "ACTION_RESULT",
+  "description": "Ultra96 -> relay (laptop). See shared/protocol/app_messages.md §3.2. requestId echoes the triggering SENSOR_WINDOW's requestId.",
+  "type": "object",
+  "properties": {
+    "type": { "const": "ACTION_RESULT" },
+    "version": { "type": "integer", "const": 1 },
+    "timestamp": { "type": "integer", "minimum": 0 },
+    "playerId": { "type": "integer", "enum": [1, 2] },
+    "requestId": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+    "action": {
+      "type": "string",
+      "enum": [
+        "IDLE", "HORIZONTAL_SWING", "VERTICAL_SWING", "DIAGONAL_SWING",
+        "THRUST", "CHARGED_ATTACK", "CHARGED_THRUST", "SWING"
+      ]
+    },
+    "actionConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "guardState": { "type": "string", "enum": ["IDLE", "GUARDING"] },
+    "guardConfidence": { "type": "number", "minimum": 0, "maximum": 1 }
+  },
+  "required": [
+    "type", "version", "timestamp", "playerId", "requestId",
+    "action", "actionConfidence", "guardState", "guardConfidence"
+  ],
+  "additionalProperties": false
+}

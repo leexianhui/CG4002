@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cg4002.internal/schemas/position.schema.json",
+  "title": "POSITION",
+  "description": "visualizer -> engine, echoed engine -> visualizer. See shared/protocol/app_messages.md §2.3.",
+  "type": "object",
+  "properties": {
+    "type": { "const": "POSITION" },
+    "version": { "type": "integer", "const": 1 },
+    "timestamp": { "type": "integer", "minimum": 0 },
+    "playerId": { "type": "integer", "enum": [1, 2] },
+    "x": { "type": "number" },
+    "y": { "type": "number" },
+    "heading": { "type": "number", "minimum": 0, "exclusiveMaximum": 360 }
+  },
+  "required": ["type", "version", "timestamp", "playerId", "x", "y", "heading"],
+  "additionalProperties": false
+}

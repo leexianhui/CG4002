@@ -1,0 +1,15 @@
+# Demo-only POSITION timeline for cg-visualizer-sim, used by the 3-week Comms demo
+# (visualizer_demo/) to exercise the engine's position-echo path alongside a real ESP32.
+steps:
+  - delay_ms: 1000
+    kind: position
+    payload: { x: 0.0, y: 0.0, heading: 0.0 }
+  - delay_ms: 2000
+    kind: position
+    payload: { x: 1.0, y: 0.5, heading: 45.0 }
+  - delay_ms: 2000
+    kind: position
+    payload: { x: 2.0, y: 1.0, heading: 90.0 }
+  - delay_ms: 2000
+    kind: position
+    payload: { x: 1.5, y: 1.5, heading: 180.0 }

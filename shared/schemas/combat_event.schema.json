@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cg4002.internal/schemas/combat_event.schema.json",
+  "title": "COMBAT_EVENT",
+  "description": "engine -> both visualizers. See shared/protocol/app_messages.md §2.4. Carries attackerId/defenderId instead of a single playerId because it concerns two players by construction.",
+  "type": "object",
+  "properties": {
+    "type": { "const": "COMBAT_EVENT" },
+    "version": { "type": "integer", "const": 1 },
+    "timestamp": { "type": "integer", "minimum": 0 },
+    "attackerId": { "type": "integer", "enum": [1, 2] },
+    "defenderId": { "type": "integer", "enum": [1, 2] },
+    "weapon": { "type": "string", "enum": ["SWORD", "SPEAR", "MACE"] },
+    "action": {
+      "type": "string",
+      "description": "Never IDLE — COMBAT_EVENT is only emitted for a resolved discrete action.",
+      "enum": [
+        "HORIZONTAL_SWING", "VERTICAL_SWING", "DIAGONAL_SWING",
+        "THRUST", "CHARGED_ATTACK", "CHARGED_THRUST", "SWING"
+      ]
+    },
+    "outcome": {
+      "type": "string",
+      "description": "Only the four player-visible resolver outcomes; IGNORED/STATE_ONLY/ON_COOLDOWN never reach the wire.",
+      "enum": ["MISS", "HIT", "BLOCK", "PARRY"]
+    },
+    "damage": { "type": "integer", "minimum": 0 },
+    "attackerHp": { "type": "integer", "minimum": 0 },
+    "defenderHp": { "type": "integer", "minimum": 0 },
+    "rangeM": { "type": "number", "minimum": 0 }
+  },
+  "required": [
+    "type", "version", "timestamp", "attackerId", "defenderId", "weapon",
+    "action", "outcome", "damage", "attackerHp", "defenderHp", "rangeM"
+  ],
+  "additionalProperties": false
+}

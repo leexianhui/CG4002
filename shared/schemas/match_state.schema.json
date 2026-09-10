@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cg4002.internal/schemas/match_state.schema.json",
+  "title": "MATCH_STATE",
+  "description": "engine -> both visualizers. See shared/protocol/app_messages.md §2.5. Global message, no playerId.",
+  "type": "object",
+  "properties": {
+    "type": { "const": "MATCH_STATE" },
+    "version": { "type": "integer", "const": 1 },
+    "timestamp": { "type": "integer", "minimum": 0 },
+    "phase": {
+      "type": "string",
+      "enum": ["WAITING", "ALIGNING", "IN_PROGRESS", "PAUSED", "ENDED"]
+    },
+    "hp": {
+      "type": "object",
+      "properties": {
+        "1": { "type": "integer", "minimum": 0 },
+        "2": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["1", "2"],
+      "additionalProperties": false
+    },
+    "winnerId": {
+      "oneOf": [
+        { "type": "integer", "enum": [1, 2] },
+        { "type": "null" }
+      ]
+    },
+    "reason": {
+      "description": "Short reason code for the current phase, e.g. LINK_LOST, HP_ZERO. null in normal play.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "null" }
+      ]
+    }
+  },
+  "required": ["type", "version", "timestamp", "phase", "hp", "winnerId", "reason"],
+  "additionalProperties": false
+}

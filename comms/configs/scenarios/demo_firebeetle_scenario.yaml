@@ -1,0 +1,261 @@
+# Demo-only device timeline for cg-firebeetle-sim - the software stand-in for firmware_demo/ when
+# no ESP32 is attached (comms/README.md "Running (mock rig, no hardware)").
+#
+# Mirrors what the real firmware does: pick up a weapon (RFID_EVENT), then stream SENSOR_FRAMEs at
+# 50 Hz forever. Run the sim with --loop-scenario so this timeline repeats; without it the sim exits
+# after one pass and the relay logs a spurious link failure.
+#
+# Two constraints from comms/src/cg_comms/relay/windowing.py make the shape of this file non-obvious,
+# and getting either wrong yields a rig that handshakes cleanly and then produces no windows, no
+# actions, and no combat - looking like a dead demo with every link reporting healthy:
+#
+#  1. The leading rfid_event is mandatory. ingest_frame() returns None for every frame while
+#     _current_weapon is None, so a sensor_frame-only scenario never emits a SensorWindow.
+#  2. Every delay_ms here must stay at 20ms (= 50 Hz). A window of 40 samples has a nominal span of
+#     780ms and is discarded if the real span deviates by more than max_span_deviation_pct (15%),
+#     so a single long pause mid-stream silently drops the windows straddling it. That includes the
+#     rfid_event's own delay, since it sits between two sensor frames on every loop.
+steps:
+  - delay_ms: 20
+    kind: rfid_event
+    payload: { weapon: SWORD }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [110, -35, 985, 60, -15, 5], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [180, -70, 950, 400, -100, 30], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [400, -180, 850, 1500, -400, 120], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [700, -380, 600, 3200, -800, 250], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [950, -520, 350, 4600, -1100, 340], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [800, -430, 500, 3000, -750, 230], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [450, -200, 800, 1200, -300, 90], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [200, -80, 940, 300, -80, 20], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [120, -40, 980, 40, -10, 3], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [110, -35, 985, 60, -15, 5], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [180, -70, 950, 400, -100, 30], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [400, -180, 850, 1500, -400, 120], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [700, -380, 600, 3200, -800, 250], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [950, -520, 350, 4600, -1100, 340], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [800, -430, 500, 3000, -750, 230], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [450, -200, 800, 1200, -300, 90], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [200, -80, 940, 300, -80, 20], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [120, -40, 980, 40, -10, 3], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [110, -35, 985, 60, -15, 5], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [180, -70, 950, 400, -100, 30], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [400, -180, 850, 1500, -400, 120], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [700, -380, 600, 3200, -800, 250], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [950, -520, 350, 4600, -1100, 340], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [800, -430, 500, 3000, -750, 230], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [450, -200, 800, 1200, -300, 90], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [200, -80, 940, 300, -80, 20], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [120, -40, 980, 40, -10, 3], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [110, -35, 985, 60, -15, 5], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [180, -70, 950, 400, -100, 30], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [400, -180, 850, 1500, -400, 120], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [700, -380, 600, 3200, -800, 250], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [950, -520, 350, 4600, -1100, 340], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [800, -430, 500, 3000, -750, 230], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [450, -200, 800, 1200, -300, 90], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [200, -80, 940, 300, -80, 20], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [120, -40, 980, 40, -10, 3], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }
+  - delay_ms: 20
+    kind: sensor_frame
+    payload: { dominant: [100, -30, 990, 5, -2, 1], offhand: [0, 0, 1000, 0, 0, 0] }

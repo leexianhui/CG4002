@@ -1,0 +1,122 @@
+{
+  "psk_hex": "000102030405060708090a0b0c0d0e0f",
+  "vectors": [
+    {
+      "name": "HELLO",
+      "packet_type": 1,
+      "device_nonce": 3735928559,
+      "player_id": 1,
+      "direction": 0,
+      "seq": 0,
+      "ext_seq": 0,
+      "plaintext_hex": "aabbccddeeff01016400efbeadde0000",
+      "nonce_hex": "efbeadde0100000000000000",
+      "aad_hex": "c901010000012400efbeadde",
+      "wire_frame_hex": "c901010000012400efbeadde521892b2c2d6084583822ba59b81fb5a4c8578d07410f2ee1fc7550774bc55e0f2e6"
+    },
+    {
+      "name": "HELLO_ACK",
+      "packet_type": 2,
+      "device_nonce": 3735928559,
+      "player_id": 1,
+      "direction": 1,
+      "seq": 0,
+      "ext_seq": 0,
+      "plaintext_hex": "bebafeca00105e5f01000000efbeadde",
+      "nonce_hex": "efbeadde0101000000000000",
+      "aad_hex": "c901020000012400efbeadde",
+      "wire_frame_hex": "c901020000012400efbeadde9265d4f68e120891bdb1eb821ef372494af5c3a8916665cedd7cfafd000e1ca200e2"
+    },
+    {
+      "name": "TIME_SYNC_REQ",
+      "packet_type": 3,
+      "session_id": 3405691582,
+      "player_id": 1,
+      "direction": 0,
+      "seq": 1,
+      "ext_seq": 1,
+      "plaintext_hex": "e8030000",
+      "nonce_hex": "bebafeca0100010000000000",
+      "aad_hex": "c901030100011400",
+      "wire_frame_hex": "c901030100011400c20cf3085e5809cfaafbaed01146cafed0b18dad1700"
+    },
+    {
+      "name": "TIME_SYNC_RESP",
+      "packet_type": 4,
+      "session_id": 3405691582,
+      "player_id": 1,
+      "direction": 1,
+      "seq": 1,
+      "ext_seq": 1,
+      "plaintext_hex": "e80300001a04000024040000",
+      "nonce_hex": "bebafeca0101010000000000",
+      "aad_hex": "c901040100011c00",
+      "wire_frame_hex": "c901040100011c001181746b50e16a349b3244dc732ac04db8730b39c8f134f55ddd5bfc189e"
+    },
+    {
+      "name": "SENSOR_FRAME",
+      "packet_type": 16,
+      "session_id": 3405691582,
+      "player_id": 1,
+      "direction": 0,
+      "seq": 42,
+      "ext_seq": 42,
+      "plaintext_hex": "40e20100040164009cffc80038ff2c01d4fe0a00f6ff1400ecff1e00e2ff000000000000000000000000",
+      "nonce_hex": "bebafeca01002a0000000000",
+      "aad_hex": "c901102a00013a00",
+      "wire_frame_hex": "c901102a00013a0026a123e3b35b195f10f313cb279b497d987c35bf04165688d6209a132e0472a08cde3b02affd48b295454a102978fa9a5ab74e533766e6de55db03bc"
+    },
+    {
+      "name": "RFID_EVENT",
+      "packet_type": 17,
+      "session_id": 3405691582,
+      "player_id": 1,
+      "direction": 0,
+      "seq": 7,
+      "ext_seq": 7,
+      "plaintext_hex": "400d03000200deadbeefcafe",
+      "nonce_hex": "bebafeca0100070000000000",
+      "aad_hex": "c901110700011c00",
+      "wire_frame_hex": "c901110700011c00f8720a04580c9334e632e24002a802e32184d60be029bf3432c334cab069"
+    },
+    {
+      "name": "HEARTBEAT",
+      "packet_type": 32,
+      "session_id": 3405691582,
+      "player_id": 1,
+      "direction": 0,
+      "seq": 3,
+      "ext_seq": 3,
+      "plaintext_hex": "50c30000740e420e100e0000",
+      "nonce_hex": "bebafeca0100030000000000",
+      "aad_hex": "c901200300011c00",
+      "wire_frame_hex": "c901200300011c001e9a0feee4d06f4beb52fd7c503f10e16006880ed1536b3b02315e60cec6"
+    },
+    {
+      "name": "ACK",
+      "packet_type": 33,
+      "session_id": 3405691582,
+      "player_id": 1,
+      "direction": 1,
+      "seq": 9,
+      "ext_seq": 9,
+      "plaintext_hex": "2a00",
+      "nonce_hex": "bebafeca0101090000000000",
+      "aad_hex": "c901210900011200",
+      "wire_frame_hex": "c9012109000112004c923058bcbfa801fa6a89988897ee252491f0aa"
+    },
+    {
+      "name": "COMBAT_FEEDBACK",
+      "packet_type": 48,
+      "session_id": 3405691582,
+      "player_id": 1,
+      "direction": 1,
+      "seq": 2,
+      "ext_seq": 2,
+      "plaintext_hex": "015ab4000100",
+      "nonce_hex": "bebafeca0101020000000000",
+      "aad_hex": "c901300200011600",
+      "wire_frame_hex": "c9013002000116007274d402158a82e0fcb301204de276b9441affaf1dc3efd9"
+    }
+  ]
+}

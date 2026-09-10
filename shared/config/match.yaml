@@ -1,0 +1,11 @@
+# Match/combat tuning knobs. Anything a tester might want to change at demo time lives here, not in
+# source (REPO_PLAN.md §7 "config over constants"; COMMS_IMPLEMENTATION_PLAN.md §10.4).
+
+starting_hp: 100
+parry_window_ms: 150       # resolver step 10 — guard must have entered within this window of the attack
+block_multiplier: 0.25     # resolver step 11 — BLOCK damage = ceil(base_damage * block_multiplier)
+stagger_ms: 500            # resolver step 10 — added to every attacker cooldown on a successful PARRY
+guard_arc_deg: 120         # resolver step 9 — defender must be facing the attacker within this arc to block/parry
+min_confidence: 0.6        # resolver step 5 — classifier actionConfidence floor; also relay's ACTION_RESULT floor (§8)
+position_max_age_ms: 1000  # resolver step 7 — a stale POSITION makes the engine unable to adjudicate fairly
+reorder_delay_ms: 60       # engine reorder buffer (§10.2) — tune from measured cross-player arrival skew in Week 11

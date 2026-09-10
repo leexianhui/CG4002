@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pip show cryptography)"
+    ]
+  }
+}

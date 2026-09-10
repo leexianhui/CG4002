@@ -1,0 +1,25 @@
+# Demo-only ACTION_RESULT cycle for cg-ultra96-sim, used by the 3-week Comms demo
+# (firmware_demo/, visualizer_demo/) instead of a real classifier.
+#
+# ultra96_sim.py cycles these on every incoming SENSOR_WINDOW request, not on a timer, so delay_ms
+# is unused here (kept only because scenario.py's loader requires the field) — see
+# comms/src/cg_comms/mock/ultra96_sim.py's _handle_client.
+steps:
+  - delay_ms: 0
+    kind: action_result
+    payload: { action: IDLE, action_confidence: 1.0, guard_state: IDLE, guard_confidence: 1.0 }
+  - delay_ms: 0
+    kind: action_result
+    payload: { action: HORIZONTAL_SWING, action_confidence: 0.94, guard_state: IDLE, guard_confidence: 0.9 }
+  - delay_ms: 0
+    kind: action_result
+    payload: { action: IDLE, action_confidence: 1.0, guard_state: GUARDING, guard_confidence: 0.85 }
+  - delay_ms: 0
+    kind: action_result
+    payload: { action: THRUST, action_confidence: 0.88, guard_state: IDLE, guard_confidence: 0.9 }
+  - delay_ms: 0
+    kind: action_result
+    payload: { action: IDLE, action_confidence: 1.0, guard_state: IDLE, guard_confidence: 1.0 }
+  - delay_ms: 0
+    kind: action_result
+    payload: { action: VERTICAL_SWING, action_confidence: 0.91, guard_state: IDLE, guard_confidence: 0.9 }

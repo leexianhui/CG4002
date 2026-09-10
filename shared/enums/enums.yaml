@@ -1,0 +1,81 @@
+# CG4002 shared enums — single source of truth.
+#
+# `tools/codegen` reads this file and emits shared/generated/{python,csharp,c}. Never hand-edit the
+# generated output; edit this file and regenerate.
+#
+# Convention (REPO_PLAN.md §7): enum values are UPPER_SNAKE strings on the JSON wire, and `uint8` on
+# the binary wire. Every enum below lists both. `wire` values must stay stable once shipped — append
+# new members, never renumber existing ones, or a firmware/laptop version skew silently misreads a
+# byte as the wrong enum member.
+
+Weapon:
+  description: >
+    A weapon identified by its RFID tag (cg_protocol.h RFID_EVENT.weaponId / SENSOR_FRAME.weaponId).
+    NONE is the wire-level "no weapon confirmed yet" value and must never appear in an app-layer
+    ACTION or WEAPON_CHANGED message — the relay withholds SENSOR_WINDOWs until a real weapon is
+    confirmed (COMMS_IMPLEMENTATION_PLAN.md §7), so the engine never sees NONE.
+  values:
+    - { name: NONE,  wire: 0 }
+    - { name: SWORD, wire: 1 }
+    - { name: SPEAR, wire: 2 }
+    - { name: MACE,  wire: 3 }
+
+ActionClass:
+  description: >
+    Union of every move across all weapons in shared/config/weapons.yaml, plus IDLE (classifier output
+    meaning "no action" — resolver step 2 treats it as a state update, not a combat event). This set
+    is expected to change once the AI dataset's final class list lands (COMMS_IMPLEMENTATION_PLAN.md
+    §16.2) — regenerate, do not hand-edit weapons.yaml's move names out of sync with this list.
+  values:
+    - { name: IDLE,            wire: 0 }
+    - { name: HORIZONTAL_SWING, wire: 1 }
+    - { name: VERTICAL_SWING,   wire: 2 }
+    - { name: DIAGONAL_SWING,   wire: 3 }
+    - { name: THRUST,           wire: 4 }
+    - { name: CHARGED_ATTACK,   wire: 5 }
+    - { name: CHARGED_THRUST,   wire: 6 }
+    - { name: SWING,            wire: 7 }
+
+GuardState:
+  description: >
+    Continuous defensive state (ACTION.guardState), independent of the discrete ActionClass event —
+    see COMMS_IMPLEMENTATION_PLAN.md §9 on why these are the same message but not the same kind of
+    thing.
+  values:
+    - { name: IDLE,     wire: 0 }
+    - { name: GUARDING, wire: 1 }
+
+CombatOutcome:
+  description: >
+    Every branch of engine/resolver.py (COMMS_IMPLEMENTATION_PLAN.md §10.3). Only MISS, HIT, BLOCK,
+    and PARRY are ever emitted on the wire as a COMBAT_EVENT.outcome (decision #9: MISS is emitted
+    with damage 0, so the visualizer can animate a whiff). IGNORED, STATE_ONLY, and ON_COOLDOWN are
+    internal resolver results used for logging only and never appear in combat_event.schema.json.
+  values:
+    - { name: IGNORED,     wire: 0 }
+    - { name: STATE_ONLY,  wire: 1 }
+    - { name: ON_COOLDOWN, wire: 2 }
+    - { name: MISS,        wire: 3 }
+    - { name: HIT,         wire: 4 }
+    - { name: BLOCK,       wire: 5 }
+    - { name: PARRY,       wire: 6 }
+
+MatchPhase:
+  description: engine/state.py MatchState.phase.
+  values:
+    - { name: WAITING,     wire: 0 }
+    - { name: ALIGNING,    wire: 1 }
+    - { name: IN_PROGRESS, wire: 2 }
+    - { name: PAUSED,      wire: 3 }
+    - { name: ENDED,       wire: 4 }
+
+FeedbackCode:
+  description: >
+    cg_protocol.h COMBAT_FEEDBACK.feedbackCode. Emitted in pairs per resolved hit: HIT_LANDED to the
+    attacker's wrist, and exactly one of HIT_TAKEN / BLOCKED / PARRIED to the defender's, matching the
+    resolver's outcome (COMMS_IMPLEMENTATION_PLAN.md §10.3).
+  values:
+    - { name: HIT_LANDED, wire: 0 }
+    - { name: HIT_TAKEN,  wire: 1 }
+    - { name: BLOCKED,    wire: 2 }
+    - { name: PARRIED,    wire: 3 }

@@ -1,0 +1,32 @@
+# IMU fixed-point scaling — the contract between firmware's int16 wire values and the relay's floats.
+#
+# SENSOR_FRAME carries int16 fixed-point (wire_protocol.md §3.2). The relay converts to physical units
+# only when building SENSOR_WINDOW for the Ultra96. If firmware and relay disagree on these factors,
+# nothing errors — the classifier just receives values off by a constant scale, and accuracy quietly
+# collapses. Both sides read this file.
+#
+# Values match MPU-6050 full-scale register settings; if firmware changes AFS_SEL/FS_SEL, change these
+# in the same PR.
+
+accelerometer:
+  afs_sel: 3                 # MPU-6050 ACCEL_CONFIG AFS_SEL — 3 = +/-16 g
+  full_scale_g: 16
+  lsb_per_g: 2048            # 1 LSB = 1/2048 g
+  unit: g
+
+gyroscope:
+  fs_sel: 3                  # MPU-6050 GYRO_CONFIG FS_SEL — 3 = +/-2000 deg/s
+  full_scale_dps: 2000
+  lsb_per_dps: 16.4          # 1 LSB = 1/16.4 deg/s
+  unit: deg_per_s
+
+sampling:
+  frame_rate_hz: 50          # SENSOR_FRAME rate; windowing (§7) assumes this exactly
+
+# Windowing — SENSOR_FRAME 50 Hz -> SENSOR_WINDOW 10 Hz (COMMS_IMPLEMENTATION_PLAN.md §7).
+# window_samples is dictated by the trained model's input shape; expect AI to change it (§16.2).
+windowing:
+  window_samples: 40         # 800 ms at 50 Hz
+  stride_frames: 5           # emit every 100 ms -> 10 Hz, 87.5% overlap
+  max_stale_pct: 20          # skip the window if more than this % of samples were DOM_STALE/OFF_STALE
+  max_span_deviation_pct: 15 # skip if the window's real time span deviates this much from nominal

@@ -1,0 +1,75 @@
+# Relay config for player 2 (COMMS_IMPLEMENTATION_PLAN.md §3, §12).
+# PSK is NOT set here — override via the CG_RELAY_PSK_HEX environment variable (see comms/.env.example).
+# Never commit an actual key into this file.
+#
+# Both players' laptops connect to the same shared Ultra96 (classifier service + engine both hosted
+# there) — the venue WiFi's client isolation means laptops can't reach each other directly, only the
+# whitelisted Ultra96 (COMMS_IMPLEMENTATION_PLAN.md §2, §8). ultra96.host and engine_link.host should
+# both point at that one Ultra96 address at match time; tunnel_enabled is for dev/remote access only.
+
+player_id: 2
+logs_dir: logs
+
+transport:
+  kind: ble
+  ble_address: null # set to the FireBeetle's BLE MAC address, or switch kind to "tcp" for the mock rig
+  ble_notify_char_uuid: null
+  ble_write_char_uuid: null
+  tcp_host: 127.0.0.1
+  tcp_port: 9002
+
+reliability:
+  retry_timeout_ms: 200
+  retry_backoff_factor: 2.0
+  retry_max_attempts: 5
+  retry_jitter_pct: 0.2
+
+heartbeat:
+  interval_ms: 1000
+  liveness_timeout_factor: 3
+  reconnect_backoff_ms: [1000, 2000, 4000, 8000, 10000]
+
+backpressure:
+  raw_ingest_depth: 256
+  windower_depth: 100
+  ultra96_depth: 4
+  engine_event_depth: 512
+
+windowing:
+  window_samples: 40
+  stride_frames: 5
+  max_stale_pct: 20.0
+  max_span_deviation_pct: 15.0
+  frame_rate_hz: 50.0
+
+timesync:
+  handshake_samples: 8
+  handshake_spacing_ms: 100
+  resync_interval_s: 30
+  ewma_alpha: 0.1
+  outlier_rtt_multiplier: 2.0
+  divergence_warn_ms: 20.0
+  hello_nonce_replay_window_s: 60
+
+ultra96:
+  use_mock: true
+  host: "<ULTRA96_HOST>" # shared classifier service; same address as player 1's config
+  port: 8888
+  request_timeout_ms: 120
+  max_in_flight: 2
+  min_confidence: 0.6
+  tunnel_enabled: false
+  tunnel_ssh_jump_user: null
+  tunnel_ssh_jump_host: stfjump.comp.nus.edu.sg
+  tunnel_ssh_target_user: xilinx
+  tunnel_ssh_target_host: null
+  tunnel_local_port: 8888
+  tunnel_remote_port: 8888
+  tunnel_connect_timeout_s: 30.0
+
+engine_link:
+  host: "<ULTRA96_HOST>" # engine now runs on the shared Ultra96, not on either laptop
+  port: 8443
+  use_tls: true
+  ca_cert_path: certs/engine.crt
+  bearer_token: "" # override via CG_RELAY_ENGINE_LINK__BEARER_TOKEN

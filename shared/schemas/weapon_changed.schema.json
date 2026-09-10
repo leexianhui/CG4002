@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cg4002.internal/schemas/weapon_changed.schema.json",
+  "title": "WEAPON_CHANGED",
+  "description": "relay -> engine. See shared/protocol/app_messages.md §2.2.",
+  "type": "object",
+  "properties": {
+    "type": { "const": "WEAPON_CHANGED" },
+    "version": { "type": "integer", "const": 1 },
+    "timestamp": { "type": "integer", "minimum": 0 },
+    "playerId": { "type": "integer", "enum": [1, 2] },
+    "weapon": { "type": "string", "enum": ["SWORD", "SPEAR", "MACE"] }
+  },
+  "required": ["type", "version", "timestamp", "playerId", "weapon"],
+  "additionalProperties": false
+}
