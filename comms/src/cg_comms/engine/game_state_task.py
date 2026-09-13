@@ -36,6 +36,12 @@ _FEEDBACK_FOR_OUTCOME: dict[CombatOutcome, tuple[FeedbackCode, FeedbackCode | No
     CombatOutcome.PARRY: (FeedbackCode.HIT_LANDED, FeedbackCode.PARRIED),
 }
 
+# ACTION/WEAPON_CHANGED arrive over the relay link; POSITION arrives over the visualizer link — a
+# different sender that may be running on yet another machine with its own unrelated clock offset.
+# Anchored independently per (player_id, channel) so one channel's offset never leaks into the other.
+_CHANNEL_ACTION = "action"
+_CHANNEL_POSITION = "position"
+
 
 @dataclass
 class GameStateTask:
@@ -49,6 +55,18 @@ class GameStateTask:
     state: EngineMatchState = field(default_factory=EngineMatchState, init=False)
     _reorder: ReorderBuffer = field(init=False)
     _inbox: "asyncio.Queue[InboundEvent]" = field(default_factory=asyncio.Queue, init=False)
+    # (player_id, channel) -> engine_local_monotonic_ms - remote_ts, seeded from the first message on
+    # that channel. InboundAction/InboundPosition.timestamp are each some *other* machine's
+    # time.monotonic()-based "engine time" (relay laptop for actions, visualizer host for positions) —
+    # meaningless outside the process that produced it (clock.py's own monotonic_ms docstring). This
+    # engine process's monotonic_ms() runs on yet another clock (a third machine, the Ultra96).
+    # Comparing them raw (ReorderBuffer's now_engine_ms, or resolver.py's ev.timestamp vs
+    # position_ts/guard_entered_ts across players) silently does the wrong thing instead of raising:
+    # a laptop with days of uptime makes every incoming timestamp look "already released" or
+    # "impossibly old", so events sit in the reorder heap forever and nothing ever logs why. Anchoring
+    # once per channel — the same seed-once-trust-the-offset approach relay/timesync.py already uses
+    # for device->relay time — makes every anchored timestamp comparable in this process's own frame.
+    _clock_anchors: dict[tuple[int, str], int] = field(default_factory=dict, init=False)
     # Latches the one-time "match is over" warning, so a rig left streaming after the match ends
     # says so once instead of on every window.
     _logged_post_match: bool = field(default=False, init=False)
@@ -79,17 +97,44 @@ class GameStateTask:
                 self._absorb(event)
             await self._drain_ready()
 
+    def _anchor(self, player_id: int, channel: str, remote_ts: int, now: int) -> int:
+        """Converts a remote-clock timestamp into this engine process's own monotonic_ms() frame.
+
+        Seeded from the first message on each (player_id, channel): the offset from that single
+        sample is trusted for the rest of the match (same seed-once approach as
+        relay/timesync.py's TimeSyncEstimator.seed — there's no cheap way to do better without a
+        real NTP-style exchange with the relay/visualizer processes, and a constant offset is all
+        that's needed to make ReorderBuffer/resolver comparisons meaningful again)."""
+        key = (player_id, channel)
+        offset = self._clock_anchors.get(key)
+        if offset is None:
+            offset = now - remote_ts
+            self._clock_anchors[key] = offset
+        return remote_ts + offset
+
     def _absorb(self, event: InboundEvent) -> None:
         now = monotonic_ms()
         if isinstance(event, InboundAction):
+            anchored_ts = self._anchor(event.player_id, _CHANNEL_ACTION, event.action.timestamp, now)
             ev = ActionEvent(
                 player_id=event.player_id,
                 action=event.action.action,
                 confidence=event.action.action_confidence,
-                timestamp=event.action.timestamp,
+                timestamp=anchored_ts,
             )
-            self._apply_guard_state(event)
+            self._apply_guard_state(event, anchored_ts)
+            dropped_before = self._reorder.dropped_late
             self._reorder.push(ev.timestamp, ev, now)
+            if self._reorder.dropped_late != dropped_before:
+                # dropped_late used to be incremented and never read anywhere — a silent counter.
+                # It only ever fires on a real "too late" arrival now that timestamps are anchored,
+                # but a rig that never logs this could still go quietly dead the same way, so surface it.
+                logger.warning(
+                    "action_dropped_late",
+                    player_id=event.player_id,
+                    action=event.action.action.value,
+                    total_dropped_late=self._reorder.dropped_late,
+                )
         elif isinstance(event, InboundWeaponChanged):
             player = self.state.players.get(event.player_id)
             if player is not None:
@@ -97,18 +142,19 @@ class GameStateTask:
         elif isinstance(event, InboundPosition):
             player = self.state.players.get(event.player_id)
             if player is not None:
+                anchored_ts = self._anchor(event.player_id, _CHANNEL_POSITION, event.position.timestamp, now)
                 player.position = Vec2(event.position.x, event.position.y)
                 player.heading_deg = event.position.heading
-                player.position_ts = event.position.timestamp
+                player.position_ts = anchored_ts
 
-    def _apply_guard_state(self, event: InboundAction) -> None:
+    def _apply_guard_state(self, event: InboundAction, anchored_ts: int) -> None:
         player = self.state.players.get(event.player_id)
         if player is None:
             return
         new_guard = event.action.guard_state
         if new_guard != player.guard_state:
             player.guard_state = new_guard
-            player.guard_entered_ts = event.action.timestamp
+            player.guard_entered_ts = anchored_ts
 
     async def _drain_ready(self) -> None:
         now = monotonic_ms()
