@@ -36,20 +36,33 @@ uint8_t g_capture_trigger_id = 0;
 
 // Retransmit-until-ACKed state for this firmware's one steady-state RELIABLE_PACKET_TYPES send
 // (RFID_EVENT — HELLO/TIME_SYNC_REQ already retry via do_handshake's own wait_for_packet loop).
-// Mirrors comms/src/cg_comms/relay/reliability.py's ReliabilitySender: the exact same encoded
-// frame bytes are resent on timeout (identical wire seq), 200ms base timeout, x2 backoff, 5
-// attempts. Without this, one dropped RFID_EVENT notification means the relay's _current_weapon
-// never gets set even though the firmware believes the weapon was sent — every action after that
-// suppresses at the "weapon chosen" gate (windowing.py) until the button is pressed again.
-uint8_t g_pending_frame[CG_MAX_FRAME_SIZE];
-size_t g_pending_frame_len = 0;
+// Mirrors comms/src/cg_comms/relay/reliability.py's ReliabilitySender in spirit (base timeout,
+// x2 backoff, 5 attempts), but NOT in wire mechanics: ReliabilitySender resends identical frame
+// bytes because the *laptop*'s SequenceTracker (crypto.py) is fresh per session and has plenty of
+// headroom, and because the device-side re-ACK (drain_incoming_non_blocking, below) can answer a
+// duplicate without re-decrypting it. The relay has no such re-ACK-on-replay path for
+// device->laptop reliable types (codec.decode_packet's REPLAY branch returns before packet-type
+// dispatch — session.py's stream_decode_drop), so a resent identical wire seq is unconditionally
+// unACKable there. We retransmit by RE-ENCODING the same plaintext with a fresh seq instead —
+// costs one extra AES-GCM seal per attempt, but decodes cleanly on the relay every time. Safe
+// because the app layer is idempotent: on_weapon_confirmed()/WeaponChanged tolerate the same
+// weapon arriving twice. Without this retry entirely, one dropped RFID_EVENT notification means
+// the relay's _current_weapon never gets set even though the firmware believes the weapon was
+// sent — every action after that suppresses at the "weapon chosen" gate (windowing.py) until the
+// button is pressed again.
+uint8_t g_pending_payload[12];  // cg_payload_rfid_event_t, sized for re-encoding on retry
+size_t g_pending_payload_len = 0;
 uint16_t g_pending_wire_seq = 0;
 bool g_pending_active = false;
 uint8_t g_pending_attempt = 0;
 uint32_t g_pending_timeout_ms = 0;
 uint32_t g_pending_next_send_ms = 0;
 
-const uint32_t kReliableBaseTimeoutMs = 200;
+// 500ms (not 200ms, matching reliability.py's relay-side default): a BLE notify round-trip
+// through two concurrently-connected centrals routinely exceeds 200ms (see stream_decode_drop
+// investigation, 2026-09-20), which was firing attempt 2 while attempt 1's ACK was still in
+// flight — harmless (the extra attempt just gets its own fresh seq and ACK now), but pure noise.
+const uint32_t kReliableBaseTimeoutMs = 500;
 const uint8_t kReliableMaxAttempts = 5;
 
 const uint8_t kActionButtonPins[CG_DEMO_ACTION_BUTTON_COUNT] = CG_DEMO_ACTION_BUTTON_PINS;
@@ -162,13 +175,18 @@ void ble_setup() {
 }
 
 // Sends one plaintext payload as a fully-encoded, encrypted wire frame, device -> laptop.
-// On success, if `wire_seq_out`/`frame_out`/`frame_len_out` are non-null, also hands back the
-// encoded frame and its wire seq so the caller can retransmit the identical bytes later (needed
-// for RELIABLE_PACKET_TYPES sends — see g_pending_* above).
+// On success, if `wire_seq_out` is non-null, also hands back the wire seq this send used (needed
+// by callers tracking a RELIABLE_PACKET_TYPES send for ACK matching — see g_pending_* above).
+//
+// A RETRANSMIT of a reliable send must call this again with the same plaintext rather than
+// resending previously-encoded bytes: the relay's replay window (crypto.py's SequenceTracker via
+// codec.decode_packet) rejects a repeated wire seq as DropReason.REPLAY before packet-type
+// dispatch even runs (session.py's stream_decode_drop path), so an identical resend is
+// unconditionally unACKable there. Re-encoding mints a fresh seq/ext_seq (and thus a fresh GCM
+// nonce, required — nonces must never repeat under the same key) that decodes cleanly.
 bool send_packet(uint8_t packet_type, const uint8_t *plaintext, size_t plaintext_len,
                   const uint8_t *cleartext_prefix, size_t cleartext_prefix_len,
-                  uint16_t *wire_seq_out = nullptr, uint8_t *frame_out = nullptr,
-                  size_t *frame_len_out = nullptr) {
+                  uint16_t *wire_seq_out = nullptr) {
     uint32_t ext_seq;
     uint16_t seq = g_tx_seq.next(&ext_seq);
     uint32_t nonce_base = (packet_type == CG_PKT_HELLO) ? g_device_nonce : g_session_id;
@@ -185,18 +203,7 @@ bool send_packet(uint8_t packet_type, const uint8_t *plaintext, size_t plaintext
     if (wire_seq_out != nullptr) {
         *wire_seq_out = seq;
     }
-    if (frame_out != nullptr && frame_len_out != nullptr) {
-        memcpy(frame_out, frame, frame_len);
-        *frame_len_out = frame_len;
-    }
     return true;
-}
-
-// Re-sends the exact previously-encoded frame bytes (same wire seq) — used for retransmits, where
-// re-encoding would mint a new seq and defeat the relay's/device's dedup-by-seq ACK matching.
-void resend_raw_frame(const uint8_t *frame, size_t frame_len) {
-    g_notify_char->setValue(const_cast<uint8_t *>(frame), frame_len);
-    g_notify_char->notify();
 }
 
 // Blocks (with a timeout) until a frame of `expect_type` decodes successfully from the laptop.
@@ -247,6 +254,15 @@ void send_ack_for(uint16_t acked_seq) {
     send_packet(CG_PKT_ACK, payload, sizeof(payload), nullptr, 0);
 }
 
+// Wire seq of the last packet we decoded that is actually a RELIABLE_PACKET_TYPES member needing
+// an ACK from us (cg_protocol.h: only COMBAT_FEEDBACK, laptop->device, reaches this path — HELLO/
+// HELLO_ACK/TIME_SYNC_* are handled by wait_for_packet's own loop during the handshake, and the
+// relay only ever has one such send in flight at a time since ReliabilitySender.send_reliable
+// awaits each attempt's ACK before allowing another). Used below to decide whether a replay-window
+// duplicate is worth re-ACKing at all — see its use for why.
+uint16_t g_last_reliable_inbound_seq = 0;
+bool g_have_reliable_inbound_seq = false;
+
 void drain_incoming_non_blocking() {
     if (!g_incoming.ready) {
         return;
@@ -271,10 +287,17 @@ void drain_incoming_non_blocking() {
         // the same seq kept getting silently dropped as "already seen", guaranteeing attempts 2-5
         // burn their timeouts for nothing and the relay reports link_degraded on a link that is
         // actually fine. We can't re-decrypt a duplicate (its ext_seq was only valid once, for
-        // nonce derivation), but we already know its wire seq, and re-ACKing a wire seq we've
-        // already accepted is always safe regardless of packet type.
-        Serial.printf("[rx] replay-window duplicate, wire_seq=%u, re-acking\n", (unsigned)wire_seq);
-        send_ack_for(wire_seq);
+        // nonce derivation), so we can't recover its packet_type either — but we only need to
+        // re-ACK it if it's a retry of the one reliable inbound type that expects an ACK from us
+        // (COMBAT_FEEDBACK); re-ACKing a duplicate ACK would violate "ACK is never itself acked"
+        // (cg_protocol.h), and re-ACKing a duplicate HEARTBEAT (best-effort, never awaits an ACK)
+        // would just be wasted airtime. g_last_reliable_inbound_seq tracks exactly that case.
+        if (g_have_reliable_inbound_seq && wire_seq == g_last_reliable_inbound_seq) {
+#if CG_DEMO_DEBUG_SERIAL
+            Serial.printf("[rx] replay-window duplicate, wire_seq=%u, re-acking\n", (unsigned)wire_seq);
+#endif
+            send_ack_for(wire_seq);
+        }
         return;
     }
     size_t plaintext_len = cg_decode_frame(g_incoming.data, g_incoming.len, 0, g_psk, g_session_id,
@@ -283,7 +306,9 @@ void drain_incoming_non_blocking() {
     if (plaintext_len == 0) {
         return;
     }
+#if CG_DEMO_DEBUG_SERIAL
     Serial.printf("[rx] packet_type=0x%02X len=%u\n", packet_type, (unsigned)plaintext_len);
+#endif
 
     // COMBAT_FEEDBACK is reliable (cg_protocol.h), so the relay sends it through ReliabilitySender
     // and waits for an ACK. Logging it without answering makes the relay retransmit every hit five
@@ -291,6 +316,8 @@ void drain_incoming_non_blocking() {
     // a perfectly healthy link, caused only by the device staying quiet. ACK is never itself acked,
     // so the laptop's ACK of our RFID_EVENT needs no reply here (it's handled below instead).
     if (packet_type == CG_PKT_COMBAT_FEEDBACK) {
+        g_last_reliable_inbound_seq = seq;
+        g_have_reliable_inbound_seq = true;
         send_ack_for(seq);
     } else if (packet_type == CG_PKT_ACK) {
         uint16_t acked_seq;
@@ -302,6 +329,21 @@ void drain_incoming_non_blocking() {
 }
 
 bool do_handshake() {
+    // Reset BOTH sequence counters before anything is sent, not after HELLO_ACK arrives (as this
+    // used to). A relay reconnect always builds a fresh Session (session.py) with fresh
+    // SequenceTracker/OutgoingSequenceCounter starting at ext_seq 0 in both directions, so the
+    // device side must match — not just its rx tracker (as before) but also its tx counter, since
+    // the relay's own _rx_tracker is equally fresh and expects our next HELLO's seq to start over.
+    // The bug this fixes: the old g_rx_seq.reset() ran only *after* wait_for_packet(HELLO_ACK)
+    // succeeded, so a HELLO_ACK carrying the new session's seq 0 was checked against the *previous*
+    // session's replay window. Once that window's highest_ext_seq_ passed 64 (roughly one minute
+    // of heartbeats), seq 0 read as "below the window floor" and was rejected outright — the
+    // device never saw its own HELLO_ACK, retried with a new HELLO, and the relay (already past
+    // HELLO, waiting on TIME_SYNC_REQ) logged handshake_unexpected_packet/timed out forever. Only
+    // a full device reboot cleared it, since g_rx_seq is never otherwise reset.
+    g_tx_seq.reset();
+    g_rx_seq.reset();
+
     g_device_nonce = esp_random();
     uint8_t device_mac[6];
     esp_read_mac(device_mac, ESP_MAC_BT);
@@ -337,7 +379,10 @@ bool do_handshake() {
         Serial.println("[handshake] refused (version mismatch)");
         return false;
     }
-    g_rx_seq.reset();  // fresh session -> fresh replay window, matches Session per-reconnect behavior
+    // Redundant with the reset at the top of this function now that HELLO_ACK is itself validated
+    // against a pre-reset window — kept anyway as a harmless belt-and-braces re-clear, in case a
+    // future edit ever reorders the tx_seq/rx_seq resets above relative to the HELLO send.
+    g_rx_seq.reset();
 
     for (int i = 0; i < 8; i++) {
         uint32_t t0 = millis();
@@ -416,22 +461,19 @@ void send_heartbeat() {
 // Weapon wire values per comms/src/cg_comms/messages/enums.py WIRE_VALUES: NONE=0 SWORD=1 SPEAR=2 MACE=3.
 void send_rfid_event_next_weapon() {
     g_weapon_id = (g_weapon_id % 3) + 1;  // NONE(0) is never selected by a "tag pickup"
-    uint8_t payload[12];
     uint32_t ts = millis();
-    memcpy(payload, &ts, 4);
-    payload[4] = g_weapon_id;
-    payload[5] = 0;  // reserved
+    memcpy(g_pending_payload, &ts, 4);
+    g_pending_payload[4] = g_weapon_id;
+    g_pending_payload[5] = 0;  // reserved
     uint8_t tag_uid[6] = {0xE0, 0x04, 0x01, 0x50, CG_DEMO_PLAYER_ID, g_weapon_id};
-    memcpy(payload + 6, tag_uid, 6);
+    memcpy(g_pending_payload + 6, tag_uid, 6);
+    g_pending_payload_len = 12;
 
     // A press during an already-pending (unacked) RFID_EVENT replaces it: the newest weapon is
     // the one that matters, and the old wire seq's ACK (if it arrives late) is simply ignored by
     // the ACK handler below since g_pending_active/g_pending_wire_seq will have moved on.
     uint16_t wire_seq;
-    size_t frame_len;
-    if (send_packet(CG_PKT_RFID_EVENT, payload, sizeof(payload), nullptr, 0, &wire_seq,
-                     g_pending_frame, &frame_len)) {
-        g_pending_frame_len = frame_len;
+    if (send_packet(CG_PKT_RFID_EVENT, g_pending_payload, g_pending_payload_len, nullptr, 0, &wire_seq)) {
         g_pending_wire_seq = wire_seq;
         g_pending_active = true;
         g_pending_attempt = 1;
@@ -442,9 +484,11 @@ void send_rfid_event_next_weapon() {
 }
 
 // Retransmits the pending RFID_EVENT on timeout, exponential backoff, matching
-// comms/src/cg_comms/relay/reliability.py's ReliabilitySender (base 200ms, x2 backoff, 5 attempts,
-// then give up — logged, not silent, since a stuck weapon looks identical to a "chosen" one on
-// this board's own serial monitor).
+// comms/src/cg_comms/relay/reliability.py's ReliabilitySender (base timeout, x2 backoff, 5
+// attempts, then give up — logged, not silent, since a stuck weapon looks identical to a "chosen"
+// one on this board's own serial monitor). Re-encodes g_pending_payload with a fresh seq each
+// attempt (see send_packet's doc comment) rather than resending prior bytes; g_pending_wire_seq is
+// updated to match so the ACK handler recognizes whichever attempt's ACK actually arrives.
 void service_pending_rfid_event() {
     if (!g_pending_active) {
         return;
@@ -460,7 +504,10 @@ void service_pending_rfid_event() {
         return;
     }
     g_pending_attempt++;
-    resend_raw_frame(g_pending_frame, g_pending_frame_len);
+    uint16_t wire_seq;
+    if (send_packet(CG_PKT_RFID_EVENT, g_pending_payload, g_pending_payload_len, nullptr, 0, &wire_seq)) {
+        g_pending_wire_seq = wire_seq;
+    }
     g_pending_timeout_ms *= 2;
     g_pending_next_send_ms = now + g_pending_timeout_ms;
     Serial.printf("[weapon] rfid_event retransmit attempt=%u wire_seq=%u\n", (unsigned)g_pending_attempt,

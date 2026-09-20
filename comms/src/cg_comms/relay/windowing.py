@@ -119,7 +119,8 @@ class PlayerWindower:
 
         if self._frame_count % self.stride_frames != 0:
             return None
-        return self._build_window_if_gates_pass(engine_ts_ms, trigger_id=None)
+        window, _reason, _extra = self._build_window_if_gates_pass(engine_ts_ms, trigger_id=None)
+        return window
 
     def _ingest_frame_triggered(self, engine_ts_ms: int, flags: int) -> SensorWindow | None:
         tagged = bool(flags & FLAG_MOTION_ACTIVE)
@@ -145,40 +146,57 @@ class PlayerWindower:
         trigger_id = self._capture_trigger_id
         self._armed = False
         self._refractory = True
-        window = self._build_window_if_gates_pass(engine_ts_ms, trigger_id=trigger_id)
+        window, reason, extra = self._build_window_if_gates_pass(engine_ts_ms, trigger_id=trigger_id)
         if window is None:
-            logger.info("window_suppressed", player_id=self.player_id, trigger_id=trigger_id)
+            logger.info(
+                "window_suppressed",
+                player_id=self.player_id,
+                trigger_id=trigger_id,
+                reason=reason,
+                weapon=self._current_weapon.value if self._current_weapon is not None else None,
+                **extra,
+            )
         return window
 
-    def _build_window_if_gates_pass(self, engine_ts_ms: int, trigger_id: int | None) -> SensorWindow | None:
+    def _build_window_if_gates_pass(
+        self, engine_ts_ms: int, trigger_id: int | None
+    ) -> tuple[SensorWindow | None, str | None, dict]:
+        """Returns (window, suppression_reason, extra_log_fields). suppression_reason/extra are
+        only meaningful when window is None — used to make `window_suppressed` diagnosable
+        (was previously player_id/trigger_id only, so a weapon-gate failure and a span-gate
+        failure were indistinguishable in the log)."""
         if len(self._dominant) < self.window_samples:
-            return None
+            return None, "too_few_samples", {"sample_count": len(self._dominant)}
         if self._current_weapon is None:
-            return None
+            return None, "no_weapon", {}
 
         stale_count = sum(1 for s in self._dominant if s.stale) + sum(1 for s in self._offhand if s.stale)
         total_samples = len(self._dominant) + len(self._offhand)
         stale_pct = 100.0 * stale_count / total_samples
         if stale_pct > self.max_stale_pct:
-            return None
+            return None, "stale", {"stale_pct": stale_pct}
 
         span_ms = self._dominant[-1].engine_ts_ms - self._dominant[0].engine_ts_ms
         nominal_span_ms = 1000.0 * (self.window_samples - 1) / self.frame_rate_hz
         if nominal_span_ms > 0:
             deviation_pct = 100.0 * abs(span_ms - nominal_span_ms) / nominal_span_ms
             if deviation_pct > self.max_span_deviation_pct:
-                return None
+                return None, "span", {"span_ms": span_ms, "deviation_pct": deviation_pct}
 
-        return SensorWindow(
-            timestamp=engine_ts_ms,
-            player_id=self.player_id,  # type: ignore[arg-type]
-            request_id=self._request_ids.next(),
-            weapon=self._current_weapon,  # type: ignore[arg-type]
-            window_start_ts=self._dominant[0].engine_ts_ms,
-            window_end_ts=self._dominant[-1].engine_ts_ms,
-            sample_rate_hz=self.frame_rate_hz,
-            dominant=[_scale_sample(s.values) for s in self._dominant],
-            offhand=[_scale_sample(s.values) for s in self._offhand],
-            stale_pct=stale_pct,
-            trigger_id=trigger_id,
+        return (
+            SensorWindow(
+                timestamp=engine_ts_ms,
+                player_id=self.player_id,  # type: ignore[arg-type]
+                request_id=self._request_ids.next(),
+                weapon=self._current_weapon,  # type: ignore[arg-type]
+                window_start_ts=self._dominant[0].engine_ts_ms,
+                window_end_ts=self._dominant[-1].engine_ts_ms,
+                sample_rate_hz=self.frame_rate_hz,
+                dominant=[_scale_sample(s.values) for s in self._dominant],
+                offhand=[_scale_sample(s.values) for s in self._offhand],
+                stale_pct=stale_pct,
+                trigger_id=trigger_id,
+            ),
+            None,
+            {},
         )

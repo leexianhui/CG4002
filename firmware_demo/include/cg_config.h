@@ -48,3 +48,13 @@
 
 #define CG_DEMO_SENSOR_FRAME_INTERVAL_MS 20  // 50 Hz
 #define CG_DEMO_HEARTBEAT_INTERVAL_MS 1000   // 1 Hz
+
+// Verbose per-packet Serial.printf logging (every inbound packet_type, every replay-window
+// duplicate re-ACK). Off by default: at 115200 baud a ~50-char line blocks the loop for a few ms,
+// and with two centrals sharing one BLE adapter that's exactly the kind of jitter that can push a
+// SENSOR_FRAME capture's span past windowing.py's max_span_deviation_pct and trigger a spurious
+// window_suppressed. Define as 1 (build flag `-D CG_DEMO_DEBUG_SERIAL=1`) only while debugging the
+// link itself; leave off for any run where window_suppressed rate matters.
+#ifndef CG_DEMO_DEBUG_SERIAL
+#define CG_DEMO_DEBUG_SERIAL 0
+#endif
