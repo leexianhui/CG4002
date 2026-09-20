@@ -34,6 +34,24 @@ uint8_t g_weapon_id = 0;  // Weapon.NONE — see comms/src/cg_comms/messages/enu
 uint32_t g_capture_remaining = 0;
 uint8_t g_capture_trigger_id = 0;
 
+// Retransmit-until-ACKed state for this firmware's one steady-state RELIABLE_PACKET_TYPES send
+// (RFID_EVENT — HELLO/TIME_SYNC_REQ already retry via do_handshake's own wait_for_packet loop).
+// Mirrors comms/src/cg_comms/relay/reliability.py's ReliabilitySender: the exact same encoded
+// frame bytes are resent on timeout (identical wire seq), 200ms base timeout, x2 backoff, 5
+// attempts. Without this, one dropped RFID_EVENT notification means the relay's _current_weapon
+// never gets set even though the firmware believes the weapon was sent — every action after that
+// suppresses at the "weapon chosen" gate (windowing.py) until the button is pressed again.
+uint8_t g_pending_frame[CG_MAX_FRAME_SIZE];
+size_t g_pending_frame_len = 0;
+uint16_t g_pending_wire_seq = 0;
+bool g_pending_active = false;
+uint8_t g_pending_attempt = 0;
+uint32_t g_pending_timeout_ms = 0;
+uint32_t g_pending_next_send_ms = 0;
+
+const uint32_t kReliableBaseTimeoutMs = 200;
+const uint8_t kReliableMaxAttempts = 5;
+
 const uint8_t kActionButtonPins[CG_DEMO_ACTION_BUTTON_COUNT] = CG_DEMO_ACTION_BUTTON_PINS;
 const uint8_t kActionButtonTriggerIds[CG_DEMO_ACTION_BUTTON_COUNT] = CG_DEMO_ACTION_BUTTON_TRIGGER_IDS;
 
@@ -144,8 +162,13 @@ void ble_setup() {
 }
 
 // Sends one plaintext payload as a fully-encoded, encrypted wire frame, device -> laptop.
+// On success, if `wire_seq_out`/`frame_out`/`frame_len_out` are non-null, also hands back the
+// encoded frame and its wire seq so the caller can retransmit the identical bytes later (needed
+// for RELIABLE_PACKET_TYPES sends — see g_pending_* above).
 bool send_packet(uint8_t packet_type, const uint8_t *plaintext, size_t plaintext_len,
-                  const uint8_t *cleartext_prefix, size_t cleartext_prefix_len) {
+                  const uint8_t *cleartext_prefix, size_t cleartext_prefix_len,
+                  uint16_t *wire_seq_out = nullptr, uint8_t *frame_out = nullptr,
+                  size_t *frame_len_out = nullptr) {
     uint32_t ext_seq;
     uint16_t seq = g_tx_seq.next(&ext_seq);
     uint32_t nonce_base = (packet_type == CG_PKT_HELLO) ? g_device_nonce : g_session_id;
@@ -159,7 +182,21 @@ bool send_packet(uint8_t packet_type, const uint8_t *plaintext, size_t plaintext
     }
     g_notify_char->setValue(frame, frame_len);
     g_notify_char->notify();
+    if (wire_seq_out != nullptr) {
+        *wire_seq_out = seq;
+    }
+    if (frame_out != nullptr && frame_len_out != nullptr) {
+        memcpy(frame_out, frame, frame_len);
+        *frame_len_out = frame_len;
+    }
     return true;
+}
+
+// Re-sends the exact previously-encoded frame bytes (same wire seq) — used for retransmits, where
+// re-encoding would mint a new seq and defeat the relay's/device's dedup-by-seq ACK matching.
+void resend_raw_frame(const uint8_t *frame, size_t frame_len) {
+    g_notify_char->setValue(const_cast<uint8_t *>(frame), frame_len);
+    g_notify_char->notify();
 }
 
 // Blocks (with a timeout) until a frame of `expect_type` decodes successfully from the laptop.
@@ -201,6 +238,15 @@ bool wait_for_packet(uint8_t expect_type, uint8_t *plaintext_out, size_t plainte
     return false;
 }
 
+// Sends an ACK for `acked_seq`. Factored out so both the fresh-frame path and the
+// already-seen-duplicate path (below) can answer identically — a duplicate must still be ACKed,
+// since its arrival means our previous ACK was the packet that actually got lost.
+void send_ack_for(uint16_t acked_seq) {
+    uint8_t payload[2];  // cg_payload_ack_t
+    memcpy(payload, &acked_seq, 2);
+    send_packet(CG_PKT_ACK, payload, sizeof(payload), nullptr, 0);
+}
+
 void drain_incoming_non_blocking() {
     if (!g_incoming.ready) {
         return;
@@ -217,9 +263,18 @@ void drain_incoming_non_blocking() {
         return;
     }
     if (!g_rx_seq.accept(wire_seq, &ext_seq)) {
-        // Logged, not silent: a stuck replay window looks exactly like a dead BLE link from the
-        // relay's side (its writes still "succeed"), so this drop needs to be visible on serial.
-        Serial.printf("[rx] replay-window drop, wire_seq=%u\n", (unsigned)wire_seq);
+        // A replay-window duplicate is expected steady-state behavior, not a fault: the relay's
+        // ReliabilitySender (comms/src/cg_comms/relay/reliability.py) retransmits COMBAT_FEEDBACK
+        // with the *same* wire seq whenever our ACK doesn't make it back in time, so this branch
+        // fires exactly when the relay is mid-retry. Previously this `return`ed here, before ever
+        // reaching the COMBAT_FEEDBACK ACK below — so a single lost ACK meant every retransmit of
+        // the same seq kept getting silently dropped as "already seen", guaranteeing attempts 2-5
+        // burn their timeouts for nothing and the relay reports link_degraded on a link that is
+        // actually fine. We can't re-decrypt a duplicate (its ext_seq was only valid once, for
+        // nonce derivation), but we already know its wire seq, and re-ACKing a wire seq we've
+        // already accepted is always safe regardless of packet type.
+        Serial.printf("[rx] replay-window duplicate, wire_seq=%u, re-acking\n", (unsigned)wire_seq);
+        send_ack_for(wire_seq);
         return;
     }
     size_t plaintext_len = cg_decode_frame(g_incoming.data, g_incoming.len, 0, g_psk, g_session_id,
@@ -234,11 +289,15 @@ void drain_incoming_non_blocking() {
     // and waits for an ACK. Logging it without answering makes the relay retransmit every hit five
     // times and then report link_degraded + combat_feedback_undelivered at ERROR — a loud failure on
     // a perfectly healthy link, caused only by the device staying quiet. ACK is never itself acked,
-    // so the laptop's ACK of our RFID_EVENT needs no reply.
+    // so the laptop's ACK of our RFID_EVENT needs no reply here (it's handled below instead).
     if (packet_type == CG_PKT_COMBAT_FEEDBACK) {
-        uint8_t payload[2];  // cg_payload_ack_t
-        memcpy(payload, &seq, 2);
-        send_packet(CG_PKT_ACK, payload, sizeof(payload), nullptr, 0);
+        send_ack_for(seq);
+    } else if (packet_type == CG_PKT_ACK) {
+        uint16_t acked_seq;
+        memcpy(&acked_seq, plaintext, 2);
+        if (g_pending_active && acked_seq == g_pending_wire_seq) {
+            g_pending_active = false;
+        }
     }
 }
 
@@ -364,8 +423,48 @@ void send_rfid_event_next_weapon() {
     payload[5] = 0;  // reserved
     uint8_t tag_uid[6] = {0xE0, 0x04, 0x01, 0x50, CG_DEMO_PLAYER_ID, g_weapon_id};
     memcpy(payload + 6, tag_uid, 6);
-    send_packet(CG_PKT_RFID_EVENT, payload, sizeof(payload), nullptr, 0);
+
+    // A press during an already-pending (unacked) RFID_EVENT replaces it: the newest weapon is
+    // the one that matters, and the old wire seq's ACK (if it arrives late) is simply ignored by
+    // the ACK handler below since g_pending_active/g_pending_wire_seq will have moved on.
+    uint16_t wire_seq;
+    size_t frame_len;
+    if (send_packet(CG_PKT_RFID_EVENT, payload, sizeof(payload), nullptr, 0, &wire_seq,
+                     g_pending_frame, &frame_len)) {
+        g_pending_frame_len = frame_len;
+        g_pending_wire_seq = wire_seq;
+        g_pending_active = true;
+        g_pending_attempt = 1;
+        g_pending_timeout_ms = kReliableBaseTimeoutMs;
+        g_pending_next_send_ms = millis() + kReliableBaseTimeoutMs;
+    }
     Serial.printf("[weapon] now %u\n", g_weapon_id);
+}
+
+// Retransmits the pending RFID_EVENT on timeout, exponential backoff, matching
+// comms/src/cg_comms/relay/reliability.py's ReliabilitySender (base 200ms, x2 backoff, 5 attempts,
+// then give up — logged, not silent, since a stuck weapon looks identical to a "chosen" one on
+// this board's own serial monitor).
+void service_pending_rfid_event() {
+    if (!g_pending_active) {
+        return;
+    }
+    uint32_t now = millis();
+    if ((int32_t)(now - g_pending_next_send_ms) < 0) {
+        return;
+    }
+    if (g_pending_attempt >= kReliableMaxAttempts) {
+        Serial.printf("[weapon] rfid_event undelivered after %u attempts, wire_seq=%u\n",
+                      (unsigned)g_pending_attempt, (unsigned)g_pending_wire_seq);
+        g_pending_active = false;
+        return;
+    }
+    g_pending_attempt++;
+    resend_raw_frame(g_pending_frame, g_pending_frame_len);
+    g_pending_timeout_ms *= 2;
+    g_pending_next_send_ms = now + g_pending_timeout_ms;
+    Serial.printf("[weapon] rfid_event retransmit attempt=%u wire_seq=%u\n", (unsigned)g_pending_attempt,
+                  (unsigned)g_pending_wire_seq);
 }
 
 }  // namespace
@@ -440,4 +539,5 @@ void loop() {
     }
 
     drain_incoming_non_blocking();
+    service_pending_rfid_event();
 }
