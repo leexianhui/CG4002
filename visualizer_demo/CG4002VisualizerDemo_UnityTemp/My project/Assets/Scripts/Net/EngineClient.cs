@@ -51,12 +51,21 @@ namespace Cg4002.VisualizerDemo.Net
         private readonly ConcurrentQueue<string> _inbox = new ConcurrentQueue<string>();
         private Coroutine _reconnectCoroutine;
         private bool _disconnectRequested;
+        // Guards against a second Connect() starting while one is already in flight - without this,
+        // a stale connection (Android silently killed the socket while backgrounded, so IsConnected
+        // never went false) plus a fresh reconnect attempt could both end up alive at once, each
+        // registering /visualizer/<id> and knocking the other off (engine's "ws_duplicate_path_replaced"
+        // flapping, seen after leaving the app backgrounded for ~5 minutes).
+        private bool _connecting;
 
         public bool IsConnected => _ws != null && _ws.State == WebSocketState.Open;
 
         public async void Connect()
         {
+            if (_connecting || IsConnected) return;
+            _connecting = true;
             _disconnectRequested = false;
+            TeardownSocket();
             _cts = new CancellationTokenSource();
             _ws = new ClientWebSocket();
             _ws.Options.SetRequestHeader("Authorization", $"Bearer {BearerToken}");
@@ -66,11 +75,13 @@ namespace Cg4002.VisualizerDemo.Net
             try
             {
                 await _ws.ConnectAsync(uri, _cts.Token);
+                _connecting = false;
                 OnConnectionStatus?.Invoke("connected");
                 _ = ReceiveLoop(_cts.Token);
             }
             catch (Exception e)
             {
+                _connecting = false;
                 OnConnectionStatus?.Invoke($"connect_failed: {e.Message}");
                 BeginReconnect();
             }
@@ -92,8 +103,31 @@ namespace Cg4002.VisualizerDemo.Net
             _cts?.Cancel();
             if (_ws != null && _ws.State == WebSocketState.Open)
             {
-                await _ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "closing", CancellationToken.None);
+                try
+                {
+                    await _ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "closing", CancellationToken.None);
+                }
+                catch (Exception)
+                {
+                    // Best-effort - the socket may already be dead (e.g. after backgrounding).
+                }
             }
+            TeardownSocket();
+        }
+
+        // Synchronous, defensive teardown - Abort() transitions the socket to Aborted immediately
+        // even if it's already broken (unlike CloseAsync, which can hang/throw on a dead connection).
+        // Always call this before starting a new connection so at most one ClientWebSocket is ever
+        // live at a time.
+        private void TeardownSocket()
+        {
+            _cts?.Cancel();
+            if (_ws != null)
+            {
+                try { _ws.Abort(); } catch { /* already aborted/disposed */ }
+                _ws.Dispose();
+            }
+            _ws = null;
         }
 
         // Capped backoff (1, 2, 4, 8s, repeating at 8s) so a killed/restarted engine (U3 test:

@@ -12,9 +12,12 @@ logs_dir: logs
 
 transport:
   kind: ble
-  ble_address: null # set to the FireBeetle's BLE MAC address, or switch kind to "tcp" for the mock rig
-  ble_notify_char_uuid: null
-  ble_write_char_uuid: null
+  # Temporary P2 dev-bench board: ESP32 DevKitC V4 flashed with env:esp32dev_p2 (firmware_demo/platformio.ini),
+  # advertised name CG4002-Demo-P2. Scan for its BLE address with scripts/ble_scan.py once flashed and
+  # paste it here -- same caveat as P1's board applies (BLE address = base MAC + 2, not the flash log's MAC).
+  ble_address: null # set to the ESP32 DevKitC V4's BLE MAC address, or switch kind to "tcp" for the mock rig
+  ble_notify_char_uuid: "6e400002-b5a3-f393-e0a9-e50e24dcca9e" # device -> laptop, see firmware_demo/include/cg_config.h
+  ble_write_char_uuid: "6e400003-b5a3-f393-e0a9-e50e24dcca9e" # laptop -> device, see firmware_demo/include/cg_config.h
   tcp_host: 127.0.0.1
   tcp_port: 9002
 
@@ -41,6 +44,9 @@ windowing:
   max_stale_pct: 20.0
   max_span_deviation_pct: 15.0
   frame_rate_hz: 50.0
+  # comms-demo: one tagged capture -> one SensorWindow. Must match firmware_demo's
+  # CG_DEMO_CAPTURE_FRAMES (== window_samples above). See docs/DEMO_TRIGGERED_ACTION_PLAN.md §3.2.
+  trigger_mode: true
 
 timesync:
   handshake_samples: 8
@@ -53,7 +59,7 @@ timesync:
 
 ultra96:
   use_mock: true
-  host: "<ULTRA96_HOST>" # shared classifier service; same address as player 1's config
+  host: "127.0.0.1" # LOCAL LOOPBACK TEST ONLY - swap back to the real Ultra96 IP once this passes
   port: 8888
   request_timeout_ms: 120
   max_in_flight: 2
@@ -68,8 +74,10 @@ ultra96:
   tunnel_connect_timeout_s: 30.0
 
 engine_link:
-  host: "<ULTRA96_HOST>" # engine now runs on the shared Ultra96, not on either laptop
+  host: "127.0.0.1" # LOCAL LOOPBACK TEST ONLY - swap back to the real Ultra96 IP once this passes
   port: 8443
   use_tls: true
   ca_cert_path: certs/engine.crt
-  bearer_token: "" # override via CG_RELAY_ENGINE_LINK__BEARER_TOKEN
+  # bearer_token is NOT set here — override via CG_RELAY_ENGINE_LINK__BEARER_TOKEN in .env.relay.
+  # (pydantic-settings does not deep-merge nested fields: an explicit key here, even "", wins over
+  # the env var wholesale, so omitting the key entirely is required for the override to take effect.)
