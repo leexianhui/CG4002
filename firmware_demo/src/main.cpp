@@ -101,6 +101,21 @@ BLE2902 *g_notify_cccd = nullptr;  // read to tell whether the relay has subscri
 volatile bool g_connected = false;
 volatile bool g_handshake_done = false;
 
+// BLECharacteristic::notify() returns void: on a controller-level failure it logs
+// "esp_ble_gatts_send_notify: rc=-1" and returns, so a caller that just calls notify() cannot tell
+// a delivered frame from a discarded one. The status callback below is invoked synchronously from
+// inside notify() (BLECharacteristic.cpp), so reading this flag immediately after the call reports
+// that send's real outcome. Without it send_packet() reported success for frames Bluedroid dropped on
+// the chip, which is what made a 50 Hz stream that never left the radio look healthy on serial
+// while the relay saw only a fraction of the frames (2026-09-20 span-suppression investigation).
+volatile bool g_last_notify_ok = false;
+
+class NotifyStatusCallback : public BLECharacteristicCallbacks {
+    void onStatus(BLECharacteristic *characteristic, Status status, uint32_t code) override {
+        g_last_notify_ok = (status == Status::SUCCESS_NOTIFY);
+    }
+};
+
 // Set by the notify-characteristic's write callback (laptop -> device frames arrive there since
 // this is a symmetric two-characteristic link, matching comms/src/cg_comms/transport/ble.py).
 struct IncomingFrame {
@@ -140,6 +155,17 @@ class ServerCallbacks : public BLEServerCallbacks {
         g_connected = true;
         Serial.println("[ble] connected");
     }
+    // Windows picks the connection interval when we don't ask, and its default (~30-45ms) cannot
+    // drain a 50Hz (20ms) stream — each interval carries fewer frames than we produce, Bluedroid's
+    // tx buffer backs up, and notify() starts failing with rc=-1. Two peripherals sharing one
+    // adapter halves the per-link budget again, which is why whichever board connects first (and
+    // so streams for longer before the second arrives) shows it worst. Request 7.5-15ms: a
+    // peripheral-initiated L2CAP connection-parameter-update, which Windows honours far more often
+    // than the passive advertising hint. Only a request — the central may refuse or pick another
+    // value, hence the stall counters in send_sensor_frame() rather than trusting it took.
+    void onConnect(BLEServer *server, esp_ble_gatts_cb_param_t *param) override {
+        server->updateConnParams(param->connect.remote_bda, 0x06, 0x0C, 0, 400);
+    }
     void onDisconnect(BLEServer *server) override {
         g_connected = false;
         g_handshake_done = false;
@@ -161,6 +187,7 @@ void ble_setup() {
 
     g_notify_char = service->createCharacteristic(
         CG_DEMO_BLE_NOTIFY_CHAR_UUID, BLECharacteristic::PROPERTY_NOTIFY);
+    g_notify_char->setCallbacks(new NotifyStatusCallback());
     g_notify_cccd = new BLE2902();
     g_notify_char->addDescriptor(g_notify_cccd);
 
@@ -199,7 +226,15 @@ bool send_packet(uint8_t packet_type, const uint8_t *plaintext, size_t plaintext
         return false;
     }
     g_notify_char->setValue(frame, frame_len);
+    g_last_notify_ok = false;
     g_notify_char->notify();
+    if (!g_last_notify_ok) {
+        // Controller rejected the frame (tx buffer full). The seq/ext_seq minted above is burned
+        // either way — never reuse it, since a repeated GCM nonce under the same key is a hard
+        // protocol violation. A gap in the relay's replay window is the correct, expected outcome
+        // of a dropped frame; SequenceTracker tolerates gaps, it only rejects repeats.
+        return false;
+    }
     if (wire_seq_out != nullptr) {
         *wire_seq_out = seq;
     }
@@ -428,20 +463,31 @@ void send_sensor_frame() {
     memcpy(payload + 18, offhand, 12);
     memcpy(payload + 30, torso, 12);
 
+    // Rate-limited to 1 line/sec: at 50 Hz an unthrottled print would flood the monitor and
+    // slow the loop. Without this the 50 Hz path is invisible on serial and a soak test looks
+    // healthy while only heartbeats are actually flowing.
+    //
+    // `dropped` counts frames the controller refused (tx buffer full). It is the number that
+    // matters: `sent` alone read a flat 50/s while the relay was receiving far fewer, because the
+    // frames were being generated on time and discarded on-chip. sent+dropped is the generated
+    // rate; `sent` on its own is the delivered rate, and the relay's window span gate sees only
+    // the latter.
+    static uint32_t last_log_ms = 0;
+    static uint32_t sent_since_log = 0;
+    static uint32_t dropped_since_log = 0;
     if (send_packet(CG_PKT_SENSOR_FRAME, payload, sizeof(payload), nullptr, 0)) {
-        // Rate-limited to 1 line/sec: at 50 Hz an unthrottled print would flood the monitor and
-        // slow the loop. Without this the 50 Hz path is invisible on serial and a soak test looks
-        // healthy while only heartbeats are actually flowing.
-        static uint32_t last_log_ms = 0;
-        static uint32_t frames_since_log = 0;
-        frames_since_log++;
-        uint32_t now = millis();
-        if (now - last_log_ms >= 1000) {
-            last_log_ms = now;
-            Serial.printf("[tx] sensor_frames=%lu/s weapon=%u\n", (unsigned long)frames_since_log,
-                          (unsigned)g_weapon_id);
-            frames_since_log = 0;
-        }
+        sent_since_log++;
+    } else {
+        dropped_since_log++;
+    }
+    uint32_t now = millis();
+    if (now - last_log_ms >= 1000) {
+        last_log_ms = now;
+        Serial.printf("[tx] sensor_frames=%lu/s dropped=%lu/s weapon=%u\n",
+                      (unsigned long)sent_since_log, (unsigned long)dropped_since_log,
+                      (unsigned)g_weapon_id);
+        sent_since_log = 0;
+        dropped_since_log = 0;
     }
 }
 
