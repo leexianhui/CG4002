@@ -78,6 +78,7 @@ async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
         max_stale_pct=settings.windowing.max_stale_pct,
         max_span_deviation_pct=settings.windowing.max_span_deviation_pct,
         frame_rate_hz=settings.windowing.frame_rate_hz,
+        trigger_mode=settings.windowing.trigger_mode,
     )
 
     scheme = "wss" if settings.engine_link.use_tls else "ws"
@@ -174,8 +175,10 @@ def main() -> None:
         "--console-level",
         default=None,
         help="Level for the console mirror; defaults to --log-level. Use WARNING to keep the "
-        "terminal readable during a live demo (window_ready/action_classified fire several times "
-        "a second at 50 Hz) while the file keeps every event for cg-latency-report.",
+        "terminal readable during a live demo. In continuous mode (windowing.trigger_mode: false) "
+        "window_ready/action_classified fire several times a second at 50 Hz; in trigger mode "
+        "(comms-demo) they fire once per button press instead. The file keeps every event either "
+        "way for cg-latency-report.",
     )
     args = parser.parse_args()
 

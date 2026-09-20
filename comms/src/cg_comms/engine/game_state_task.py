@@ -24,8 +24,15 @@ from cg_comms.engine.resolver import ActionEvent, Decision, resolve
 from cg_comms.engine.rules import Rules
 from cg_comms.engine.state import MatchState as EngineMatchState
 from cg_comms.engine.state import PlayerState, Vec2
-from cg_comms.messages.enums import WIRE_COMBAT_OUTCOMES, CombatOutcome, FeedbackCode, MatchPhase
-from cg_comms.messages.models import CombatEvent, CombatFeedback
+from cg_comms.messages.enums import (
+    WIRE_COMBAT_OUTCOMES,
+    ActionClass,
+    CombatOutcome,
+    FeedbackCode,
+    GuardState,
+    MatchPhase,
+)
+from cg_comms.messages.models import ActionRecognized, CombatEvent, CombatFeedback
 from cg_comms.messages.models import MatchState as WireMatchState
 
 logger = structlog.get_logger(__name__)
@@ -51,6 +58,8 @@ class GameStateTask:
     on_combat_event: Callable[[CombatEvent], Awaitable[None]]
     on_match_state: Callable[[WireMatchState], Awaitable[None]]
     on_combat_feedback: Callable[[int, CombatFeedback], Awaitable[None]]
+    on_action_recognized: Callable[[ActionRecognized], Awaitable[None]]
+    presence: Callable[[], dict[str, bool]]
 
     state: EngineMatchState = field(default_factory=EngineMatchState, init=False)
     _reorder: ReorderBuffer = field(init=False)
@@ -121,6 +130,8 @@ class GameStateTask:
                 action=event.action.action,
                 confidence=event.action.action_confidence,
                 timestamp=anchored_ts,
+                guard_state=event.action.guard_state,
+                guard_confidence=event.action.guard_confidence,
             )
             self._apply_guard_state(event, anchored_ts)
             dropped_before = self._reorder.dropped_late
@@ -166,6 +177,30 @@ class GameStateTask:
         attacker = self.state.players.get(decision.attacker_id)
         if attacker is not None:
             attacker.last_action = ev.action
+
+        if (
+            attacker is not None
+            and attacker.weapon is not None
+            and (ev.action is not ActionClass.IDLE or ev.guard_state is not GuardState.IDLE)
+        ):
+            target_id = (
+                decision.defender_id
+                if decision.defender_id is not None and self.presence().get(str(decision.defender_id), False)
+                else None
+            )
+            await self.on_action_recognized(
+                ActionRecognized(
+                    timestamp=ev.timestamp,
+                    player_id=ev.player_id,  # type: ignore[arg-type]
+                    weapon=attacker.weapon,  # type: ignore[arg-type]
+                    action=ev.action,
+                    action_confidence=ev.confidence,
+                    guard_state=ev.guard_state,
+                    guard_confidence=ev.guard_confidence,
+                    outcome=decision.outcome,
+                    target_id=target_id,  # type: ignore[arg-type]
+                )
+            )
 
         if decision.outcome in (CombatOutcome.IGNORED, CombatOutcome.STATE_ONLY, CombatOutcome.ON_COOLDOWN):
             # Once the match is ENDED, resolve() refuses every action (its phase gate) and there is no
@@ -279,12 +314,17 @@ class GameStateTask:
                 ),
             )
 
-    async def _broadcast_match_state(self) -> None:
-        await self.on_match_state(
-            WireMatchState(
-                timestamp=monotonic_ms(),
-                phase=self.state.phase,
-                hp={"1": self.state.players[1].hp, "2": self.state.players[2].hp},
-                winner_id=self.state.winner_id,  # type: ignore[arg-type]
-            )
+    def current_match_state(self) -> WireMatchState:
+        """Builds the current `MATCH_STATE` snapshot without sending it — used by engine/app.py to
+        answer a fresh `/visualizer/*` connection immediately (docs/DEMO_TRIGGERED_ACTION_PLAN.md
+        §7.4), and internally by `_broadcast_match_state` so both paths construct the same shape."""
+        return WireMatchState(
+            timestamp=monotonic_ms(),
+            phase=self.state.phase,
+            hp={"1": self.state.players[1].hp, "2": self.state.players[2].hp},
+            winner_id=self.state.winner_id,  # type: ignore[arg-type]
+            connected=self.presence(),
         )
+
+    async def _broadcast_match_state(self) -> None:
+        await self.on_match_state(self.current_match_state())

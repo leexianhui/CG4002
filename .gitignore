@@ -73,6 +73,17 @@ visualizer_demo/CG4002VisualizerDemo/UserSettings/
 visualizer_demo/CG4002VisualizerDemo/MemoryCaptures/
 visualizer_demo/CG4002VisualizerDemo/obj/
 
+# --- visualizer_demo: Unity Hub-generated replacement project (superseding CG4002VisualizerDemo/
+# --- above once the scene migration is verified) ---
+visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/Library/
+visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/Temp/
+visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/Logs/
+visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/Build/
+visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/Builds/
+visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/UserSettings/
+visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/MemoryCaptures/
+visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/obj/
+
 *.csproj
 *.sln
 *.user

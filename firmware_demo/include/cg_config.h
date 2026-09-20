@@ -22,5 +22,18 @@
 // Wire one leg to this GPIO and the other to GND; INPUT_PULLUP means a press reads LOW.
 #define CG_DEMO_WEAPON_BUTTON_PIN 4
 
+// Motion-trigger buttons (Category 1 — reach the engine via Ultra96 classification, never named
+// directly by firmware). Trigger id 3 is the guard button; it is still a plain button here, guard
+// state is a classifier output, not a firmware decision. Wire each leg to GND; INPUT_PULLUP.
+#define CG_DEMO_ACTION_BUTTON_COUNT 3
+#define CG_DEMO_ACTION_BUTTON_PINS { 25, 26, 27 }
+#define CG_DEMO_ACTION_BUTTON_TRIGGER_IDS { 1, 2, 3 }
+#define CG_DEMO_BUTTON_DEBOUNCE_MS 200
+
+// Frames tagged CG_FLAG_MOTION_ACTIVE per capture. Must equal the relay's windowing.window_samples
+// (comms/configs/relay.p1.yaml) — a mismatch means the relay's window never lines up with the
+// firmware's capture and the trigger_id gets attached to the wrong (or no) SensorWindow.
+#define CG_DEMO_CAPTURE_FRAMES 40
+
 #define CG_DEMO_SENSOR_FRAME_INTERVAL_MS 20  // 50 Hz
 #define CG_DEMO_HEARTBEAT_INTERVAL_MS 1000   // 1 Hz

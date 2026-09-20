@@ -1,6 +1,11 @@
 # Demo-only ACTION_RESULT cycle for cg-ultra96-sim, used by the 3-week Comms demo
 # (firmware_demo/, visualizer_demo/) instead of a real classifier.
 #
+# No longer the demo's classifier source: the triggered-action demo runs cg-ultra96-sim with
+# --trigger-map comms/configs/scenarios/demo_trigger_map.yaml instead (button press -> the action the
+# player actually pressed). This file is kept as the driver for the no-hardware mock rig and the e2e
+# tests (comms/tests/test_e2e_mock.py), which still want an unconditional cycle with no button input.
+#
 # ultra96_sim.py cycles these on every incoming SENSOR_WINDOW request, not on a timer, so delay_ms
 # is unused here (kept only because scenario.py's loader requires the field) — see
 # comms/src/cg_comms/mock/ultra96_sim.py's _handle_client.

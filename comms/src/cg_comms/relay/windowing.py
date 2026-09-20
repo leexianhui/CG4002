@@ -1,9 +1,15 @@
-"""SENSOR_FRAME (50 Hz) -> SENSOR_WINDOW (10 Hz) assembly (COMMS_IMPLEMENTATION_PLAN.md §7).
+"""SENSOR_FRAME (50 Hz) -> SENSOR_WINDOW (10 Hz, or one-per-capture) assembly
+(COMMS_IMPLEMENTATION_PLAN.md §7, docs/DEMO_TRIGGERED_ACTION_PLAN.md §3.2).
 
 Two ring buffers per player (dominant/off-hand wrist), sized from shared/config/sensors.yaml.
 Skips emission (never sends a partial/garbage window) if too many samples are stale or the actual
 span deviates too far from the nominal stride timing, and sends nothing at all until a weapon has
 been confirmed by an RFID_EVENT.
+
+In `trigger_mode` (comms-demo only), stride-based continuous emission is replaced by an
+arm/count/emit/refractory state machine keyed on CG_FLAG_MOTION_ACTIVE: exactly one SensorWindow is
+emitted per tagged button-press capture, carrying the firmware's trigger_id. `trigger_mode=False`
+(the default, and the only mode the real game uses) is bit-for-bit the original stride behaviour.
 """
 
 from __future__ import annotations
@@ -11,9 +17,21 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 
+import structlog
+
 from cg_comms.messages.enums import Weapon
 from cg_comms.messages.models import SensorWindow
-from cg_comms.protocol.constants import ACCEL_LSB_PER_G, FLAG_DOM_STALE, FLAG_OFF_STALE, GYRO_LSB_PER_DPS
+from cg_comms.protocol.constants import (
+    ACCEL_LSB_PER_G,
+    FLAG_DOM_STALE,
+    FLAG_MOTION_ACTIVE,
+    FLAG_OFF_STALE,
+    FLAG_TRIGGER_ID_MASK,
+    FLAG_TRIGGER_ID_SHIFT,
+    GYRO_LSB_PER_DPS,
+)
+
+logger = structlog.get_logger(__name__)
 
 _ACCEL_AXES = 3  # ax, ay, az; remaining three axes are gx, gy, gz
 
@@ -54,11 +72,17 @@ class PlayerWindower:
     max_stale_pct: float
     max_span_deviation_pct: float
     frame_rate_hz: float
+    trigger_mode: bool = False
     _request_ids: _RequestIdCounter = field(default_factory=_RequestIdCounter, init=False)
     _dominant: "deque[_RingSample]" = field(init=False)
     _offhand: "deque[_RingSample]" = field(init=False)
     _frame_count: int = field(default=0, init=False)
     _current_weapon: Weapon | None = field(default=None, init=False)
+    # Trigger-mode-only state (docs/DEMO_TRIGGERED_ACTION_PLAN.md §3.2). Unused when trigger_mode=False.
+    _armed: bool = field(default=False, init=False)
+    _capture_remaining: int = field(default=0, init=False)
+    _capture_trigger_id: int = field(default=0, init=False)
+    _refractory: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
         self._dominant = deque(maxlen=self.window_samples)
@@ -78,14 +102,55 @@ class PlayerWindower:
         dominant_raw: tuple[int, ...],
         offhand_raw: tuple[int, ...],
     ) -> SensorWindow | None:
-        """Feeds one decoded SENSOR_FRAME's dominant/off-hand samples. Returns a SensorWindow if
-        this frame completes a stride and the window passes the staleness/span checks, else None."""
+        """Feeds one decoded SENSOR_FRAME's dominant/off-hand samples.
+
+        `trigger_mode=False` (default): returns a SensorWindow if this frame completes a stride and
+        the window passes the staleness/span checks, else None — bit-for-bit the original behaviour.
+
+        `trigger_mode=True`: returns a SensorWindow (with `trigger_id` set) exactly once per tagged
+        button-press capture, else None. See docs/DEMO_TRIGGERED_ACTION_PLAN.md §3.2.
+        """
         self._dominant.append(_RingSample(engine_ts_ms, dominant_raw, bool(flags & FLAG_DOM_STALE)))
         self._offhand.append(_RingSample(engine_ts_ms, offhand_raw, bool(flags & FLAG_OFF_STALE)))
         self._frame_count += 1
 
+        if self.trigger_mode:
+            return self._ingest_frame_triggered(engine_ts_ms, flags)
+
         if self._frame_count % self.stride_frames != 0:
             return None
+        return self._build_window_if_gates_pass(engine_ts_ms, trigger_id=None)
+
+    def _ingest_frame_triggered(self, engine_ts_ms: int, flags: int) -> SensorWindow | None:
+        tagged = bool(flags & FLAG_MOTION_ACTIVE)
+
+        if self._refractory:
+            # Ignore MOTION_ACTIVE (a stuck-low button) until an untagged frame is seen; firmware
+            # guarantees untagged frames between presses, so this is belt-and-braces only.
+            if not tagged:
+                self._refractory = False
+            return None
+
+        if not self._armed:
+            if not tagged:
+                return None
+            self._armed = True
+            self._capture_trigger_id = (flags & FLAG_TRIGGER_ID_MASK) >> FLAG_TRIGGER_ID_SHIFT
+            self._capture_remaining = self.window_samples
+
+        self._capture_remaining -= 1
+        if self._capture_remaining > 0:
+            return None
+
+        trigger_id = self._capture_trigger_id
+        self._armed = False
+        self._refractory = True
+        window = self._build_window_if_gates_pass(engine_ts_ms, trigger_id=trigger_id)
+        if window is None:
+            logger.info("window_suppressed", player_id=self.player_id, trigger_id=trigger_id)
+        return window
+
+    def _build_window_if_gates_pass(self, engine_ts_ms: int, trigger_id: int | None) -> SensorWindow | None:
         if len(self._dominant) < self.window_samples:
             return None
         if self._current_weapon is None:
@@ -115,4 +180,5 @@ class PlayerWindower:
             dominant=[_scale_sample(s.values) for s in self._dominant],
             offhand=[_scale_sample(s.values) for s in self._offhand],
             stale_pct=stale_pct,
+            trigger_id=trigger_id,
         )

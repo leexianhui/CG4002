@@ -27,7 +27,7 @@ and how to read the result.
 
 ```bash
 cd comms
-.venv/Scripts/python.exe -m pytest -q       # 152 passed
+.venv/Scripts/python.exe -m pytest -q       # 165 passed
 ```
 
 If this fails, fix it before touching hardware: `tests/test_e2e_mock.py` drives the same relay,
@@ -68,25 +68,42 @@ To run the pieces by hand anyway, use that order, and see `comms/README.md` for 
 
 ## 2. What a healthy run looks like
 
-In sequence, within ~15 s of launch:
+**This is the demo rig (`trigger_mode: true`, `configs/relay.p1.yaml`), not the mock/e2e-test rig.**
+The button wiring is:
+
+| Button | GPIO | Trigger id | Effect |
+|---|---|---|---|
+| Weapon | 4 | — | Cycles SWORD → SPEAR → MACE. Confirm in the *relay* log (`weapon_confirmed`), not on the phone — nothing is broadcast to a visualizer for this press |
+| Action 1 | 25 | 1 | One tagged 40-frame capture → one `SENSOR_WINDOW` → one classification |
+| Action 2 | 26 | 2 | Same, trigger id 2 |
+| Action 3 (guard) | 27 | 3 | Same, trigger id 3. Still a plain button in firmware — guard is a classifier output, not a firmware decision |
+
+In sequence, per button press, within a couple seconds of the press:
 
 | Where | Line | Means |
 |---|---|---|
-| `[engine]` | `ws_server_listening` | engine is accepting connections |
-| `[engine]` | `ws_client_connected path=/relay/1` | relay authenticated (bearer token matches) |
-| `[relay]` | `timesync_seeded offset_ms=...` | **the protocol works** -- HELLO/HELLO_ACK + 8 TIME_SYNC exchanges all decoded, so framing, AES-GCM, and CRC are all correct end to end |
-| `[relay]` | `window_ready request_id=N weapon=SWORD` | 40 sensor frames buffered and passed the staleness/span checks |
-| `[ultra96]` | `ultra96_sim_classified action=...` | classifier stand-in answered that window |
+| `[engine]` | `ws_server_listening` | engine is accepting connections (once, at startup) |
+| `[engine]` | `ws_client_connected path=/relay/1` | relay authenticated (bearer token matches, once at startup) |
+| `[relay]` | `timesync_seeded offset_ms=...` | **the protocol works** -- HELLO/HELLO_ACK + 8 TIME_SYNC exchanges all decoded, so framing, AES-GCM, and CRC are all correct end to end (once, at startup) |
+| `[relay]` | `window_ready request_id=N weapon=SWORD trigger_id=1` | the one tagged capture from this press passed the staleness/span checks |
+| `[ultra96]` | `ultra96_sim_classified action=...` | classifier stand-in answered that window, from `demo_trigger_map.yaml`'s `(weapon, trigger_id)` row |
 | `[relay]` | `action_classified action=...` | result cleared the confidence gate, forwarded to the engine |
-| `[engine]` | `combat_resolved outcome=HIT damage=12 defender_hp=88` | engine adjudicated it |
-| `[viz1]`/`[viz2]` | `visualizer_sim_combat_event ... defender_hp=88` | broadcast reached both phones |
-| `[viz*]` | `visualizer_sim_match_state hp_p1=100 hp_p2=88` | HP actually moved |
+| `[engine]` | `ACTION_RECOGNIZED` broadcast | engine reports what was recognised, regardless of outcome -- this is the message Unity's feed prints, and it fires even with no P2 and even for IDLE+GUARDING |
+| phone HUD | `> P1 used HORIZONTAL_SWING` (or `> P1 used GUARD` for trigger id 3) | the demo's actual proof: one press produced exactly one line |
 
-`timesync_seeded` is the single most informative line in the whole system: everything before it is
-protocol correctness, everything after is application logic.
+**One of each per press; silence between presses is healthy.** This replaces the old continuous-mode
+expectation below the fold -- under `trigger_mode` there is no windowing at all while idle, so a
+quiet relay log between button presses is the *designed* state, not a stall. (The old "several times
+a second" description applied to `stride_frames`-driven continuous windowing, which is still the
+real-game default but is not how the demo runs.)
 
-The demo runs itself down in about 20 s -- the scenario swings continuously, so player 2 hits 0 HP
-and you get `phase=ENDED winner=1`. See "Restarting a match" below.
+`timesync_seeded` is still the single most informative line for protocol-layer health: everything
+before it is protocol correctness, everything after is application logic. It fires once at startup,
+not per press.
+
+`combat_resolved` / HP movement only happens with a second player position flowing (M4/M5, not in
+NOW/NEXT scope) -- a P1-only run never produces it, and that is a PASS, not a failure. See §3 and
+`docs/DEMO_TRIGGERED_ACTION_PLAN.md` §15 row 6.
 
 ## 3. Failure modes, and what each one actually means
 
@@ -133,6 +150,31 @@ firmware's protocol port has drifted. `cg_config.h`'s `CG_DEMO_PSK_HEX` must equ
 
 **`heartbeat_stale` then `link_lost`.** No packet from the device for 3 s. On BLE: board reset, out
 of range, or the connection dropped. The relay reconnects on its own.
+
+**Demo-specific (trigger mode) failures** -- see `docs/DEMO_TRIGGERED_ACTION_PLAN.md` §15 for the
+full decoder; the ones most likely to bite on demo day:
+
+- **Weapon press prints nothing on the phone.** Correct behaviour, not a bug -- `WEAPON_CHANGED` is
+  relay→engine only. Confirm `weapon_confirmed` in the *relay* log instead. The phone's feed only
+  shows the weapon on the *next* action, as `> P1 weapon = SWORD` printed immediately before that
+  action's line.
+- **Every button works except guard (trigger id 3).** If `ACTION_RECOGNIZED` never follows a
+  `guard`-classified window, the engine's emit rule was implemented as `action != IDLE` instead of
+  `action != IDLE OR guard_state != IDLE` -- guard is `action: IDLE` + `guard_state: GUARDING`, so the
+  narrower rule silently drops it while every log upstream looks perfect.
+- **One press produces multiple actions.** (a) `trigger_mode: false` on the laptop → continuous
+  windowing, `window_ready` every ~100 ms; (b) no firmware debounce → two capture lines on the serial
+  monitor for one press, raise `CG_DEMO_BUTTON_DEBOUNCE_MS`; (c) back-to-back windows exactly
+  `window_samples` apart → the refractory reset is missing, the capture re-armed while still tagged.
+- **`targetId` is non-null with no P2 connected.** Wrong: that field must be gated on relay presence
+  (`/relay/<id>`), never copied from the resolver's `defender_id` (which is populated even with no
+  P2). Expect `targetId: null` whenever `MATCH_STATE.connected["2"] == false`.
+- **P2 shows HP 100 instead of `OFFLINE`.** The engine always carries both HP keys by design (no P2
+  connection needed for `MATCH_STATE.hp` to exist) -- the HUD must read `connected`, not infer
+  presence from HP.
+- **Phone shows `engine: connect_failed: ...`.** Tunnel or TLS. Check the phone's own SSH tunnel
+  first (§7/§8 below), then a cert error specifically (§8's socat fallback), then the bearer token in
+  the Unity Inspector against `.env.engine`.
 
 ## 4. Reading the logs
 
@@ -486,14 +528,39 @@ laptop, which has a working path. Optimising that away is not worth the risk.
 
 ## 8. Adding the Unity phone
 
-Point `EngineClient`'s `Host` at your laptop's LAN IP (not `127.0.0.1`) and use the same bearer
-token. The engine's cert has SANs for `127.0.0.1`, `localhost`, and `cg4002-engine` only, so a phone
-connecting by IP needs that IP added:
+**Superseded 2026-09-19: no laptop relay hop, no LAN IP, no cert regeneration.** An earlier version
+of this section said to point `EngineClient.Host` at the laptop's LAN IP and regenerate
+`certs/engine.crt` with that IP in its SANs, because the existing cert only covers `127.0.0.1` /
+`localhost` / `cg4002-engine`. That guidance is obsolete now that the phone opens its **own** SSH `-J`
+tunnel straight to the Ultra96 (the same jump-host path the laptop uses, §7), forwarding the engine's
+port to the phone's own loopback:
 
 ```bash
-scripts/gen_certs.sh ./certs 365 <laptop-LAN-IP>
+# on the PHONE (Termux)
+ssh -J <user>@stujump.comp.nus.edu.sg -L 127.0.0.1:8443:127.0.0.1:8443 xilinx@172.26.191.151 -N
 ```
 
-Then restart the engine and re-copy the fingerprint into `PinnedCertSha256`. Run `cg-visualizer-sim`
-against the engine first to confirm the engine side is fine before debugging Unity -- it exercises
-the identical path.
+With that tunnel open, `EngineClient.Host = "127.0.0.1"` is correct, exactly as it is for anything
+else running on the same machine as the tunnel's local end. The **existing** cert SANs already cover
+this -- no LAN IP is ever involved, and there is no laptop relay hop for the phone to go through.
+Never regenerate the cert for this step.
+
+Use the same bearer token as everything else (`.env.engine`'s `CG_ENGINE_BEARER_TOKEN`, pasted into
+the Unity Inspector's `BearerToken` field), and copy the engine cert's SHA-256 fingerprint into
+`PinnedCertSha256` the first time (`openssl x509 -noout -fingerprint -sha256 -in comms/certs/engine.crt`).
+
+**If Unity/IL2CPP rejects the self-signed cert (TLS handshake fails, not a tunnel problem)** --
+terminate TLS on the phone instead of touching the engine or relay's TLS config:
+
+```bash
+# on the PHONE, a second Termux session
+socat TCP-LISTEN:8080,reuseaddr,fork OPENSSL:127.0.0.1:8443,verify=0
+```
+
+Then set `UseTls = false` and `Port = 8080` in the Inspector so Unity talks to the socat sidecar over
+plain `ws://127.0.0.1:8080` instead of `wss://127.0.0.1:8443` directly. The engine's listener and the
+relay→engine leg are never reconfigured for this -- `use_tls: false` in `engine.yaml` would break the
+already-working relay leg, so the fallback only ever happens on the phone.
+
+Run `cg-visualizer-sim` against the engine first (from wherever the tunnel already terminates) to
+confirm the engine side is fine before debugging Unity -- it exercises the identical path.

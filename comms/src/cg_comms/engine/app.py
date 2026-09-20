@@ -19,10 +19,17 @@ from cg_comms.engine.broadcaster import broadcast_to_visualizers, send_to_relay
 from cg_comms.engine.game_state_task import GameStateTask
 from cg_comms.engine.inbound import route_inbound
 from cg_comms.engine.rules import Rules
-from cg_comms.engine.ws_server import ConnectionRegistry, WsServerConfig, build_ssl_context, run_ws_server
+from cg_comms.engine.ws_server import (
+    VISUALIZER_PATHS,
+    ConnectionRegistry,
+    WsServerConfig,
+    build_ssl_context,
+    run_ws_server,
+)
 from cg_comms.logging_setup import configure_logging
-from cg_comms.messages.models import CombatEvent, CombatFeedback
+from cg_comms.messages.models import ActionRecognized, CombatEvent, CombatFeedback
 from cg_comms.messages.models import MatchState as WireMatchState
+from cg_comms.messages.validate import dump_app_message
 
 logger = structlog.get_logger(__name__)
 
@@ -41,6 +48,9 @@ async def run_engine(settings: EngineSettings) -> None:
     async def on_combat_feedback(player_id: int, feedback: CombatFeedback) -> None:
         await send_to_relay(registry, player_id, feedback)
 
+    async def on_action_recognized(event: ActionRecognized) -> None:
+        await broadcast_to_visualizers(registry, event)
+
     task = GameStateTask(
         rules=rules,
         reorder_delay_ms=rules.config.reorder_delay_ms,
@@ -48,12 +58,29 @@ async def run_engine(settings: EngineSettings) -> None:
         on_combat_event=on_combat_event,
         on_match_state=on_match_state,
         on_combat_feedback=on_combat_feedback,
+        on_action_recognized=on_action_recognized,
+        presence=registry.relay_presence,
     )
 
     async def on_message(path: str, raw: str) -> None:
         event = route_inbound(path, raw)
         if event is not None:
             await task.submit(event)
+
+    async def on_connect(path: str) -> None:
+        if path in VISUALIZER_PATHS:
+            # §7.4: a phone that attaches after the match has been running otherwise sees only
+            # placeholder text until the next HP change, which in a P1-only run never comes.
+            conn = registry.connection_for_path(path)
+            if conn is not None:
+                await conn.enqueue(dump_app_message(task.current_match_state()))
+        # Any connect (relay or visualizer) can flip `MATCH_STATE.connected` or is otherwise worth
+        # re-announcing, so broadcast the current snapshot to both visualizers immediately rather
+        # than waiting for the next game event.
+        await broadcast_to_visualizers(registry, task.current_match_state())
+
+    async def on_disconnect(path: str) -> None:
+        await broadcast_to_visualizers(registry, task.current_match_state())
 
     ssl_context = build_ssl_context(settings.cert_path, settings.key_path) if settings.use_tls else None
     ws_config = WsServerConfig(
@@ -66,7 +93,7 @@ async def run_engine(settings: EngineSettings) -> None:
 
     await task.start_match()
     await asyncio.gather(
-        run_ws_server(ws_config, registry, on_message, stop_event),
+        run_ws_server(ws_config, registry, on_message, stop_event, on_connect=on_connect, on_disconnect=on_disconnect),
         task.run(stop_event),
     )
 

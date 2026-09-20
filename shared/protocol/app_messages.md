@@ -79,6 +79,8 @@ updates `PlayerState.weapon` and resets nothing else — cooldowns and HP are in
 **Position is echoed, not just consumed.** The engine forwards each player's `POSITION` to the *other*
 player's visualizer, using its own copy — the visualizer needs the opponent's position to place the
 avatar, and both clients must agree on the engine's version of it, not derive it independently.
+**Specified but not implemented today**: no sender currently emits `POSITION` (docs/
+DEMO_TRIGGERED_ACTION_PLAN.md §10) — see that document for real-positioning future readiness.
 
 ### 2.4 `COMBAT_EVENT` — engine → both visualizers
 
@@ -100,17 +102,23 @@ clamped at 0.
 
 ```jsonc
 { "type": "MATCH_STATE", "version": 1, "timestamp": 0, "phase": "IN_PROGRESS",
-  "hp": { "1": 40, "2": 37 }, "winnerId": null, "reason": null }
+  "hp": { "1": 40, "2": 37 }, "winnerId": null, "reason": null,
+  "connected": { "1": true, "2": false } }
 ```
 
 - `phase` — one of `WAITING`, `ALIGNING`, `IN_PROGRESS`, `PAUSED`, `ENDED`.
 - `winnerId` — `1`, `2`, or `null` while the match has no winner yet.
 - `reason` — `null` in normal play; a short reason code when `phase` changes for a notable cause, e.g.
   `"LINK_LOST"` when a player's link drops (§6 of the comms plan) or `"HP_ZERO"` when a match ends.
+- `connected` — optional, `null`/absent from a sender that predates this field. Whether each player's
+  relay is currently connected to the engine (`engine/ws_server.py`'s `/relay/<id>` registry), not
+  whether that player's hardware is on. This is the source of truth `ACTION_RECOGNIZED.targetId`
+  (§2.8) is gated on: a single-player match (docs/DEMO_TRIGGERED_ACTION_PLAN.md §8) has
+  `connected: {"1": true, "2": false}`, and P2 never appears as a target.
 
-Sent on every phase transition, on HP change, and as part of the full-state snapshot a visualizer
-receives immediately on connect (so a reconnecting client is never left waiting for the next event to
-know what's going on).
+Sent on every phase transition, on HP change, on relay connect/disconnect, and as part of the
+full-state snapshot a visualizer receives immediately on connect (so a reconnecting client is never
+left waiting for the next event to know what's going on).
 
 ### 2.6 `COOLDOWN_STATE` — engine → both visualizers
 
@@ -138,6 +146,44 @@ counterpart, `mock/firebeetle_sim.py`, need to agree on it, and they do so again
 
 Emitted in pairs by the resolver: `HIT_LANDED` to the attacker's wrist, and exactly one of
 `HIT_TAKEN` / `BLOCKED` / `PARRIED` to the defender's, matching the resolved outcome.
+
+### 2.8 `ACTION_RECOGNIZED` — engine → both visualizers
+
+```jsonc
+{ "type": "ACTION_RECOGNIZED", "version": 1, "timestamp": 0,
+  "playerId": 1, "weapon": "SWORD",
+  "action": "HORIZONTAL_SWING", "actionConfidence": 0.94,
+  "guardState": "IDLE", "guardConfidence": 0.0,
+  "outcome": "IGNORED", "targetId": null }
+```
+
+Reports that an action was *recognised*, independent of whether it went on to resolve into combat
+(docs/DEMO_TRIGGERED_ACTION_PLAN.md §6/§7.2). This is the proof the communications pipeline works even
+in a single-player match, where `COMBAT_EVENT` (§2.4) can never fire — see §8.
+
+- `action` — the full `ActionClass` vocabulary, **including `IDLE`** (unlike `COMBAT_EVENT.action`,
+  which is constrained to the seven combat moves). `action: IDLE` with `guardState: GUARDING` is a
+  guard-only report: guard is not an `ActionClass`, it is two independent fields, `action` and
+  `guardState`, exactly as in `ACTION`/`ACTION_RESULT`.
+- `outcome` — the full `CombatOutcome` vocabulary, all seven values legal here (unlike `COMBAT_EVENT`,
+  which only ever carries the four visible-to-players outcomes). `IGNORED`/`STATE_ONLY`/`ON_COOLDOWN`
+  are recognised-but-not-resolved facts that would otherwise vanish into a log line.
+- `targetId` — a real, currently-connected opponent (per `MATCH_STATE.connected`, §2.5), or `null`.
+  Never copied from the resolver's internal defender id, which is always non-null even with no P2 at
+  all — see §7.2 of the triggered-action plan for why that distinction matters.
+
+**Emitted whenever `action != IDLE OR guardState != IDLE`** — i.e. for every recognised action or
+guard change, not just ones that resolve into combat. Nothing is emitted for pure idle (both fields
+`IDLE`), which is also what a `SENSOR_WINDOW` with no matched trigger classifies as (§3.1).
+
+A guard press is therefore reported as:
+
+```jsonc
+{ "type": "ACTION_RECOGNIZED", "version": 1, "timestamp": 0, "playerId": 1, "weapon": "SWORD",
+  "action": "IDLE", "actionConfidence": 1.0,
+  "guardState": "GUARDING", "guardConfidence": 0.88,
+  "outcome": "STATE_ONLY", "targetId": null }
+```
 
 ---
 
@@ -170,6 +216,11 @@ correlated to its request when one is dropped, and so per-request latency can be
 - `stalePct` — percentage of samples in this window flagged `DOM_STALE`/`OFF_STALE` on the wire. The
   relay does not emit a window at all if this exceeds `maxStalePct` **[config]**; the field is
   included for the Ultra96's own logging, not as a signal it needs to act on.
+- `triggerId` — optional, `null`/absent unless the relay is running in `trigger_mode` (comms-demo
+  only, docs/DEMO_TRIGGERED_ACTION_PLAN.md §3.2/§7): which action button started the tagged capture
+  this window covers. A real classifier reads `dominant`/`offhand`/`sampleRateHz`/`weapon` and
+  **ignores** this field — additive per COMMS_IMPLEMENTATION_PLAN.md §16.3 rule 3, so a model that
+  doesn't know about it behaves identically.
 
 ### 3.2 `ACTION_RESULT` — Ultra96 → relay
 

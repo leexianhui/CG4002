@@ -33,7 +33,14 @@
       "items": { "$ref": "#/$defs/imuSample" },
       "minItems": 1
     },
-    "stalePct": { "type": "number", "minimum": 0, "maximum": 100 }
+    "stalePct": { "type": "number", "minimum": 0, "maximum": 100 },
+    "triggerId": {
+      "description": "Optional. Set only by a triggered-capture relay (comms-demo, docs/DEMO_TRIGGERED_ACTION_PLAN.md §3.2/§7) to the button that started this capture. A real classifier ignores it.",
+      "oneOf": [
+        { "type": "integer", "minimum": 0, "maximum": 7 },
+        { "type": "null" }
+      ]
+    }
   },
   "required": [
     "type", "version", "timestamp", "playerId", "requestId", "weapon",

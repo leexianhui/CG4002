@@ -106,6 +106,7 @@ class MatchState(_Envelope):
     hp: dict[str, int]
     winner_id: PlayerId | None = Field(alias="winnerId", default=None)
     reason: str | None = None
+    connected: dict[str, bool] | None = None
 
     @field_validator("hp")
     @classmethod
@@ -158,6 +159,7 @@ class SensorWindow(_Envelope):
     dominant: list[ImuSample] = Field(min_length=1)
     offhand: list[ImuSample] = Field(min_length=1)
     stale_pct: float = Field(alias="stalePct", ge=0.0, le=100.0)
+    trigger_id: int | None = Field(alias="triggerId", default=None, ge=0, le=7)
 
 
 class ActionResult(_Envelope):
@@ -172,6 +174,23 @@ class ActionResult(_Envelope):
     guard_confidence: Confidence = Field(alias="guardConfidence")
 
 
+class ActionRecognized(_Envelope):
+    """engine -> both visualizers. app_messages.md §2.8. Reports that an action was *recognised*,
+    independent of whether it resolved into combat — see docs/DEMO_TRIGGERED_ACTION_PLAN.md §6/§7.2.
+    `action` permits IDLE deliberately: a guard-only report is `action: IDLE` + `guardState: GUARDING`.
+    """
+
+    type: Literal["ACTION_RECOGNIZED"] = "ACTION_RECOGNIZED"
+    player_id: PlayerId = Field(alias="playerId")
+    weapon: RealWeapon
+    action: ActionClass
+    action_confidence: Confidence = Field(alias="actionConfidence")
+    guard_state: GuardState = Field(alias="guardState")
+    guard_confidence: Confidence = Field(alias="guardConfidence")
+    outcome: CombatOutcome
+    target_id: PlayerId | None = Field(alias="targetId", default=None)
+
+
 AppMessage = (
     Action
     | WeaponChanged
@@ -182,4 +201,5 @@ AppMessage = (
     | CombatFeedback
     | SensorWindow
     | ActionResult
+    | ActionRecognized
 )

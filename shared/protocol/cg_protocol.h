@@ -68,10 +68,17 @@ extern "C" {
 
 #define CG_FLAG_DOM_STALE     (1u << 0) /* dominant wrist ESP-NOW frame missed this interval    */
 #define CG_FLAG_OFF_STALE     (1u << 1) /* off-hand wrist ESP-NOW frame missed this interval    */
+/* This frame is part of a triggered capture (comms-demo trigger mode): the belt has flagged a
+ * bounded run of SENSOR_FRAMEs as one capture attempt following a button press. Bits 5-7 carry
+ * which button (trigger id) started the capture. Continuous/real-game receivers may ignore both. */
 #define CG_FLAG_MOTION_ACTIVE (1u << 2)
 #define CG_FLAG_LOW_BATTERY   (1u << 3)
 #define CG_FLAG_CALIBRATING   (1u << 4)
-/* bits 5-7 reserved: must be 0 on send, ignored on receive */
+/* bits 5-7: 3-bit trigger id (1-7) identifying which action button started the capture marked by
+ * CG_FLAG_MOTION_ACTIVE; 0 means "not a triggered capture". Previously reserved: must be 0 on send,
+ * ignored on receive, by any receiver built before this change. */
+#define CG_FLAG_TRIGGER_ID_SHIFT 5
+#define CG_FLAG_TRIGGER_ID_MASK  (0x7u << CG_FLAG_TRIGGER_ID_SHIFT)
 
 /* ------------------------------------------------------------------------------------------- */
 /* Wire structs — packed, no padding, field order is the wire order                             */

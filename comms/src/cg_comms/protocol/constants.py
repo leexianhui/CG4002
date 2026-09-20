@@ -66,6 +66,10 @@ FLAG_OFF_STALE: int = 1 << 1
 FLAG_MOTION_ACTIVE: int = 1 << 2
 FLAG_LOW_BATTERY: int = 1 << 3
 FLAG_CALIBRATING: int = 1 << 4
+# Bits 5-7: 3-bit trigger id (1-7) marking which action button started a triggered capture; 0/absent
+# means "not a triggered capture". Previously reserved: must be 0 on send, ignored on receive.
+FLAG_TRIGGER_ID_SHIFT: int = 5
+FLAG_TRIGGER_ID_MASK: int = 0b111 << 5
 
 # IMU fixed-point scaling (wire_protocol.md §3.2), matching MPU-6050 full-scale settings.
 ACCEL_LSB_PER_G: float = 2048.0  # 1 LSB = 1/2048 g, full scale +-16 g

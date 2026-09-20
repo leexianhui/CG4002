@@ -1,0 +1,24 @@
+# Trigger-id -> classified-action table for cg-ultra96-sim (docs/DEMO_TRIGGERED_ACTION_PLAN.md §5.2).
+# Loaded with --trigger-map instead of the default --scenario cycle: the sim classifies from the
+# incoming SENSOR_WINDOW's (weapon, triggerId) instead of stepping through demo_scenario.yaml, so a
+# button press always produces the row the player actually pressed, not the next thing in a cycle.
+#
+# `default` answers a window with no triggerId, or a triggerId with no row for the current weapon:
+# pure idle, deliberately the one combination the engine does not display (§7.2). A row that omits
+# guard_state defaults to GuardState.IDLE, which is what releases a guard.
+default:
+  action: IDLE
+  action_confidence: 1.0
+triggers:
+  SWORD:
+    1: { action: HORIZONTAL_SWING, action_confidence: 0.94 }
+    2: { action: THRUST,           action_confidence: 0.91 }
+    3: { action: IDLE, action_confidence: 1.0, guard_state: GUARDING, guard_confidence: 0.88 }
+  SPEAR:
+    1: { action: SWING,            action_confidence: 0.90 }
+    2: { action: THRUST,           action_confidence: 0.93 }
+    3: { action: IDLE, action_confidence: 1.0, guard_state: GUARDING, guard_confidence: 0.88 }
+  MACE:
+    1: { action: DIAGONAL_SWING,   action_confidence: 0.92 }
+    2: { action: VERTICAL_SWING,   action_confidence: 0.94 }
+    3: { action: IDLE, action_confidence: 1.0, guard_state: GUARDING, guard_confidence: 0.88 }

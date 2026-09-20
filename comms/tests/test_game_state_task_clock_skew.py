@@ -71,6 +71,12 @@ def make_task() -> GameStateTask:
     async def _noop_feedback(_player_id, _feedback):
         return None
 
+    async def _noop_action_recognized(_event):
+        return None
+
+    def _no_presence() -> dict[str, bool]:
+        return {}
+
     task = GameStateTask(
         rules=make_rules(),
         reorder_delay_ms=60,
@@ -78,6 +84,8 @@ def make_task() -> GameStateTask:
         on_combat_event=_noop_event,
         on_match_state=_noop_state,
         on_combat_feedback=_noop_feedback,
+        on_action_recognized=_noop_action_recognized,
+        presence=_no_presence,
     )
     task.state.phase = MatchPhase.IN_PROGRESS
     return task

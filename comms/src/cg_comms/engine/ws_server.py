@@ -90,6 +90,14 @@ class ConnectionRegistry:
     def connection_for_path(self, path: str) -> Connection | None:
         return self._connections.get(path)
 
+    def relay_presence(self) -> dict[str, bool]:
+        """`{"1": bool, "2": bool}` — whether each `/relay/<id>` path is currently registered.
+        The presence source of truth for `MATCH_STATE.connected` and `ACTION_RECOGNIZED.targetId`
+        (docs/DEMO_TRIGGERED_ACTION_PLAN.md §7.2/§7.3)."""
+        return {
+            str(player_id): path in self._connections for path, player_id in RELAY_PATHS.items()
+        }
+
 
 @dataclass
 class WsServerConfig:
@@ -105,9 +113,13 @@ async def run_ws_server(
     registry: ConnectionRegistry,
     on_message: Callable[[str, str], Awaitable[None]],
     stop_event: asyncio.Event,
+    on_connect: Callable[[str], Awaitable[None]] | None = None,
+    on_disconnect: Callable[[str], Awaitable[None]] | None = None,
 ) -> None:
     """Serves until `stop_event` is set. `on_message(path, raw_json)` fires for every inbound text
-    frame on a recognized relay/visualizer path."""
+    frame on a recognized relay/visualizer path. `on_connect`/`on_disconnect`, if given, fire after
+    `register`/`unregister` respectively, with the path — used by engine/app.py to keep
+    `MATCH_STATE.connected` and visualizer snapshots live (docs/DEMO_TRIGGERED_ACTION_PLAN.md §7.4)."""
 
     async def handler(websocket: WebSocketServerProtocol) -> None:
         path = websocket.request.path
@@ -125,6 +137,8 @@ async def run_ws_server(
         # had no answer: websockets' own "connection open" line carries no path, so four connections
         # were four identical lines. Log the path, which identifies who arrived.
         logger.info("ws_client_connected", path=path)
+        if on_connect is not None:
+            await on_connect(path)
         try:
             async for raw in websocket:
                 text = raw if isinstance(raw, str) else raw.decode("utf-8")
@@ -134,6 +148,8 @@ async def run_ws_server(
         finally:
             await registry.unregister(conn)
             logger.info("ws_client_disconnected", path=path)
+            if on_disconnect is not None:
+                await on_disconnect(path)
 
     async with websockets.serve(handler, config.host, config.port, ssl=config.ssl_context):
         logger.info("ws_server_listening", host=config.host, port=config.port, tls=config.ssl_context is not None)

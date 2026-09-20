@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from cg_comms.config import WindowingConfig, load_yaml, shared_config_dir
 from cg_comms.messages.enums import Weapon
-from cg_comms.protocol.constants import FLAG_DOM_STALE
+from cg_comms.protocol.constants import FLAG_DOM_STALE, FLAG_MOTION_ACTIVE, FLAG_TRIGGER_ID_SHIFT
 from cg_comms.relay.windowing import PlayerWindower
 
 RAW_SAMPLE = (100, -50, 2048, 10, -10, 0)  # arbitrary but fixed raw int16 (ax,ay,az,gx,gy,gz) tuple
@@ -141,3 +141,49 @@ def test_span_deviation_beyond_threshold_suppresses_emission():
     w.on_weapon_confirmed(Weapon.SWORD)
     results = feed_all(w, [0, 20, 40, 60, 93])  # deviation = 13/80 = 16.25% > 15%
     assert results[-1] is None
+
+
+# --- trigger mode (docs/DEMO_TRIGGERED_ACTION_PLAN.md §3.2): one window per tagged capture ----------
+
+def _tagged_flags(count: int, trigger_id: int) -> list[int]:
+    return [FLAG_MOTION_ACTIVE | (trigger_id << FLAG_TRIGGER_ID_SHIFT)] * count
+
+
+def test_trigger_mode_one_tagged_burst_yields_exactly_one_window_with_trigger_id():
+    w = make_windower(trigger_mode=True)
+    w.on_weapon_confirmed(Weapon.SWORD)
+    flags = _tagged_flags(5, trigger_id=3)
+    results = feed_all(w, [0, 20, 40, 60, 80], flags=flags)
+    assert results[:-1] == [None, None, None, None]
+    window = results[-1]
+    assert window is not None
+    assert window.trigger_id == 3
+    assert window.window_start_ts == 0
+    assert window.window_end_ts == 80
+
+
+def test_trigger_mode_untagged_frames_never_emit():
+    w = make_windower(trigger_mode=True)
+    w.on_weapon_confirmed(Weapon.SWORD)
+    timestamps = [i * 20 for i in range(200)]
+    results = feed_all(w, timestamps)  # flags defaults to all-zero (untagged)
+    assert all(r is None for r in results)
+
+
+def test_trigger_mode_two_bursts_yield_exactly_two_windows():
+    w = make_windower(trigger_mode=True)
+    w.on_weapon_confirmed(Weapon.SWORD)
+    flags = _tagged_flags(5, trigger_id=1) + [0, 0] + _tagged_flags(5, trigger_id=2)
+    timestamps = [i * 20 for i in range(len(flags))]
+    results = feed_all(w, timestamps, flags=flags)
+    windows = [r for r in results if r is not None]
+    assert len(windows) == 2
+    assert windows[0].trigger_id == 1
+    assert windows[1].trigger_id == 2
+
+
+def test_trigger_mode_burst_without_weapon_confirmed_emits_nothing():
+    w = make_windower(trigger_mode=True)
+    flags = _tagged_flags(5, trigger_id=1)
+    results = feed_all(w, [0, 20, 40, 60, 80], flags=flags)
+    assert all(r is None for r in results)

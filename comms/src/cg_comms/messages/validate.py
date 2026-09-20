@@ -16,6 +16,7 @@ from pydantic import BaseModel, ValidationError
 
 from cg_comms.messages.models import (
     Action,
+    ActionRecognized,
     ActionResult,
     AppMessage,
     CombatEvent,
@@ -38,6 +39,7 @@ _TYPE_TO_MODEL: dict[str, type[BaseModel]] = {
     "COMBAT_FEEDBACK": CombatFeedback,
     "SENSOR_WINDOW": SensorWindow,
     "ACTION_RESULT": ActionResult,
+    "ACTION_RECOGNIZED": ActionRecognized,
 }
 
 

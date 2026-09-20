@@ -44,6 +44,9 @@ windowing:
   max_stale_pct: 20.0
   max_span_deviation_pct: 15.0
   frame_rate_hz: 50.0
+  # comms-demo: one tagged capture -> one SensorWindow. Must match firmware_demo's
+  # CG_DEMO_CAPTURE_FRAMES (== window_samples above). See docs/DEMO_TRIGGERED_ACTION_PLAN.md §3.2.
+  trigger_mode: true
 
 timesync:
   handshake_samples: 8

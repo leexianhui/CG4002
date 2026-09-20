@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cg4002.internal/schemas/action_recognized.schema.json",
+  "title": "ACTION_RECOGNIZED",
+  "description": "engine -> both visualizers. See shared/protocol/app_messages.md §2.8. Reports that an action was recognised, independent of whether it resolved into combat (docs/DEMO_TRIGGERED_ACTION_PLAN.md §6/§7.2). `action` permits IDLE deliberately: a guard-only report is action=IDLE, guardState=GUARDING.",
+  "type": "object",
+  "properties": {
+    "type": { "const": "ACTION_RECOGNIZED" },
+    "version": { "type": "integer", "const": 1 },
+    "timestamp": { "type": "integer", "minimum": 0 },
+    "playerId": { "type": "integer", "enum": [1, 2] },
+    "weapon": { "type": "string", "enum": ["SWORD", "SPEAR", "MACE"] },
+    "action": {
+      "type": "string",
+      "enum": [
+        "IDLE", "HORIZONTAL_SWING", "VERTICAL_SWING", "DIAGONAL_SWING",
+        "THRUST", "CHARGED_ATTACK", "CHARGED_THRUST", "SWING"
+      ]
+    },
+    "actionConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "guardState": { "type": "string", "enum": ["IDLE", "GUARDING"] },
+    "guardConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "outcome": {
+      "type": "string",
+      "enum": ["IGNORED", "STATE_ONLY", "ON_COOLDOWN", "MISS", "HIT", "BLOCK", "PARRY"]
+    },
+    "targetId": {
+      "description": "A real, connected opponent, or null. Never copied from a resolver default — see §7.2.",
+      "oneOf": [
+        { "type": "integer", "enum": [1, 2] },
+        { "type": "null" }
+      ]
+    }
+  },
+  "required": [
+    "type", "version", "timestamp", "playerId", "weapon", "action", "actionConfidence",
+    "guardState", "guardConfidence", "outcome", "targetId"
+  ],
+  "additionalProperties": false
+}

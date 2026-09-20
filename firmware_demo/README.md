@@ -43,8 +43,33 @@ the ESP32 cross-compiler alone is not enough. On a machine without one the suite
 1. Generate a PSK: `python comms/scripts/gen_psk.py`. Paste the hex into
    `include/cg_config.h`'s `CG_DEMO_PSK_HEX` **and** into `comms/.env`'s `CG_RELAY_PSK_HEX` (or
    `configs/relay.p1.yaml`'s `psk` field) — both ends must use the same key.
-2. Wire a push-button between `CG_DEMO_WEAPON_BUTTON_PIN` (GPIO4 default) and GND — it stands in
-   for the RFID reader, cycling SWORD → SPEAR → MACE on each press.
+2. Wire the buttons. Every leg goes to GND; `INPUT_PULLUP` means a press reads LOW, so no external
+   resistor is needed:
+
+   | Button | GPIO (`cg_config.h`) | Wire protocol effect |
+   |---|---|---|
+   | Weapon | `CG_DEMO_WEAPON_BUTTON_PIN` = 4 | Cycles SWORD → SPEAR → MACE (RFID stand-in). Never named directly by firmware — the relay confirms it, the Ultra96 classifies against it. No windows are emitted until the first press |
+   | Action 1 | `CG_DEMO_ACTION_BUTTON_PINS[0]` = 25, trigger id 1 | Tags a 40-frame capture with trigger id 1. What action this becomes is decided entirely by `demo_trigger_map.yaml` on the Ultra96 — the firmware never names an action |
+   | Action 2 | `CG_DEMO_ACTION_BUTTON_PINS[1]` = 26, trigger id 2 | Same, trigger id 2 |
+   | Action 3 (guard) | `CG_DEMO_ACTION_BUTTON_PINS[2]` = 27, trigger id 3 | Same, trigger id 3. This is still a plain button in firmware — guard is a classifier output (`action: IDLE` + `guard_state: GUARDING`), not a firmware decision |
+
+   `CG_DEMO_ACTION_BUTTON_COUNT`, `_PINS`, and `_TRIGGER_IDS` are three parallel arrays in
+   `cg_config.h` — index `i` in one corresponds to index `i` in the others.
+
+3. `CG_DEMO_CAPTURE_FRAMES` (`cg_config.h`, currently 40) **must equal**
+   `configs/relay.p1.yaml`'s `windowing.window_samples`. Each action-button press tags exactly
+   `CG_DEMO_CAPTURE_FRAMES` consecutive `SENSOR_FRAME`s with `CG_FLAG_MOTION_ACTIVE` and a trigger
+   id; the relay's `PlayerWindower` (in `trigger_mode`) counts frames until it has that many tagged
+   ones, then emits exactly one `SENSOR_WINDOW`. If the two numbers disagree, the window boundary
+   the relay expects never lines up with what the firmware actually tagged — the capture either
+   straddles two window-attempts or never fills one, and no window is ever emitted for a press.
+   Change both together, never one alone.
+4. `CG_DEMO_BUTTON_DEBOUNCE_MS` (currently 200) applies to **every** button, weapon included — one
+   physical press must produce exactly one edge. Too short a value and a single press can register
+   as two firmware events, which the relay sees as two separate tagged captures (§15 row 5 in
+   `docs/DEMO_TRIGGERED_ACTION_PLAN.md` — "one press produces multiple actions"). Raise this value
+   first if that happens; do not touch the relay's refractory logic to compensate for a wiring/debounce
+   problem.
 
 ## After flashing
 

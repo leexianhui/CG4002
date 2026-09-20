@@ -28,6 +28,43 @@ CgOutgoingSequenceCounter g_tx_seq;
 CgSequenceTracker g_rx_seq;
 uint8_t g_weapon_id = 0;  // Weapon.NONE — see comms/src/cg_comms/messages/enums.py WIRE_VALUES
 
+// Motion-trigger capture state (see cg_config.h CG_DEMO_ACTION_BUTTON_*). A capture is atomic: a
+// new action-button press while one is already running is ignored, which is what makes one press
+// yield exactly one tagged window even on a double-tap.
+uint32_t g_capture_remaining = 0;
+uint8_t g_capture_trigger_id = 0;
+
+const uint8_t kActionButtonPins[CG_DEMO_ACTION_BUTTON_COUNT] = CG_DEMO_ACTION_BUTTON_PINS;
+const uint8_t kActionButtonTriggerIds[CG_DEMO_ACTION_BUTTON_COUNT] = CG_DEMO_ACTION_BUTTON_TRIGGER_IDS;
+
+// Debounced edge detector shared by the weapon button and every action button. `down` is the
+// debounce-confirmed state; a falling edge is reported at most once per confirmed transition.
+struct DebouncedButton {
+    uint8_t pin;
+    bool raw_down = false;
+    bool down = false;
+    uint32_t last_change_ms = 0;
+};
+
+DebouncedButton g_weapon_button;
+DebouncedButton g_action_buttons[CG_DEMO_ACTION_BUTTON_COUNT];
+
+// Returns true exactly once per debounced falling edge (button just went down).
+bool debounce_falling_edge(DebouncedButton *btn, uint32_t now) {
+    bool raw = digitalRead(btn->pin) == LOW;
+    if (raw != btn->raw_down) {
+        btn->raw_down = raw;
+        btn->last_change_ms = now;
+        return false;
+    }
+    if (raw != btn->down && (now - btn->last_change_ms) >= CG_DEMO_BUTTON_DEBOUNCE_MS) {
+        bool falling_edge = raw && !btn->down;
+        btn->down = raw;
+        return falling_edge;
+    }
+    return false;
+}
+
 BLECharacteristic *g_notify_char = nullptr;
 BLE2902 *g_notify_cccd = nullptr;  // read to tell whether the relay has subscribed yet
 volatile bool g_connected = false;
@@ -272,10 +309,16 @@ void send_sensor_frame() {
     int16_t offhand[6] = {0, 0, (int16_t)(1.0f * 2048.0f), 0, 0, 0};
     int16_t torso[6] = {0, 0, (int16_t)(1.0f * 2048.0f), 0, 0, 0};
 
+    uint8_t flags = 0;
+    if (g_capture_remaining > 0) {
+        flags = CG_FLAG_MOTION_ACTIVE | ((g_capture_trigger_id & 0x7) << CG_FLAG_TRIGGER_ID_SHIFT);
+        g_capture_remaining--;
+    }
+
     uint8_t payload[42];
     uint32_t ts = millis();
     memcpy(payload, &ts, 4);
-    payload[4] = 0;  // flags
+    payload[4] = flags;
     payload[5] = g_weapon_id;
     memcpy(payload + 6, dominant, 12);
     memcpy(payload + 18, offhand, 12);
@@ -331,6 +374,11 @@ void setup() {
     Serial.begin(115200);
     hex_to_bytes(CG_DEMO_PSK_HEX, g_psk, CG_PSK_SIZE);
     pinMode(CG_DEMO_WEAPON_BUTTON_PIN, INPUT_PULLUP);
+    g_weapon_button.pin = CG_DEMO_WEAPON_BUTTON_PIN;
+    for (int i = 0; i < CG_DEMO_ACTION_BUTTON_COUNT; i++) {
+        pinMode(kActionButtonPins[i], INPUT_PULLUP);
+        g_action_buttons[i].pin = kActionButtonPins[i];
+    }
     ble_setup();
     Serial.println("[boot] advertising, waiting for relay connection");
 }
@@ -338,7 +386,6 @@ void setup() {
 void loop() {
     static uint32_t last_sensor_ms = 0;
     static uint32_t last_heartbeat_ms = 0;
-    static bool button_was_down = false;
 
     if (!g_connected) {
         delay(50);
@@ -376,11 +423,21 @@ void loop() {
         send_heartbeat();
     }
 
-    bool button_down = digitalRead(CG_DEMO_WEAPON_BUTTON_PIN) == LOW;
-    if (button_down && !button_was_down) {
+    if (debounce_falling_edge(&g_weapon_button, now)) {
         send_rfid_event_next_weapon();
     }
-    button_was_down = button_down;
+    for (int i = 0; i < CG_DEMO_ACTION_BUTTON_COUNT; i++) {
+        if (debounce_falling_edge(&g_action_buttons[i], now)) {
+            // A press during an active capture is ignored — the capture is atomic (§3.2), so a
+            // double-tap still yields exactly one window.
+            if (g_capture_remaining == 0) {
+                g_capture_remaining = CG_DEMO_CAPTURE_FRAMES;
+                g_capture_trigger_id = kActionButtonTriggerIds[i];
+                Serial.printf("[capture] start trigger_id=%u frames=%lu\n",
+                              (unsigned)g_capture_trigger_id, (unsigned long)g_capture_remaining);
+            }
+        }
+    }
 
     drain_incoming_non_blocking();
 }

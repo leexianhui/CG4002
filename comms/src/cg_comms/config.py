@@ -69,6 +69,9 @@ class WindowingConfig(_Model):
     max_stale_pct: float = 20.0
     max_span_deviation_pct: float = 15.0
     frame_rate_hz: float = 50.0
+    # comms-demo only (docs/DEMO_TRIGGERED_ACTION_PLAN.md §3.2): one SensorWindow per tagged button
+    # capture instead of continuous stride emission. False (the real game's mode) is unchanged behaviour.
+    trigger_mode: bool = False
 
 
 class Ultra96Config(_Model):

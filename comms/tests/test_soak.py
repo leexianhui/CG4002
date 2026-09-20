@@ -116,6 +116,9 @@ async def _build_engine(host: str, port: int, bearer_token: str) -> _EngineHandl
     async def on_combat_feedback(player_id: int, feedback) -> None:
         await send_to_relay(registry, player_id, feedback)
 
+    async def on_action_recognized(event) -> None:
+        await broadcast_to_visualizers(registry, event)
+
     task = GameStateTask(
         rules=rules,
         reorder_delay_ms=rules.config.reorder_delay_ms,
@@ -123,6 +126,8 @@ async def _build_engine(host: str, port: int, bearer_token: str) -> _EngineHandl
         on_combat_event=on_combat_event,
         on_match_state=on_match_state,
         on_combat_feedback=on_combat_feedback,
+        on_action_recognized=on_action_recognized,
+        presence=registry.relay_presence,
     )
 
     async def on_message(path: str, raw: str) -> None:

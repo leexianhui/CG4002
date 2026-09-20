@@ -33,6 +33,20 @@
         { "type": "string" },
         { "type": "null" }
       ]
+    },
+    "connected": {
+      "description": "Optional. Relay presence per player id, e.g. {\"1\": true, \"2\": false}. Absent/null on a sender that predates this field.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "1": { "type": "boolean" },
+            "2": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        { "type": "null" }
+      ]
     }
   },
   "required": ["type", "version", "timestamp", "phase", "hp", "winnerId", "reason"],

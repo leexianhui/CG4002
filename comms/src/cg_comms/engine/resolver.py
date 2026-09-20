@@ -21,6 +21,13 @@ class ActionEvent:
     action: ActionClass
     confidence: float
     timestamp: int  # engine time, ms
+    # Guard is orthogonal to `action`/combat resolution — `resolve()` never reads these two fields,
+    # it only judges `action`. They ride along purely so `_resolve_one` (game_state_task.py) can
+    # build ACTION_RECOGNIZED without re-deriving guard state from PlayerState. Defaulted so
+    # `resolve()` stays free to ignore them and every existing 4-kwarg ActionEvent construction
+    # (comms/tests/test_resolver.py's make_event) keeps working unmodified.
+    guard_state: GuardState = GuardState.IDLE
+    guard_confidence: float = 0.0
 
 
 @dataclass(frozen=True)
