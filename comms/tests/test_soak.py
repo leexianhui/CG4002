@@ -240,7 +240,7 @@ async def test_windower_ring_buffers_stay_bounded_over_a_full_matchs_worth_of_fr
 async def test_ultra96_client_respects_max_in_flight_bound_under_concurrent_load() -> None:
     """Launches concurrent Ultra96Client.request() calls against a deliberately slow stub server,
     with a background monitor sampling len(client._pending) frequently, to genuinely stress the
-    max_in_flight semaphore bound (a sequential loop would never let `_pending` grow past 1).
+    max_in_flight admission bound (a sequential loop would never let `_pending` grow past 1).
     Compressed representative sample (300 requests) standing in for a match's worth of Ultra96
     traffic -- see module docstring."""
     port = _free_tcp_port()
@@ -262,7 +262,8 @@ async def test_ultra96_client_respects_max_in_flight_bound_under_concurrent_load
     monitor_task = asyncio.create_task(monitor())
     n_requests = 300
     try:
-        results = await asyncio.gather(*(client.request(_dummy_window(i)) for i in range(n_requests)))
+        results = await asyncio.gather(*(client.request(_dummy_window(i)) for i in range(n_requests)),
+                                       return_exceptions=True)
     finally:
         stop.set()
         await monitor_task
@@ -270,7 +271,9 @@ async def test_ultra96_client_respects_max_in_flight_bound_under_concurrent_load
         server.close()
         await server.wait_closed()
 
-    assert all(r is not None for r in results), "some requests timed out under bounded concurrency"
+    from cg_comms.relay.ultra96 import Ultra96Unavailable
+    assert sum(isinstance(r, ActionResult) for r in results) == max_in_flight
+    assert sum(isinstance(r, Ultra96Unavailable) for r in results) == n_requests - max_in_flight
     assert samples, "no samples collected"
     assert max(samples) <= max_in_flight
     assert len(client._pending) == 0
@@ -283,14 +286,7 @@ async def test_engine_inbox_and_reorder_buffer_stay_bounded_and_memory_does_not_
     tracemalloc'd process memory at intervals. Confirms these stay bounded rather than growing
     without limit.
 
-    KNOWN GAP (flagged, not silently worked around): GameStateTask._inbox is currently a plain
-    unbounded `asyncio.Queue()` with no maxsize or DropOldestQueue wrapper (see
-    engine/game_state_task.py's `_inbox` field), which does not match
-    COMMS_IMPLEMENTATION_PLAN.md §6's specified 512-depth bounded+logged engine event queue. This
-    test asserts the inbox stays small in practice -- because the engine's drain loop keeps up
-    with this soak's send rate -- but that is a property of the drain loop being fast enough here,
-    not a structural guarantee the queue itself enforces. A producer that outpaces the drain loop
-    (not exercised by this compressed run) could still grow `_inbox` without bound today.
+    The inbox now has a structural 512-event bound and the reorder buffer a 2048-event bound.
     """
     port = _free_tcp_port()
     handles = await _build_engine("127.0.0.1", port, BEARER_TOKEN)

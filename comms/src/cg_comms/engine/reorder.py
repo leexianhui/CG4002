@@ -18,6 +18,7 @@ T = TypeVar("T")
 @dataclass(order=True)
 class _HeapEntry(Generic[T]):
     timestamp: int
+    priority: int
     seq: int
     item: T = field(compare=False)
 
@@ -29,14 +30,18 @@ class ReorderBuffer(Generic[T]):
     dropped_late: int = field(default=0, init=False)
     _heap: list = field(default_factory=list, init=False)
     _seq_counter: int = field(default=0, init=False)
+    _released_ts: int = field(default=-1, init=False)
+    max_events: int = 2048
 
-    def push(self, timestamp: int, item: T, now_engine_ms: int) -> None:
+    def push(self, timestamp: int, item: T, now_engine_ms: int, priority: int = 0) -> None:
         """Buffers `item`. If it already arrives more than late_drop_ms behind the current
         watermark, it is dropped immediately rather than entering the heap."""
-        if now_engine_ms - timestamp > self.reorder_delay_ms + self.late_drop_ms:
+        if (timestamp < self._released_ts
+                or now_engine_ms - timestamp > self.reorder_delay_ms + self.late_drop_ms
+                or timestamp > now_engine_ms + 2000 or len(self._heap) >= self.max_events):
             self.dropped_late += 1
             return
-        heapq.heappush(self._heap, _HeapEntry(timestamp, self._seq_counter, item))
+        heapq.heappush(self._heap, _HeapEntry(timestamp, priority, self._seq_counter, item))
         self._seq_counter += 1
 
     def drain_ready(self, now_engine_ms: int) -> list[T]:
@@ -44,8 +49,13 @@ class ReorderBuffer(Generic[T]):
         reorder_delay_ms, in timestamp order."""
         ready: list[T] = []
         while self._heap and now_engine_ms - self._heap[0].timestamp > self.reorder_delay_ms:
-            ready.append(heapq.heappop(self._heap).item)
+            entry = heapq.heappop(self._heap)
+            self._released_ts = entry.timestamp
+            ready.append(entry.item)
         return ready
+
+    def pending(self) -> list[T]:
+        return [entry.item for entry in sorted(self._heap)]
 
     def __len__(self) -> int:
         return len(self._heap)

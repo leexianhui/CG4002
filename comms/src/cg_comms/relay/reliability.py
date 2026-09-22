@@ -1,6 +1,6 @@
-"""ACK + retransmit for state-changing packet types (COMMS_IMPLEMENTATION_PLAN.md §6): HELLO,
-HELLO_ACK, TIME_SYNC_*, RFID_EVENT, COMBAT_FEEDBACK. SENSOR_FRAME/HEARTBEAT are best-effort and
-never go through this path.
+"""Streaming ACK + identical-ciphertext retransmission (relay COMBAT_FEEDBACK).
+Firmware uses the matching mechanism for RFID_EVENT. HELLO/TIME_SYNC are instead bounded
+request/response exchanges. SENSOR_FRAME/HEARTBEAT are best-effort; ACK is never ACKed.
 
 Base timeout 200 ms, x2 backoff, max 5 attempts, +-20% jitter, then LinkDegraded.
 """

@@ -88,3 +88,13 @@ a fix, just a scoped-down risk for a one-off presentation.
 Run `comms`'s mock rig first (`comms/README.md`) with `cg-visualizer-sim` to confirm the engine
 itself is behaving; then point this Unity build at the same engine and confirm the HUD reflects the
 same `COMBAT_EVENT`/`MATCH_STATE` traffic `cg-visualizer-sim`'s logs show.
+
+## Preserve the working phone project
+
+The active project is `CG4002VisualizerDemo_UnityTemp/My project`; its existing Demo.unity and
+serialized phone SSH/socat/network values are authoritative. The generator now refuses to overwrite
+an existing scene. The older scaffold is retained and has not been upgraded in this pass.
+
+Rebuild the active APK for the bounded reconnect loop and Unity-yaw-to-canonical-heading adapter.
+No scene regeneration is needed. Reset is an authenticated operator command on the engine host;
+both visualizers receive the reset snapshot. See [runtime changes and verification](../docs/PRE_DEMO_ROBUSTNESS.md).

@@ -1,12 +1,4 @@
-"""Single-writer coroutine owning MatchState (COMMS_IMPLEMENTATION_PLAN.md §10, §16.5).
-
-Only this task ever mutates a live PlayerState/MatchState; everything else only ever sees
-`.clone()`d snapshots or receives messages describing what happened, which is the entire
-justification for running lock-free. Combat ACTION events pass through a ReorderBuffer first
-(parry timing must be judged in engine-time order, not network-arrival order); POSITION and
-WEAPON_CHANGED updates apply immediately since nothing downstream depends on their strict
-ordering relative to combat resolution.
-"""
+"""Single writer: all combat inputs share event-time order, with explicit guard-only lookahead."""
 
 from __future__ import annotations
 
@@ -18,7 +10,14 @@ import structlog
 
 from cg_comms.clock import monotonic_ms
 from cg_comms.engine.cooldowns import add_stagger, start_cooldown
-from cg_comms.engine.inbound import InboundAction, InboundEvent, InboundPosition, InboundWeaponChanged
+from cg_comms.engine.inbound import (
+    InboundAction,
+    InboundEvent,
+    InboundPosition,
+    InboundWeaponChanged,
+    LinkReset,
+    ResetMatch,
+)
 from cg_comms.engine.reorder import ReorderBuffer
 from cg_comms.engine.resolver import ActionEvent, Decision, resolve
 from cg_comms.engine.rules import Rules
@@ -50,6 +49,12 @@ _CHANNEL_ACTION = "action"
 _CHANNEL_POSITION = "position"
 
 
+@dataclass(frozen=True)
+class TimedInput:
+    timestamp: int
+    event: InboundEvent
+
+
 @dataclass
 class GameStateTask:
     rules: Rules
@@ -63,7 +68,7 @@ class GameStateTask:
 
     state: EngineMatchState = field(default_factory=EngineMatchState, init=False)
     _reorder: ReorderBuffer = field(init=False)
-    _inbox: "asyncio.Queue[InboundEvent]" = field(default_factory=asyncio.Queue, init=False)
+    _inbox: "asyncio.Queue[InboundEvent]" = field(default_factory=lambda: asyncio.Queue(512), init=False)
     # (player_id, channel) -> engine_local_monotonic_ms - remote_ts, seeded from the first message on
     # that channel. InboundAction/InboundPosition.timestamp are each some *other* machine's
     # time.monotonic()-based "engine time" (relay laptop for actions, visualizer host for positions) —
@@ -80,15 +85,24 @@ class GameStateTask:
     # says so once instead of on every window.
     _logged_post_match: bool = field(default=False, init=False)
 
+    _reset_floor: int = field(default=-1, init=False)
+
     def __post_init__(self) -> None:
         self._reorder = ReorderBuffer(
-            reorder_delay_ms=self.reorder_delay_ms, late_drop_ms=self.late_drop_ms
+            reorder_delay_ms=self.reorder_delay_ms + self.rules.config.guard_grace_ms,
+            late_drop_ms=self.late_drop_ms,
         )
         for player_id in (1, 2):
             self.state.players[player_id] = PlayerState(player_id=player_id, hp=self.rules.starting_hp)
 
     async def submit(self, event: InboundEvent) -> None:
-        await self._inbox.put(event)
+        if isinstance(event, (ResetMatch, LinkReset)):
+            await self._inbox.put(event)
+            return
+        try:
+            self._inbox.put_nowait(event)
+        except asyncio.QueueFull:
+            logger.error("engine_inbox_full", event_type=type(event).__name__)
 
     async def start_match(self) -> None:
         if self.state.phase == MatchPhase.WAITING:
@@ -103,7 +117,16 @@ class GameStateTask:
             except asyncio.TimeoutError:
                 event = None
             if event is not None:
-                self._absorb(event)
+                if isinstance(event, ResetMatch):
+                    await self.reset_match()
+                elif isinstance(event, LinkReset):
+                    self._clock_anchors.pop((event.player_id, event.channel), None)
+                    # Already normalized events and gameplay state belong to the match, not the
+                    # replacement socket. Clearing guard here would let a later reconnect alter
+                    # an earlier queued attack. New input updates state in event-time order.
+                    logger.info("engine_channel_reset", player_id=event.player_id, channel=event.channel)
+                else:
+                    self._absorb(event)
             await self._drain_ready()
 
     def _anchor(self, player_id: int, channel: str, remote_ts: int, now: int) -> int:
@@ -119,68 +142,100 @@ class GameStateTask:
         if offset is None:
             offset = now - remote_ts
             self._clock_anchors[key] = offset
+            logger.info("clock_anchor_seeded", player_id=player_id, channel=channel, offset_ms=offset,
+                        accuracy="arrival_biased_not_measured")
         return remote_ts + offset
 
     def _absorb(self, event: InboundEvent) -> None:
         now = monotonic_ms()
         if isinstance(event, InboundAction):
-            anchored_ts = self._anchor(event.player_id, _CHANNEL_ACTION, event.action.timestamp, now)
-            ev = ActionEvent(
-                player_id=event.player_id,
-                action=event.action.action,
-                confidence=event.action.action_confidence,
-                timestamp=anchored_ts,
-                guard_state=event.action.guard_state,
-                guard_confidence=event.action.guard_confidence,
-            )
-            self._apply_guard_state(event, anchored_ts)
-            dropped_before = self._reorder.dropped_late
-            self._reorder.push(ev.timestamp, ev, now)
-            if self._reorder.dropped_late != dropped_before:
-                # dropped_late used to be incremented and never read anywhere — a silent counter.
-                # It only ever fires on a real "too late" arrival now that timestamps are anchored,
-                # but a rig that never logs this could still go quietly dead the same way, so surface it.
-                logger.warning(
-                    "action_dropped_late",
-                    player_id=event.player_id,
-                    action=event.action.action.value,
-                    total_dropped_late=self._reorder.dropped_late,
-                )
+            remote_ts, channel = event.action.timestamp, _CHANNEL_ACTION
         elif isinstance(event, InboundWeaponChanged):
-            player = self.state.players.get(event.player_id)
-            if player is not None:
-                player.weapon = event.weapon_changed.weapon
+            remote_ts, channel = event.weapon_changed.timestamp, _CHANNEL_ACTION
         elif isinstance(event, InboundPosition):
-            player = self.state.players.get(event.player_id)
-            if player is not None:
-                anchored_ts = self._anchor(event.player_id, _CHANNEL_POSITION, event.position.timestamp, now)
-                player.position = Vec2(event.position.x, event.position.y)
-                player.heading_deg = event.position.heading
-                player.position_ts = anchored_ts
-
-    def _apply_guard_state(self, event: InboundAction, anchored_ts: int) -> None:
-        player = self.state.players.get(event.player_id)
-        if player is None:
+            remote_ts, channel = event.position.timestamp, _CHANNEL_POSITION
+        else:
             return
-        new_guard = event.action.guard_state
-        if new_guard != player.guard_state:
-            player.guard_state = new_guard
-            player.guard_entered_ts = anchored_ts
+        timestamp = self._anchor(event.player_id, channel, remote_ts, now)
+        if isinstance(event, InboundAction):
+            logger.info("action_received", player_id=event.player_id, source_timestamp=remote_ts,
+                        timestamp=timestamp, weapon=event.action.weapon.value)
+        if timestamp < self._reset_floor:
+            logger.warning("event_before_match_reset", player_id=event.player_id)
+            return
+        dropped = self._reorder.dropped_late
+        self._reorder.push(timestamp, TimedInput(timestamp, event), now,
+                           priority=1 if isinstance(event, InboundAction) else 0)
+        if self._reorder.dropped_late != dropped:
+            logger.warning(
+                           "action_dropped_late" if isinstance(event, InboundAction) else "event_dropped",
+                           player_id=event.player_id, timestamp=timestamp,
+                           total_dropped_late=self._reorder.dropped_late)
+
+    async def reset_match(self) -> None:
+        self.state = EngineMatchState()
+        for pid in (1, 2):
+            self.state.players[pid] = PlayerState(player_id=pid, hp=self.rules.starting_hp)
+        self._reorder = ReorderBuffer(
+            reorder_delay_ms=self.reorder_delay_ms + self.rules.config.guard_grace_ms,
+            late_drop_ms=self.late_drop_ms)
+        self._reset_floor = monotonic_ms()
+        self._logged_post_match = False
+        self.state.phase = MatchPhase.IN_PROGRESS
+        self.state.started_ts = self._reset_floor
+        logger.info("match_reset")
+        snapshot = self.current_match_state().model_copy(update={"reason": "reset"})
+        await self.on_match_state(snapshot)
 
     async def _drain_ready(self) -> None:
-        now = monotonic_ms()
-        for ev in self._reorder.drain_ready(now):
-            await self._resolve_one(ev)
+        ready = self._reorder.drain_ready(monotonic_ms())
+        for index, item in enumerate(ready):
+            event, timestamp = item.event, item.timestamp
+            player = self.state.players.get(event.player_id)
+            if player is None:
+                continue
+            if isinstance(event, InboundWeaponChanged):
+                player.weapon = event.weapon_changed.weapon
+            elif isinstance(event, InboundPosition):
+                player.position = Vec2(event.position.x, event.position.y)
+                player.heading_deg = event.position.heading
+                player.position_ts = timestamp
+            elif isinstance(event, InboundAction):
+                action = event.action
+                if player.weapon is None:
+                    player.weapon = action.weapon
+                if player.guard_state != action.guard_state:
+                    player.guard_state = action.guard_state
+                    player.guard_entered_ts = timestamp
+                # ACTION carries its own weapon so fresh engine/reset state recovers on the next action.
+                ev = ActionEvent(event.player_id, action.action, action.action_confidence, timestamp,
+                                 action.guard_state, action.guard_confidence, action.weapon)
+                snapshot = self.state.clone()
+                # Only guard activation may look forward. Later geometry/weapon/guard release never
+                # mutates this snapshot. A late activation can BLOCK but cannot retroactively PARRY.
+                future = ready[index + 1:] + self._reorder.pending()
+                for candidate in future:
+                    if candidate.timestamp > timestamp + self.rules.config.guard_grace_ms:
+                        break
+                    guard = candidate.event
+                    if (isinstance(guard, InboundAction) and guard.player_id != event.player_id
+                            and guard.action.guard_state == GuardState.GUARDING):
+                        defender = snapshot.players[guard.player_id]
+                        if defender.guard_state != GuardState.GUARDING:
+                            defender.guard_state = GuardState.GUARDING
+                            defender.guard_entered_ts = candidate.timestamp
+                await self._resolve_one(ev, snapshot)
 
-    async def _resolve_one(self, ev: ActionEvent) -> None:
-        decision = resolve(self.state, ev, self.rules)
+    async def _resolve_one(self, ev: ActionEvent, snapshot: EngineMatchState | None = None) -> None:
+        decision = resolve(snapshot if snapshot is not None else self.state, ev, self.rules)
         attacker = self.state.players.get(decision.attacker_id)
+        weapon = ev.weapon if ev.weapon is not None else (attacker.weapon if attacker else None)
         if attacker is not None:
             attacker.last_action = ev.action
 
         if (
             attacker is not None
-            and attacker.weapon is not None
+            and weapon is not None
             and (ev.action is not ActionClass.IDLE or ev.guard_state is not GuardState.IDLE)
         ):
             target_id = (
@@ -192,7 +247,7 @@ class GameStateTask:
                 ActionRecognized(
                     timestamp=ev.timestamp,
                     player_id=ev.player_id,  # type: ignore[arg-type]
-                    weapon=attacker.weapon,  # type: ignore[arg-type]
+                    weapon=weapon,  # type: ignore[arg-type]
                     action=ev.action,
                     action_confidence=ev.confidence,
                     guard_state=ev.guard_state,
@@ -203,11 +258,6 @@ class GameStateTask:
             )
 
         if decision.outcome in (CombatOutcome.IGNORED, CombatOutcome.STATE_ONLY, CombatOutcome.ON_COOLDOWN):
-            # Once the match is ENDED, resolve() refuses every action (its phase gate) and there is no
-            # reset path, so a rig left streaming logs this same line forever. Say so once, at WARNING,
-            # instead of emitting thousands of indistinguishable INFO lines: without it the console
-            # looks like a busy, healthy system that has silently stopped doing anything, and the
-            # actual instruction ("restart the engine") appears nowhere in the output.
             if self.state.phase is not MatchPhase.IN_PROGRESS:
                 if not self._logged_post_match:
                     self._logged_post_match = True
@@ -215,7 +265,7 @@ class GameStateTask:
                         "match_over_actions_ignored",
                         phase=self.state.phase.value,
                         winner=self.state.winner_id,
-                        hint="match is over; restart the engine to play again (no reset path)",
+                        hint="use the authenticated reset_match operator command to play again",
                     )
                 return
 
@@ -225,16 +275,17 @@ class GameStateTask:
             # the single most likely reason a demo looks dead while every link is healthy.
             logger.info(
                 "action_not_resolved",
+                timestamp=ev.timestamp,
                 outcome=decision.outcome.value,
                 attacker=decision.attacker_id,
                 action=ev.action.value,
                 confidence=round(ev.confidence, 3),
-                weapon=attacker.weapon.value if attacker is not None and attacker.weapon else None,
+                weapon=weapon.value if weapon else None,
             )
             return
 
-        if attacker is not None and attacker.weapon is not None:
-            move = self.rules.move_for(attacker.weapon, ev.action)
+        if attacker is not None and weapon is not None:
+            move = self.rules.move_for(weapon, ev.action)
             if move is not None:
                 start_cooldown(attacker, ev.action, ev.timestamp, move.cooldown_ms)
 
@@ -248,15 +299,16 @@ class GameStateTask:
         if (
             decision.outcome in WIRE_COMBAT_OUTCOMES
             and attacker is not None
-            and attacker.weapon is not None
+            and weapon is not None
             and defender is not None
         ):
             logger.info(
                 "combat_resolved",
+                timestamp=ev.timestamp,
                 outcome=decision.outcome.value,
                 attacker=decision.attacker_id,
                 defender=decision.defender_id,
-                weapon=attacker.weapon.value,
+                weapon=weapon.value,
                 action=ev.action.value,
                 damage=decision.damage,
                 attacker_hp=attacker.hp,
@@ -268,7 +320,7 @@ class GameStateTask:
                     timestamp=ev.timestamp,
                     attacker_id=decision.attacker_id,  # type: ignore[arg-type]
                     defender_id=decision.defender_id,  # type: ignore[arg-type]
-                    weapon=attacker.weapon,  # type: ignore[arg-type]
+                    weapon=weapon,  # type: ignore[arg-type]
                     action=ev.action,  # type: ignore[arg-type]
                     outcome=decision.outcome,  # type: ignore[arg-type]
                     damage=decision.damage,

@@ -71,3 +71,10 @@ excludes `.env`, `*.key`, and `comms/certs/`.
 (`MORE_FRAGMENTS`) is intentionally not implemented — a set fragmentation bit is a hard, logged
 drop (`protocol/codec.py`, `DropReason.FRAGMENTED`). No `tests/` or golden vectors are included in
 this pass; that's a separate effort.
+
+## Pre-demo robustness behavior
+
+BLE, classifier TCP, and engine WebSocket lifecycles now recover independently. Outage traffic is
+bounded and not replayed into a restarted engine. Engine restart starts a fresh in-memory match;
+an authenticated operator command can reset a match without restarting services.
+See [the implementation report, contracts, and physical verification checklist](../docs/PRE_DEMO_ROBUSTNESS.md).

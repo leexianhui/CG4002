@@ -21,9 +21,12 @@ Every message in this document carries:
 - `type` — the message name, exactly as titled in each section below.
 - `version` — `shared/protocol/VERSION` at the time the sender was built. A receiver that sees a
   version it does not know **logs and drops** the message rather than guessing at compatibility.
-- `timestamp` — `int64` milliseconds, **already normalized to the Game Engine clock**. The relay does
-  this normalization on ingest (using the offset from `wire_protocol.md` §9); no other subsystem does
-  clock arithmetic (REPO_PLAN.md §7).
+- `timestamp` - nonnegative integer milliseconds. Incoming relay events use the relay laptop's
+  monotonic clock after device conversion; Unity POSITION currently uses Unix milliseconds.
+  The engine anchors each (player, relay/position channel) into its own monotonic clock on first
+  arrival, and reanchors when that connection is replaced. Engine outputs use engine monotonic time.
+  First-arrival anchoring includes transport delay; it is not a measured clock synchronization.
+  See [the timing limitations](../../docs/PRE_DEMO_ROBUSTNESS.md#e-combat-time-and-position-contract).
 
 Most messages additionally carry `playerId` (`1` or `2` — never `0`, never a string; `0` is reserved on
 the binary wire as "unset"). Two kinds of message deliberately do not:
@@ -47,7 +50,7 @@ binary protocol. `shared/enums/enums.yaml` is the single source for both mapping
   "guardState": "IDLE", "guardConfidence": 0.88 }
 ```
 
-Built by the relay from the Ultra96's `ACTION_RESULT` (§4.2) plus the relay's own tracked weapon state.
+Built by the relay from the Ultra96's `ACTION_RESULT` (§4.2) plus the original SENSOR_WINDOW's captured weapon and timestamp.
 `action`/`actionConfidence` is a **discrete event** (what move just happened); `guardState`/
 `guardConfidence` is a **continuous state update** (is the player currently guarding). They travel in
 one message because `ACTION_RESULT` produces both classifier outputs together, but the engine must
@@ -72,15 +75,21 @@ updates `PlayerState.weapon` and resets nothing else — cooldowns and HP are in
 { "type": "POSITION", "version": 1, "timestamp": 0, "playerId": 2, "x": 1.2, "y": 0.4, "heading": 87.5 }
 ```
 
-- `x`, `y` — arena-relative metres. Origin and axis convention: TBD per decision #7 in the comms plan
-  (default: midpoint of the two spawn marks, +Y toward Player 2).
-- `heading` — degrees, `[0, 360)`, arena-relative (not device-relative).
+- `x`, `y` - metres in one shared horizontal arena frame. The subsystem defines/calibrates
+  a common origin once; positive x is Unity world +x, positive y is Unity world +z.
+- `heading` - degrees in [0,360); zero points +x; positive rotation turns toward +y
+  (counterclockwise in an x-right/y-up plan view). Bearings use atan2(delta-y, delta-x).
+- Unity converts at `EngineClient.SendUnityPosition`: x=world.x, y=world.z,
+  heading=(90-yaw) mod 360. `SendPosition` accepts canonical values without conversion.
+- Timestamp means the sample's measurement time in the sender's declared clock domain, not send time.
+  Keep that domain stable for the connection. Future positioning should reuse this POSITION model
+  (`playerId,timestamp,x,y,heading`), with calibration/conversion in its adapter.
+- Current demo: both phones send synthetic avatar positions every 0.5 s. Engine consumes them
+  in event-time order; position echo to the other phone remains unimplemented. Real positioning
+  and position echo are future work.
 
-**Position is echoed, not just consumed.** The engine forwards each player's `POSITION` to the *other*
-player's visualizer, using its own copy — the visualizer needs the opponent's position to place the
-avatar, and both clients must agree on the engine's version of it, not derive it independently.
-**Specified but not implemented today**: no sender currently emits `POSITION` (docs/
-DEMO_TRIGGERED_ACTION_PLAN.md §10) — see that document for real-positioning future readiness.
+Compatibility: earlier Unity code sent yaw unchanged. Correcting it changes guard-facing results
+to agree with the avatar, without moving either avatar or changing scene/network values.
 
 ### 2.4 `COMBAT_EVENT` — engine → both visualizers
 
@@ -238,3 +247,12 @@ anything in `shared/` (§16.2).
 The relay discards any `ACTION_RESULT` whose `actionConfidence < min_confidence` (`shared/config/
 match.yaml`) before it reaches the engine, **except** `action: "IDLE"`, which always passes through
 since it is what clears the avatar's animation state (comms plan §8).
+
+### Operator match reset
+
+An authenticated WebSocket on `/control` accepts exactly
+`{"type":"RESET_MATCH","version":1}`. It uses the existing prototype bearer token (no new credential).
+Gameplay channels cannot issue this command. The engine's single writer clears gameplay and queued
+combat, preserves socket registrations and clock anchors, starts a fresh match, and sends
+`MATCH_STATE` with `reason:"reset"` to both visualizers and the operator. See
+`python -m cg_comms.tools.reset_match --help`. This is intentionally not persistence.

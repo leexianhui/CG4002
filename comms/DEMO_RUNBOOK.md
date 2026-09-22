@@ -201,22 +201,23 @@ keeping full detail on disk:
 
 ## 5. Restarting a match
 
-The engine calls `start_match()` once at startup and has no reset path, so once
-`phase=ENDED` appears every later action is refused. The engine says this once, at WARNING:
+Engine restart creates fresh in-memory gameplay state. Relays and phones reconnect automatically;
+presence rebuilds from registrations and subsequent weapon/action/position input populates the match.
 
+To reset without restarting processes or dropping clients, run from `comms/` on the engine host:
+
+```sh
+python -m cg_comms.tools.reset_match --config configs/engine.yaml --host localhost
 ```
-[engine] match_over_actions_ignored phase=ENDED winner=1
-         hint='match is over; restart the engine to play again (no reset path)'
-```
 
-**Restart the engine to play again** (Ctrl-C the launcher and re-run it). Worth knowing before you
-demo live: if you run the rig for a few minutes before presenting, the match is already over and the
-visualizer will sit at 0 HP looking broken. Start it fresh, then swing.
+Use the existing certificate hostname instead of localhost if necessary; retain the existing
+environment/bearer-token/TLS configuration. This uses an authenticated `/control` WebSocket, not an
+unauthenticated HTTP endpoint. Expect `match_reset_requested`, then `match_reset`, and a printed
+MATCH_STATE with `reason:"reset"`, both HP values restored, and live presence. Both phones receive it.
+`match_over_actions_ignored` now points to this command.
 
-That line is latched deliberately. Before it existed, a finished match logged `action_not_resolved
-outcome=IGNORED` on every window forever -- a thousand-plus identical INFO lines that look like a
-busy, healthy rig stuck in a loop, with the one useful instruction appearing nowhere. If you see the
-old flood in a log, that log predates the fix; the match had ended.
+See [pre-demo verification and exact recovery logs](../docs/PRE_DEMO_ROBUSTNESS.md#h-physical-demo-verification)
+before deploying the paired relay/firmware changes.
 
 ## 6. Switching to the real ESP32
 

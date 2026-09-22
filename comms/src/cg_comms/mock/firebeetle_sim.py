@@ -156,6 +156,8 @@ class FireBeetleSim:
                     session_id=self.session_id,
                     direction=Direction.LAPTOP_TO_DEVICE,
                     sequence_tracker=self._rx_tracker,
+                    reliable_duplicates=True,
+                    expected_player_id=self.player_id,
                 )
                 if isinstance(decoded, DecodeError):
                     logger.warning("sim_decode_drop", reason=decoded.reason.value)

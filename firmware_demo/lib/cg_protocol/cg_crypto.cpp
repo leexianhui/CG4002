@@ -2,7 +2,9 @@
 
 #include <string.h>
 
+#ifndef CG_NATIVE_TEST
 #include <mbedtls/gcm.h>
+#endif
 
 void cg_derive_nonce(uint8_t out[CG_NONCE_SIZE], uint32_t session_id_or_device_nonce, uint8_t player_id,
                       uint8_t direction, uint32_t ext_seq) {
@@ -22,6 +24,7 @@ void cg_derive_nonce(uint8_t out[CG_NONCE_SIZE], uint32_t session_id_or_device_n
     out[11] = 0;
 }
 
+#ifndef CG_NATIVE_TEST // Native tests cover nonce/CRC/reliability, not the ESP32 mbedTLS implementation.
 bool cg_gcm_seal(const uint8_t psk[CG_PSK_SIZE], const uint8_t *aad, size_t aad_len,
                   const uint8_t nonce[CG_NONCE_SIZE], const uint8_t *plaintext, size_t plaintext_len,
                   uint8_t *out) {
@@ -56,3 +59,4 @@ bool cg_gcm_open(const uint8_t psk[CG_PSK_SIZE], const uint8_t *aad, size_t aad_
     mbedtls_gcm_free(&ctx);
     return ok;
 }
+#endif // !CG_NATIVE_TEST

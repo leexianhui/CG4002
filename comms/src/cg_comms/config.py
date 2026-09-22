@@ -179,6 +179,7 @@ class RulesConfig(_Model):
     min_confidence: float
     position_max_age_ms: int
     reorder_delay_ms: int
+    guard_grace_ms: int = Field(default=0, ge=0, le=500)
 
     @classmethod
     def load(cls, shared_dir: Path | None = None) -> "RulesConfig":

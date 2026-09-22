@@ -36,7 +36,18 @@ class InboundPosition:
     position: Position
 
 
-InboundEvent = InboundAction | InboundWeaponChanged | InboundPosition
+@dataclass(frozen=True)
+class ResetMatch:
+    """Local operator command delivered by the authenticated /control connection."""
+
+
+@dataclass(frozen=True)
+class LinkReset:
+    player_id: int
+    channel: str
+
+
+InboundEvent = InboundAction | InboundWeaponChanged | InboundPosition | ResetMatch | LinkReset
 
 
 def route_inbound(path: str, raw: str) -> InboundEvent | None:

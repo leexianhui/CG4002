@@ -16,7 +16,7 @@ import structlog
 
 from cg_comms.config import RelaySettings, find_repo_root
 from cg_comms.logging_setup import configure_logging
-from cg_comms.messages.models import Action, ActionResult, CombatFeedback, WeaponChanged
+from cg_comms.messages.models import Action, CombatFeedback, WeaponChanged
 from cg_comms.relay.engine_link import EngineLinkClient
 from cg_comms.relay.session import Session, SessionConfig
 from cg_comms.relay.tunnel import TunnelConfig, TunnelSupervisor
@@ -61,7 +61,6 @@ async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
                 connect_timeout_s=u.tunnel_connect_timeout_s,
             )
         )
-        await tunnel.start()
 
     ultra96 = Ultra96Client(
         host=settings.ultra96.host,
@@ -69,7 +68,6 @@ async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
         request_timeout_ms=settings.ultra96.request_timeout_ms,
         max_in_flight=settings.ultra96.max_in_flight,
     )
-    await ultra96.connect()
 
     windower = PlayerWindower(
         player_id=settings.player_id,
@@ -88,7 +86,7 @@ async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
 
     async def on_combat_feedback(feedback: CombatFeedback) -> None:
         if session is not None:
-            await session.send_combat_feedback(feedback)
+            session.queue_combat_feedback(feedback)
 
     engine_link = EngineLinkClient(
         url=engine_url,
@@ -96,26 +94,12 @@ async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
         on_combat_feedback=on_combat_feedback,
         ca_cert_path=settings.engine_link.ca_cert_path,
     )
-    await engine_link.connect()
 
     async def on_weapon_changed(msg: WeaponChanged) -> None:
         await engine_link.send_weapon_changed(msg)
 
-    async def on_action_result(result: ActionResult) -> None:
-        weapon = windower.current_weapon
-        if weapon is None:
-            return
-        await engine_link.send_action(
-            Action(
-                timestamp=result.timestamp,
-                player_id=result.player_id,
-                weapon=weapon,  # type: ignore[arg-type]
-                action=result.action,
-                action_confidence=result.action_confidence,
-                guard_state=result.guard_state,
-                guard_confidence=result.guard_confidence,
-            )
-        )
+    async def on_action_result(action: Action) -> None:
+        await engine_link.send_action(action)
 
     session_config = SessionConfig(
         player_id=settings.player_id,
@@ -137,7 +121,12 @@ async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
     backoff_ms = settings.heartbeat.reconnect_backoff_ms
     attempt = 0
     try:
+        if tunnel is not None:
+            await tunnel.start(wait_ready=False)
+        ultra96.start()
+        engine_link.start()
         while True:
+            windower.reset_session()
             transport = _build_transport(settings)
             session = Session(
                 transport=transport,
@@ -154,10 +143,12 @@ async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
                 # Top-level supervisor boundary: a session must never take the relay process down.
                 # Every specific failure mode below this point is already its own typed exception;
                 # this is the "and reconnect anyway" backstop, logged loudly rather than silent.
-                logger.error("session_failed", error=str(exc))
+                logger.error("session_failed", player_id=settings.player_id, error=str(exc))
+            finally:
+                session = None
             delay = backoff_ms[min(attempt, len(backoff_ms) - 1)] / 1000
             attempt += 1
-            logger.warning("reconnecting", delay_s=delay)
+            logger.warning("reconnecting", player_id=settings.player_id, delay_s=delay)
             await asyncio.sleep(delay)
     finally:
         await engine_link.disconnect()

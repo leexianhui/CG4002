@@ -47,8 +47,8 @@ class PacketType(IntEnum):
     COMBAT_FEEDBACK = 0x30
 
 
-# Packets that require ACK + retransmit (wire_protocol.md §2 / COMMS_IMPLEMENTATION_PLAN.md §6).
-# SENSOR_FRAME and HEARTBEAT are best-effort. ACK is never itself acked.
+# Delivery-sensitive types. RFID/feedback use ACK + retransmit; handshake/time-sync use bounded
+# request/response with whole-handshake recovery. SENSOR_FRAME/HEARTBEAT and ACK are best-effort.
 RELIABLE_PACKET_TYPES: frozenset[PacketType] = frozenset(
     {
         PacketType.HELLO,

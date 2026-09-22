@@ -51,16 +51,20 @@ discard a corrupted frame before spending a decrypt on it, which matters on the 
 
 | Packet | Delivery | Rationale |
 |---|---|---|
-| `SENSOR_FRAME`, `HEARTBEAT` | best-effort | 50 Hz stream; a dropped frame shortens a window slightly |
-| `HELLO`, `HELLO_ACK`, `TIME_SYNC_*`, `RFID_EVENT`, `COMBAT_FEEDBACK` | ACK + retransmit | state-changing; a lost weapon change desyncs the whole match |
+| `SENSOR_FRAME`, `HEARTBEAT` | best-effort | Dropped capture frames can cause too_few/span suppression; never fill with unrelated frames |
+| `RFID_EVENT`, `COMBAT_FEEDBACK` | ACK + identical-ciphertext retry | One application effect; exact duplicates get another ACK |
+| `HELLO`, `HELLO_ACK`, `TIME_SYNC_*` | Bounded request/response | Failure restarts handshake with a fresh device nonce and BLE session; no generic ACK exchange |
 | `ACK` | never acked | obviously |
 
 ---
 
 ## 3. Payloads (plaintext, before encryption)
 
-All laptop-side timestamps are `uint32` milliseconds since `serverEpochUnixMs`, which the laptop sends
-once in `HELLO_ACK`. Device timestamps are `uint32` milliseconds on the device's own clock.
+Device timestamps are uint32 milliseconds since device boot. TIME_SYNC_RESP t1/t2 carry the
+low 32 bits of laptop monotonic milliseconds; HELLO_ACK's Unix epoch is informational in this demo.
+Laptop HEARTBEAT's timestamp is low-32-bit Unix milliseconds and is used only for liveness here.
+These fields are not interchangeable clock domains. Device-clock wrap/long-term drift correction
+remains a documented limitation; the demo uses initial synchronization only.
 
 ```
 HELLO                (16 B)  deviceMac[6] | playerId u8 | protocolVersion u8 |
@@ -118,9 +122,23 @@ delta = int16(new_seq - last_seq)
   also increment the high half.
 - `delta <= 0`: this is a reorder or replay, not an advance.
 
-Maintain a **64-entry sliding replay window** per direction. Reject any packet whose `extSeq` is at or
-below the window floor, or already seen within the window. Log rejections — a sudden burst means either
-a bug or an attack, and the log is what lets you tell which during the demo.
+Maintain a **64-entry sliding replay window** per direction for ordinary traffic; commit it only
+after authentication. Each fresh session resets both TX and RX state. Failed stack sends burn
+their encoded sequence/nonce; gaps are expected. Exact retransmission reuses ciphertext, not a
+fresh encryption under the same nonce.
+
+Streaming reliable types additionally use an independent extended-sequence watermark (one
+application effect per increasing reliable sequence). This admits the first delivery after more
+than 64 sensor packets. A bounded 16-entry/20-second cache of authenticated ciphertexts permits
+duplicate re-ACKs even after the ordinary window moves on; duplicates never repeat effects.
+Older unseen reliable packets below the reliable watermark are superseded/dropped; evicted or
+expired duplicates cannot apply again. ACKs are never cached as reliable and never ACKed.
+
+RFID retries: firmware assigns one seq, tries at 0, 0.5, 1.5, 3.5, 7.5 seconds, abandons at
+15.5 seconds without ACK, and logs exhaustion. A new selection supersedes the pending selection.
+Relay feedback uses configured ReliabilitySender timeout/backoff/jitter, max five attempts, with
+identical frame bytes. Demo relay YAML uses 200 ms base; firmware RFID uses 500 ms.
+The 20-second duplicate cache covers these retry budgets. Neither sender pauses sensor streaming.
 
 ---
 
@@ -165,7 +183,7 @@ For these two packet types only:
 - The laptop's `sessionId` must likewise be random, not a counter.
 
 Replay protection layers on top and is unchanged: the laptop rejects a `HELLO` bearing a `deviceNonce`
-seen in the last 60 s **[config]**, and the device rejects a `HELLO_ACK` whose echoed `deviceNonce` does
+seen in the current Session object within its 60 s cache, and the device rejects a `HELLO_ACK` whose echoed `deviceNonce` does
 not match what it just sent.
 
 > **CRC16 + GCM.** The GCM tag already provides integrity, so the CRC is strictly redundant
@@ -240,12 +258,8 @@ laptop → device   COMBAT_FEEDBACK on event, HEARTBEAT @ 1 Hz
 Reject `HELLO` if `protocolVersion != VERSION` — respond with a `HELLO_ACK` carrying `sessionId = 0`
 (refusal) and log loudly. A silent version mismatch is the classic integration-day time sink.
 
-Offset estimation is the standard NTP four-timestamp form, with `t3` recorded by the device on arrival:
-
-```
-offset = ((t1 - t0) + (t2 - t3)) / 2
-rtt    =  (t3 - t0) - (t2 - t1)
-```
-
-See `docs/COMMS_IMPLEMENTATION_PLAN.md` §5 for the full sampling, outlier-rejection, and drift-tracking
-procedure — that is relay behavior, not wire format, so it is not repeated here.
+The protocol can express the four-timestamp NTP estimate, but current demo firmware only checks
+response type, nonce/session, and echoed t0. The relay sees t0/t1/t2 only and seeds its offset from
+t1-t0; t2-t1 is processing time, not RTT. No steady-state resync timer is currently wired up.
+Sample spread is logged as `timesync_seeded.sample_spread_ms`; it is not an accuracy bound.
+See [PRE_DEMO_ROBUSTNESS.md](../../docs/PRE_DEMO_ROBUSTNESS.md) for clock limitations and physical tests.

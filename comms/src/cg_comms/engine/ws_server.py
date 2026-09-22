@@ -23,6 +23,7 @@ logger = structlog.get_logger(__name__)
 
 RELAY_PATHS: dict[str, int] = {"/relay/1": 1, "/relay/2": 2}
 VISUALIZER_PATHS: dict[str, int] = {"/visualizer/1": 1, "/visualizer/2": 2}
+CONTROL_PATH = "/control"
 
 
 def build_ssl_context(cert_path: str, key_path: str) -> ssl.SSLContext:
@@ -32,7 +33,7 @@ def build_ssl_context(cert_path: str, key_path: str) -> ssl.SSLContext:
 
 
 def check_bearer_token(headers: "websockets.Headers", expected: str) -> bool:
-    return headers.get("Authorization", "") == f"Bearer {expected}"
+    return bool(expected) and headers.get("Authorization", "") == f"Bearer {expected}"
 
 
 @dataclass
@@ -50,8 +51,13 @@ class Connection:
 class ConnectionRegistry:
     send_queue_depth: int
     _connections: dict[str, Connection] = field(default_factory=dict, init=False)
+    _register_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False)
 
     async def register(self, path: str, websocket: WebSocketServerProtocol) -> Connection:
+        async with self._register_locks.setdefault(path, asyncio.Lock()):
+            return await self._register(path, websocket)
+
+    async def _register(self, path: str, websocket: WebSocketServerProtocol) -> Connection:
         existing = self._connections.get(path)
         if existing is not None:
             logger.warning("ws_duplicate_path_replaced", path=path)
@@ -71,6 +77,7 @@ class ConnectionRegistry:
     async def _close(self, conn: Connection) -> None:
         if conn.writer_task is not None:
             conn.writer_task.cancel()
+            await asyncio.gather(conn.writer_task, return_exceptions=True)
         try:
             await conn.websocket.close()
         except websockets.ConnectionClosed:
@@ -123,7 +130,7 @@ async def run_ws_server(
 
     async def handler(websocket: WebSocketServerProtocol) -> None:
         path = websocket.request.path
-        if path not in RELAY_PATHS and path not in VISUALIZER_PATHS:
+        if path not in RELAY_PATHS and path not in VISUALIZER_PATHS and path != CONTROL_PATH:
             logger.warning("ws_unknown_path", path=path)
             await websocket.close(code=1008, reason="unknown path")
             return
@@ -137,13 +144,13 @@ async def run_ws_server(
         # had no answer: websockets' own "connection open" line carries no path, so four connections
         # were four identical lines. Log the path, which identifies who arrived.
         logger.info("ws_client_connected", path=path)
-        if on_connect is not None:
-            await on_connect(path)
         try:
+            if on_connect is not None:
+                await on_connect(path)
             async for raw in websocket:
                 text = raw if isinstance(raw, str) else raw.decode("utf-8")
                 await on_message(path, text)
-        except websockets.ConnectionClosed:
+        except (websockets.ConnectionClosed, UnicodeDecodeError):
             pass
         finally:
             await registry.unregister(conn)

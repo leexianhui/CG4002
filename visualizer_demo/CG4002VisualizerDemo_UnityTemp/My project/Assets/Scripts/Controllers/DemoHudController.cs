@@ -80,7 +80,7 @@ namespace Cg4002.VisualizerDemo.Controllers
             // already is in scene space, matching visualizer_sim.py's periodic POSITION send.
             var t = Client.PlayerId == 1 ? Player1Avatar : Player2Avatar;
             if (t == null) return;
-            Client.SendPosition(t.position.x, t.position.z, t.eulerAngles.y);
+            Client.SendUnityPosition(t.position.x, t.position.z, t.eulerAngles.y);
         }
 
         private void HandleConnectionStatus(string status)
@@ -97,6 +97,12 @@ namespace Cg4002.VisualizerDemo.Controllers
 
         private void HandleMatchState(MatchState msg)
         {
+            if (msg.Reason == "reset") {
+                _lastWeapon.Clear();
+                if (Player1WeaponLabel != null) Player1WeaponLabel.text = "-";
+                if (Player2WeaponLabel != null) Player2WeaponLabel.text = "-";
+                AppendFeedLine("> MATCH RESET");
+            }
             if (msg.Hp != null)
             {
                 if (msg.Hp.TryGetValue("1", out int hp1)) UpdateHp(1, hp1, Player1HpBar);

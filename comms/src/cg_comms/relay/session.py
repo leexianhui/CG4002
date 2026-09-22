@@ -4,17 +4,17 @@ Owns the FireBeetle link's protocol state for one connection lifetime: the negot
 both directions' SequenceTracker/OutgoingSequenceCounter, the TimeSyncEstimator, and the
 reliability/heartbeat/windowing pipelines built on top of it. A reconnect gets a fresh Session.
 
-The handshake's own HELLO_ACK/TIME_SYNC_RESP sends are best-effort (not wrapped in
-ReliabilitySender) — the 8-sample timesync burst already gives the exchange its own repetition,
-and full ACK/retry plumbing is reserved for the streaming phase below, where a concurrent read loop
-actually exists to observe the resulting ACK frames.
+HELLO/HELLO_ACK and TIME_SYNC_REQ/RESP are bounded request/response exchanges, not ACK packets.
+If an exchange is lost, firmware retries the whole handshake with a new nonce and the relay
+reconnects. Streaming RFID/feedback use exact-ciphertext retransmission and duplicate re-ACKs.
 """
 
 from __future__ import annotations
 
 import asyncio
-import random
+import secrets
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
@@ -22,16 +22,16 @@ import structlog
 
 from cg_comms.clock import monotonic_ms, split_epoch_ms, wall_clock_unix_ms
 from cg_comms.messages.enums import Weapon
-from cg_comms.messages.models import CombatFeedback, WeaponChanged
+from cg_comms.messages.models import Action, CombatFeedback, SensorWindow, WeaponChanged
 from cg_comms.protocol import codec
-from cg_comms.protocol.codec import DecodeError, DecodedPacket
+from cg_comms.protocol.codec import DecodedPacket, DecodeError
 from cg_comms.protocol.constants import PROTOCOL_VERSION, Direction, PacketType
 from cg_comms.protocol.crypto import OutgoingSequenceCounter, SequenceTracker
 from cg_comms.protocol.framing import Framer
 from cg_comms.relay.heartbeat import HeartbeatMonitor, run_heartbeat_sender, run_liveness_watchdog
 from cg_comms.relay.reliability import LinkDegraded, ReliabilitySender
 from cg_comms.relay.timesync import LaptopSideSample, TimeSyncEstimator, estimate_offset_laptop_side
-from cg_comms.relay.ultra96 import Ultra96Client, passes_confidence_gate
+from cg_comms.relay.ultra96 import Ultra96Client, Ultra96Unavailable, passes_confidence_gate
 from cg_comms.relay.windowing import PlayerWindower
 from cg_comms.transport.base import ITransport
 
@@ -65,15 +65,15 @@ class SessionConfig:
 @dataclass
 class Session:
     """One FireBeetle connection's lifetime. `on_action_result`/`on_weapon_changed` forward
-    classified windows/weapon changes up to the engine link; `send_window` hands a completed
-    SENSOR_WINDOW to the Ultra96 client (both injected so this module never imports websockets)."""
+    classified windows/weapon changes up to the engine link. Completed SENSOR_WINDOWs go to the
+    injected Ultra96 client without blocking the BLE receive loop."""
 
     transport: ITransport
     config: SessionConfig
     windower: PlayerWindower
     ultra96: Ultra96Client
     on_weapon_changed: Callable[[WeaponChanged], Awaitable[None]]
-    on_action_result: Callable[[object], Awaitable[None]]  # ActionResult, kept loosely typed here
+    on_action_result: Callable[[Action], Awaitable[None]]
 
     session_id: int = field(default=0, init=False)
     _rx_tracker: SequenceTracker = field(default_factory=SequenceTracker, init=False)
@@ -84,6 +84,13 @@ class Session:
     _reliability_out: ReliabilitySender = field(init=False)
     _heartbeat_monitor: HeartbeatMonitor = field(init=False)
     _seen_device_nonces: dict[int, float] = field(default_factory=dict, init=False)
+    _frames: deque[bytes] = field(default_factory=deque, init=False)
+    _classification_tasks: set[asyncio.Task] = field(default_factory=set, init=False)
+    _feedback: asyncio.Queue[CombatFeedback] = field(
+        default_factory=lambda: asyncio.Queue(8), init=False
+    )
+    _streaming: bool = field(default=False, init=False)
+    _last_weapon_ts: int = field(default=-1, init=False)
 
     def __post_init__(self) -> None:
         self._time_sync = TimeSyncEstimator(ewma_alpha=self.config.ewma_alpha)
@@ -105,36 +112,58 @@ class Session:
     async def run(self) -> None:
         """Runs the full session lifetime: handshake, then streaming until the transport closes or
         `stop()` is called. Raises HandshakeFailed if the device never completes the handshake."""
-        await self.transport.connect()
         try:
+            await self.transport.connect()
             await self._handshake()
+            logger.info("session_streaming", player_id=self.config.player_id, session_id=self.session_id)
             await self._stream()
         finally:
+            self._streaming = False
+            for task in self._classification_tasks:
+                task.cancel()
+            await asyncio.gather(*self._classification_tasks, return_exceptions=True)
             await self.transport.disconnect()
 
     # -- decode helpers -------------------------------------------------------------------
 
     async def _next_decoded(self, expect: PacketType, timeout_s: float) -> DecodedPacket:
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout_s
-        async for raw in self.transport.frames():
-            for frame in self._framer.feed(raw):
+        async def receive() -> DecodedPacket:
+            async for frame in self._wire_frames():
+                restarting = len(frame) > 2 and frame[2] == int(PacketType.HELLO)
                 decoded = codec.decode_packet(
                     frame,
                     psk=self.config.psk,
                     session_id=self.session_id,
                     direction=Direction.DEVICE_TO_LAPTOP,
-                    sequence_tracker=self._rx_tracker,
+                    expected_player_id=self.config.player_id,
+                    sequence_tracker=(SequenceTracker()
+                                      if restarting and expect != PacketType.HELLO else self._rx_tracker),
                 )
                 if isinstance(decoded, DecodeError):
                     logger.warning("handshake_decode_drop", reason=decoded.reason.value)
                     continue
+                if decoded.header.player_id != self.config.player_id:
+                    raise HandshakeFailed("player identity mismatch")
                 if decoded.header.packet_type == int(expect):
                     return decoded
+                if decoded.header.packet_type == int(PacketType.HELLO):
+                    raise HandshakeFailed("device restarted handshake; reconnect for fresh session")
                 logger.warning("handshake_unexpected_packet", got=decoded.header.packet_type)
-            if loop.time() > deadline:
-                break
-        raise HandshakeFailed(f"timed out waiting for packet type {expect!r}")
+            raise HandshakeFailed("transport closed during handshake")
+        try:
+            return await asyncio.wait_for(receive(), timeout_s)
+        except asyncio.TimeoutError as exc:
+            logger.warning("handshake_timeout", player_id=self.config.player_id, expected=expect.name)
+            raise HandshakeFailed(f"timed out waiting for {expect.name}") from exc
+
+    async def _wire_frames(self):
+        # Preserve every frame in a coalesced TCP read across handshake calls and streaming.
+        while self._frames:
+            yield self._frames.popleft()
+        async for raw in self.transport.frames():
+            self._frames.extend(self._framer.feed(raw))
+            while self._frames:
+                yield self._frames.popleft()
 
     def _prune_nonces(self, now: float) -> None:
         cutoff = now - _HANDSHAKE_NONCE_TTL_S
@@ -154,7 +183,7 @@ class Session:
 
         protocol_version = hello.fields["protocol_version"]
         version_ok = protocol_version == PROTOCOL_VERSION
-        self.session_id = random.randint(1, 0xFFFFFFFF) if version_ok else 0
+        self.session_id = (secrets.randbits(32) or 1) if version_ok else 0
 
         epoch_lo, epoch_hi = split_epoch_ms(wall_clock_unix_ms())
         seq, _ = self._tx_counter.next()
@@ -192,7 +221,7 @@ class Session:
                 packet_type=PacketType.TIME_SYNC_RESP,
                 seq=seq,
                 player_id=self.config.player_id,
-                fields={"t0": t0, "t1": t1, "t2": t2},
+                fields={"t0": t0, "t1": t1 & 0xFFFFFFFF, "t2": t2 & 0xFFFFFFFF},
                 psk=self.config.psk,
                 session_id=self.session_id,
                 direction=Direction.LAPTOP_TO_DEVICE,
@@ -204,7 +233,10 @@ class Session:
 
         offset = estimate_offset_laptop_side(samples, self.config.outlier_rtt_multiplier)
         self._time_sync.seed(offset)
-        logger.info("timesync_seeded", offset_ms=offset, samples=len(samples))
+        offsets = [s.t1 - s.t0 for s in samples]
+        logger.info("timesync_seeded", player_id=self.config.player_id, offset_ms=offset,
+                    samples=len(samples), sample_spread_ms=max(offsets) - min(offsets),
+                    accuracy="one_way_delay_unknown")
 
     # -- streaming ----------------------------------------------------------------------------
 
@@ -213,8 +245,11 @@ class Session:
         # so a monitor seeded in __post_init__ is already past its timeout by the time the watchdog
         # below first polls.
         self._heartbeat_monitor.reset()
+        self._streaming = True
         tasks = [
             asyncio.create_task(self._read_loop()),
+            asyncio.create_task(self._feedback_loop()),
+            asyncio.create_task(self._stop_event.wait()),
             asyncio.create_task(
                 run_heartbeat_sender(self._send_heartbeat, self.config.heartbeat_interval_ms, self._stop_event)
             ),
@@ -230,8 +265,9 @@ class Session:
             self._stop_event.set()
             for task in tasks:
                 task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
         for task in done:
-            exc = task.exception()
+            exc = None if task.cancelled() else task.exception()
             if exc is not None:
                 raise exc
 
@@ -300,24 +336,44 @@ class Session:
         except LinkDegraded:
             logger.error("combat_feedback_undelivered", player_id=self.config.player_id)
 
+    def queue_combat_feedback(self, feedback: CombatFeedback) -> None:
+        if not self._streaming or feedback.player_id != self.config.player_id:
+            logger.warning("combat_feedback_dropped", reason="no_matching_session")
+            return
+        try:
+            self._feedback.put_nowait(feedback)
+        except asyncio.QueueFull:
+            logger.warning("combat_feedback_dropped", reason="capacity")
+
+    async def _feedback_loop(self) -> None:
+        while True:
+            await self.send_combat_feedback(await self._feedback.get())
+
     async def _read_loop(self) -> None:
-        async for raw in self.transport.frames():
-            for frame in self._framer.feed(raw):
-                await self._handle_frame(frame)
+        async for frame in self._wire_frames():
+            await self._handle_frame(frame)
 
     async def _handle_frame(self, frame: bytes) -> None:
+        restarting = len(frame) > 2 and frame[2] == int(PacketType.HELLO)
         decoded = codec.decode_packet(
             frame,
             psk=self.config.psk,
             session_id=self.session_id,
             direction=Direction.DEVICE_TO_LAPTOP,
-            sequence_tracker=self._rx_tracker,
+            expected_player_id=self.config.player_id,
+            sequence_tracker=SequenceTracker() if restarting else self._rx_tracker,
+            reliable_duplicates=True,
         )
         if isinstance(decoded, DecodeError):
             logger.warning("stream_decode_drop", reason=decoded.reason.value)
             return
 
         packet_type = decoded.header.packet_type
+        if restarting:
+            raise HandshakeFailed("device restarted handshake during streaming")
+        if decoded.header.player_id != self.config.player_id:
+            logger.warning("stream_player_mismatch", actual=decoded.header.player_id)
+            return
         if packet_type == int(PacketType.HEARTBEAT):
             self._heartbeat_monitor.mark_received()
         elif packet_type == int(PacketType.ACK):
@@ -328,18 +384,35 @@ class Session:
         elif packet_type == int(PacketType.RFID_EVENT):
             self._heartbeat_monitor.mark_received()
             await self._send_ack(decoded.header.seq)
-            await self._handle_rfid_event(decoded)
+            if not decoded.duplicate:
+                await self._handle_rfid_event(decoded)
         elif packet_type == int(PacketType.TIME_SYNC_REQ):
-            await self._send_ack(decoded.header.seq)
+            # Request/response exchange, not ACK-of-ACK reliability. Current demo firmware only
+            # initiates sync at handshake, but a delayed/future resync request must receive RESP.
+            t1 = monotonic_ms()
+            seq, ext_seq = self._tx_counter.next()
+            response = codec.encode_packet(
+                packet_type=PacketType.TIME_SYNC_RESP, seq=seq, player_id=self.config.player_id,
+                fields={"t0": decoded.fields["t0"], "t1": t1 & 0xFFFFFFFF,
+                        "t2": monotonic_ms() & 0xFFFFFFFF},
+                psk=self.config.psk, session_id=self.session_id,
+                direction=Direction.LAPTOP_TO_DEVICE, ext_seq=ext_seq,
+            )
+            await self.transport.send(response)
         else:
             logger.warning("stream_unexpected_packet", packet_type=packet_type)
 
     async def _handle_rfid_event(self, decoded: DecodedPacket) -> None:
+        engine_ts = self._time_sync.to_engine_ms(decoded.fields["device_timestamp_ms"])
+        if engine_ts <= self._last_weapon_ts:
+            return  # tolerate legacy firmware retries with fresh seq, without rolling state back
+        self._last_weapon_ts = engine_ts
         weapon = Weapon.from_wire(decoded.fields["weapon_id"])
         self.windower.on_weapon_confirmed(weapon if weapon is not Weapon.NONE else None)
         if weapon is Weapon.NONE:
             return
-        engine_ts = self._time_sync.to_engine_ms(decoded.fields["device_timestamp_ms"])
+        logger.info("weapon_changed", player_id=self.config.player_id, timestamp=engine_ts,
+                    weapon=weapon.value)
         await self.on_weapon_changed(
             WeaponChanged(timestamp=engine_ts, player_id=self.config.player_id, weapon=weapon)  # type: ignore[arg-type]
         )
@@ -354,8 +427,28 @@ class Session:
         )
         if window is None:
             return
-        logger.info("window_ready", request_id=window.request_id, weapon=window.weapon.value)
-        result = await self.ultra96.request(window)
+        logger.info("window_ready", player_id=window.player_id, request_id=window.request_id,
+                    trigger_id=window.trigger_id, capture_id=self.windower._capture_id,
+                    timestamp=window.timestamp, weapon=window.weapon.value)
+        if len(self._classification_tasks) >= self.ultra96.max_in_flight:
+            logger.warning("window_dropped", request_id=window.request_id, reason="classifier_capacity")
+            return
+        task = asyncio.create_task(self._classify(window))
+        self._classification_tasks.add(task)
+        task.add_done_callback(self._classification_done)
+
+    def _classification_done(self, task: asyncio.Task) -> None:
+        self._classification_tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error("classification_failed", error=str(task.exception()))
+
+    async def _classify(self, window: SensorWindow) -> None:
+        try:
+            result = await self.ultra96.request(window)
+        except Ultra96Unavailable as exc:
+            logger.warning("window_dropped", player_id=window.player_id,
+                           request_id=window.request_id, reason=str(exc))
+            return
         if result is None:
             return
         if not passes_confidence_gate(result, self.config.min_action_confidence):
@@ -363,7 +456,14 @@ class Session:
                 "action_below_confidence_gate",
                 action=result.action.value,
                 confidence=result.action_confidence,
+                request_id=window.request_id,
             )
             return
-        logger.info("action_classified", action=result.action.value, confidence=result.action_confidence)
-        await self.on_action_result(result)
+        logger.info("action_classified", player_id=result.player_id, request_id=result.request_id,
+                    trigger_id=window.trigger_id, timestamp=window.timestamp,
+                    action=result.action.value, confidence=result.action_confidence)
+        await self.on_action_result(Action(
+            timestamp=window.timestamp, player_id=window.player_id, weapon=window.weapon,
+            action=result.action, action_confidence=result.action_confidence,
+            guard_state=result.guard_state, guard_confidence=result.guard_confidence,
+        ))

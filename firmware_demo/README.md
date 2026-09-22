@@ -87,3 +87,13 @@ Bench-test the handshake + streaming against a real `cg-relay` (BLE transport) *
 the Unity visualizer side — confirms the protocol port is correct in isolation. Watch relay logs
 for `stream_decode_drop` / `handshake_decode_drop` warnings, which mean something in the frame
 encode/decode or crypto port has drifted from the Python reference.
+
+## Pre-demo reliability update
+
+Deploy the updated relay before flashing this firmware: RFID retries now resend identical encrypted
+bytes and require the relay's authenticated duplicate re-ACK path. Wire layouts/PSK/GPIO/rates are
+unchanged. RX writes use a bounded FreeRTOS queue; stack rejection keeps RFID pending.
+`sensor_frames` means accepted by the BLE stack, not proven radio delivery; serial also reports
+`generated`, `dropped`, cumulative `notify_dropped` and `rx_dropped`.
+See [the audit and hardware checklist](../docs/PRE_DEMO_ROBUSTNESS.md).
+Native tests require host gcc/g++, and cover CRC/nonce/sequence/reliability only (not ESP32 mbedTLS).

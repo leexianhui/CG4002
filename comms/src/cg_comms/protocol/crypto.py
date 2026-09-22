@@ -6,7 +6,9 @@ See shared/protocol/wire_protocol.md §4-§5 for the normative description this 
 from __future__ import annotations
 
 import struct
+from collections import OrderedDict
 from dataclasses import dataclass, field
+from typing import Any
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -54,6 +56,18 @@ class SequenceTracker:
     _high: int = field(default=0, init=False)
     _highest_ext_seq: int = field(default=-1, init=False)
     _seen: set[int] = field(default_factory=set, init=False)
+    # Exact authenticated reliable ciphertexts, retained beyond the 64 SENSOR_FRAME slots.
+    # Bounded independently of stream rate; entries expire in codec after the retry horizon.
+    reliable_frames: OrderedDict[bytes, tuple[float, Any]] = field(
+        default_factory=OrderedDict, init=False, repr=False
+    )
+    reliable_high: int = field(default=-1, init=False)
+
+    def infer(self, seq: int) -> int:
+        """Reconstruct a nonce for a late reliable packet without advancing the sensor window."""
+        if self._last_seq is None:
+            return seq
+        return self._highest_ext_seq + _signed_delta16(seq, self._last_seq)
 
     def accept(self, seq: int) -> int | None:
         """Returns the extended sequence number if `seq` should be accepted, else None (the

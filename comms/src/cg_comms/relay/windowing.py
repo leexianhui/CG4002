@@ -83,6 +83,8 @@ class PlayerWindower:
     _capture_remaining: int = field(default=0, init=False)
     _capture_trigger_id: int = field(default=0, init=False)
     _refractory: bool = field(default=False, init=False)
+    _capture_weapon: Weapon | None = field(default=None, init=False)
+    _capture_id: int = field(default=0, init=False)
 
     def __post_init__(self) -> None:
         self._dominant = deque(maxlen=self.window_samples)
@@ -90,6 +92,18 @@ class PlayerWindower:
 
     def on_weapon_confirmed(self, weapon: Weapon | None) -> None:
         self._current_weapon = weapon
+
+    def reset_session(self) -> None:
+        if self._armed:
+            self._log_suppression("too_few", self._capture_trigger_id, ended_by="session_lost")
+        self._dominant.clear()
+        self._offhand.clear()
+        self._frame_count = 0
+        self._current_weapon = None
+        self._armed = self._refractory = False
+        self._capture_remaining = 0
+        self._capture_weapon = None
+        # Request/capture counters belong to the relay lifetime, not a BLE session.
 
     @property
     def current_weapon(self) -> Weapon | None:
@@ -110,6 +124,18 @@ class PlayerWindower:
         `trigger_mode=True`: returns a SensorWindow (with `trigger_id` set) exactly once per tagged
         button-press capture, else None. See docs/DEMO_TRIGGERED_ACTION_PLAN.md §3.2.
         """
+        if self.trigger_mode:
+            tagged = bool(flags & FLAG_MOTION_ACTIVE)
+            trigger = (flags & FLAG_TRIGGER_ID_MASK) >> FLAG_TRIGGER_ID_SHIFT
+            if self._armed and (not tagged or trigger != self._capture_trigger_id):
+                self._log_suppression("too_few", self._capture_trigger_id,
+                                      ended_by="untagged" if not tagged else "trigger_changed")
+                self._armed = False
+                self._dominant.clear()
+                self._offhand.clear()
+            if tagged and not self._armed and not self._refractory:
+                self._dominant.clear()
+                self._offhand.clear()
         self._dominant.append(_RingSample(engine_ts_ms, dominant_raw, bool(flags & FLAG_DOM_STALE)))
         self._offhand.append(_RingSample(engine_ts_ms, offhand_raw, bool(flags & FLAG_OFF_STALE)))
         self._frame_count += 1
@@ -119,7 +145,9 @@ class PlayerWindower:
 
         if self._frame_count % self.stride_frames != 0:
             return None
-        window, _reason, _extra = self._build_window_if_gates_pass(engine_ts_ms, trigger_id=None)
+        window, reason, _extra = self._build_window_if_gates_pass(engine_ts_ms, trigger_id=None)
+        if window is None and self._frame_count >= self.window_samples:
+            self._log_suppression(reason, None)
         return window
 
     def _ingest_frame_triggered(self, engine_ts_ms: int, flags: int) -> SensorWindow | None:
@@ -138,6 +166,10 @@ class PlayerWindower:
             self._armed = True
             self._capture_trigger_id = (flags & FLAG_TRIGGER_ID_MASK) >> FLAG_TRIGGER_ID_SHIFT
             self._capture_remaining = self.window_samples
+            self._capture_weapon = self._current_weapon
+            self._capture_id += 1
+            logger.info("capture_started", player_id=self.player_id, trigger_id=self._capture_trigger_id,
+                        capture_id=self._capture_id, timestamp=engine_ts_ms)
 
         self._capture_remaining -= 1
         if self._capture_remaining > 0:
@@ -146,17 +178,26 @@ class PlayerWindower:
         trigger_id = self._capture_trigger_id
         self._armed = False
         self._refractory = True
-        window, reason, extra = self._build_window_if_gates_pass(engine_ts_ms, trigger_id=trigger_id)
+        window, reason, _extra = self._build_window_if_gates_pass(engine_ts_ms, trigger_id=trigger_id)
         if window is None:
-            logger.info(
-                "window_suppressed",
-                player_id=self.player_id,
-                trigger_id=trigger_id,
-                reason=reason,
-                weapon=self._current_weapon.value if self._current_weapon is not None else None,
-                **extra,
-            )
+            self._log_suppression(reason, trigger_id)
         return window
+
+    def _log_suppression(self, reason: str | None, trigger_id: int | None, **extra) -> None:
+        count = len(self._dominant)
+        expected = 1000.0 * (self.window_samples - 1) / self.frame_rate_hz
+        span = (self._dominant[-1].engine_ts_ms - self._dominant[0].engine_ts_ms) if count else 0
+        stale = sum(s.stale for s in self._dominant) + sum(s.stale for s in self._offhand)
+        logger.info("window_suppressed", reason=reason, player_id=self.player_id,
+                    trigger_id=trigger_id, capture_id=self._capture_id,
+                    weapon=self._current_weapon.value if self._current_weapon else None,
+                    capture_weapon=self._capture_weapon.value if self._capture_weapon else None,
+                    frame_count=count, expected_frame_count=self.window_samples,
+                    span_ms=span, expected_span_ms=expected,
+                    deviation_pct=100 * abs(span - expected) / expected if expected else 0,
+                    max_span_deviation_pct=self.max_span_deviation_pct,
+                    stale_pct=100 * stale / (2 * count) if count else 0,
+                    max_stale_pct=self.max_stale_pct, **extra)
 
     def _build_window_if_gates_pass(
         self, engine_ts_ms: int, trigger_id: int | None
@@ -166,8 +207,9 @@ class PlayerWindower:
         (was previously player_id/trigger_id only, so a weapon-gate failure and a span-gate
         failure were indistinguishable in the log)."""
         if len(self._dominant) < self.window_samples:
-            return None, "too_few_samples", {"sample_count": len(self._dominant)}
-        if self._current_weapon is None:
+            return None, "too_few", {"sample_count": len(self._dominant)}
+        weapon = self._capture_weapon if self.trigger_mode else self._current_weapon
+        if weapon is None:
             return None, "no_weapon", {}
 
         stale_count = sum(1 for s in self._dominant if s.stale) + sum(1 for s in self._offhand if s.stale)
@@ -188,7 +230,7 @@ class PlayerWindower:
                 timestamp=engine_ts_ms,
                 player_id=self.player_id,  # type: ignore[arg-type]
                 request_id=self._request_ids.next(),
-                weapon=self._current_weapon,  # type: ignore[arg-type]
+                weapon=weapon,  # type: ignore[arg-type]
                 window_start_ts=self._dominant[0].engine_ts_ms,
                 window_end_ts=self._dominant[-1].engine_ts_ms,
                 sample_rate_hz=self.frame_rate_hz,

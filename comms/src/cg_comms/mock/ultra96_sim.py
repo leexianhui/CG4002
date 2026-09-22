@@ -122,6 +122,12 @@ async def _handle_client(
             )
     except (ConnectionResetError, OSError):
         logger.warning("ultra96_sim_client_disconnected")
+    finally:
+        writer.close()
+        try:
+            await asyncio.wait_for(writer.wait_closed(), 2)
+        except (OSError, asyncio.TimeoutError):
+            pass
 
 
 def main() -> None:

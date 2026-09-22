@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from cg_comms.engine.rules import Rules
 from cg_comms.engine.state import MatchState, Vec2
-from cg_comms.messages.enums import ActionClass, CombatOutcome, GuardState, MatchPhase
+from cg_comms.messages.enums import ActionClass, CombatOutcome, GuardState, MatchPhase, Weapon
 
 
 @dataclass(frozen=True)
@@ -28,6 +28,7 @@ class ActionEvent:
     # (comms/tests/test_resolver.py's make_event) keeps working unmodified.
     guard_state: GuardState = GuardState.IDLE
     guard_confidence: float = 0.0
+    weapon: Weapon | None = None  # captured SENSOR_WINDOW weapon; never read a later weapon change
 
 
 @dataclass(frozen=True)
@@ -69,10 +70,11 @@ def resolve(state: MatchState, ev: ActionEvent, rules: Rules) -> Decision:
     if ev.action == ActionClass.IDLE:
         return Decision(outcome=CombatOutcome.STATE_ONLY, attacker_id=ev.player_id)
 
-    if attacker.weapon is None:
+    weapon = ev.weapon if ev.weapon is not None else attacker.weapon
+    if weapon is None:
         return Decision(outcome=CombatOutcome.IGNORED, attacker_id=ev.player_id)
 
-    if not rules.is_valid_move(attacker.weapon, ev.action):
+    if not rules.is_valid_move(weapon, ev.action):
         return Decision(outcome=CombatOutcome.IGNORED, attacker_id=ev.player_id)
 
     if ev.confidence < rules.min_confidence:
@@ -94,7 +96,7 @@ def resolve(state: MatchState, ev: ActionEvent, rules: Rules) -> Decision:
     ):
         return Decision(outcome=CombatOutcome.IGNORED, attacker_id=ev.player_id, defender_id=defender_id)
 
-    move = rules.move_for(attacker.weapon, ev.action)
+    move = rules.move_for(weapon, ev.action)
     assert move is not None  # guaranteed by the is_valid_move check above
     range_m = _range_between(attacker.position, defender.position)
 
@@ -106,7 +108,8 @@ def resolve(state: MatchState, ev: ActionEvent, rules: Rules) -> Decision:
     bearing_to_attacker = _bearing_deg(defender.position, attacker.position)
     facing_attacker = _angle_diff_deg(defender.heading_deg, bearing_to_attacker) <= rules.guard_arc_deg / 2
 
-    if facing_attacker and defender.guard_state == GuardState.GUARDING:
+    if (facing_attacker and defender.guard_state == GuardState.GUARDING
+            and defender.guard_entered_ts <= ev.timestamp + rules.config.guard_grace_ms):
         if 0 <= (ev.timestamp - defender.guard_entered_ts) <= rules.parry_window_ms:
             return Decision(
                 outcome=CombatOutcome.PARRY,

@@ -9,10 +9,12 @@ drop returned as a `DecodeError` — never an exception that reaches the caller'
 
 from __future__ import annotations
 
+import copy
 import struct
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Union
+from typing import Union, cast
 
 from cryptography.exceptions import InvalidTag
 
@@ -62,6 +64,7 @@ class DropReason(str, Enum):
     BAD_PAYLOAD_LENGTH = "bad_payload_length"
     REPLAY = "replay"
     AUTH_FAILED = "auth_failed"
+    PLAYER_MISMATCH = "player_mismatch"
 
 
 @dataclass(frozen=True)
@@ -75,6 +78,7 @@ class DecodedPacket:
     header: Header
     ext_seq: int
     fields: PayloadFields
+    duplicate: bool = False
 
 
 def _payload_struct_fmt(packet_type: PacketType) -> str:
@@ -159,6 +163,8 @@ def decode_packet(
     session_id: int,
     direction: Direction,
     sequence_tracker: SequenceTracker,
+    reliable_duplicates: bool = False,
+    expected_player_id: int | None = None,
 ) -> DecodedPacket | DecodeError:
     """Decodes one complete wire frame (as produced by framing.Framer). Verifies CRC before
     decrypting (wire_protocol.md §5 note), checks the replay window, then unpacks the payload."""
@@ -177,6 +183,8 @@ def decode_packet(
         return DecodeError(DropReason.BAD_MAGIC, f"got 0x{magic:02X}")
     if version != PROTOCOL_VERSION:
         return DecodeError(DropReason.BAD_VERSION, f"got {version}")
+    if expected_player_id is not None and player_id != expected_player_id:
+        return DecodeError(DropReason.PLAYER_MISMATCH)
     if type_byte & TYPE_MORE_FRAGMENTS:
         # §4.6: reassembly is not implemented. A set MORE_FRAGMENTS bit is a hard error.
         return DecodeError(DropReason.FRAGMENTED)
@@ -198,7 +206,24 @@ def decode_packet(
         if len(sealed) != payload_len:
             return DecodeError(DropReason.TOO_SHORT, "LEN exceeds available frame bytes")
 
-    ext_seq = sequence_tracker.accept(seq)
+    if payload_len != len(body) - HEADER_SIZE:
+        return DecodeError(DropReason.BAD_PAYLOAD_LENGTH)
+    if reliable_duplicates:
+        cached = sequence_tracker.reliable_frames.get(frame)
+        if cached is not None and time.monotonic() - cached[0] <= 20:
+            return cast(DecodedPacket, replace(cached[1], duplicate=True))
+
+    # Authentication failures must not advance or poison replay state.
+    candidate = copy.copy(sequence_tracker)
+    candidate._seen = sequence_tracker._seen.copy()
+    ext_seq = candidate.accept(seq)
+    reliable = reliable_duplicates and packet_type in (PacketType.RFID_EVENT, PacketType.COMBAT_FEEDBACK)
+    if reliable:
+        # A first RFID arrival may be >64 sensor packets late after multiple lost sends.
+        # Give reliable application effects their own monotonic replay watermark.
+        ext_seq = sequence_tracker.infer(seq)
+        if ext_seq <= sequence_tracker.reliable_high:
+            return DecodeError(DropReason.REPLAY, f"reliable seq={seq}")
     if ext_seq is None:
         return DecodeError(DropReason.REPLAY, f"seq={seq}")
 
@@ -227,4 +252,14 @@ def decode_packet(
         player_id=player_id,
         payload_len=payload_len,
     )
-    return DecodedPacket(header=header, ext_seq=ext_seq, fields=fields)
+    sequence_tracker._last_seq = candidate._last_seq
+    sequence_tracker._high = candidate._high
+    sequence_tracker._highest_ext_seq = candidate._highest_ext_seq
+    sequence_tracker._seen = candidate._seen
+    packet = DecodedPacket(header=header, ext_seq=ext_seq, fields=fields)
+    if reliable_duplicates and packet_type in (PacketType.RFID_EVENT, PacketType.COMBAT_FEEDBACK):
+        sequence_tracker.reliable_high = ext_seq
+        sequence_tracker.reliable_frames[frame] = (time.monotonic(), packet)
+        while len(sequence_tracker.reliable_frames) > 16:
+            sequence_tracker.reliable_frames.popitem(last=False)
+    return packet

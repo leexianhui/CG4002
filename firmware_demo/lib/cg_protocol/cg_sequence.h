@@ -35,6 +35,9 @@ private:
 // every subsequent one reads as a duplicate and the link silently dies one-way. It did.)
 class CgSequenceTracker {
 public:
+    int64_t infer(uint16_t seq) const {
+        return has_last_ ? (int64_t)highest_ext_seq_ + signed_delta16(seq, last_seq_) : seq;
+    }
     void reset() {
         has_last_ = false;
         highest_ext_seq_ = 0;
@@ -62,6 +65,7 @@ public:
             last_seq_ = seq;
             high = high_;
         } else if (seq > last_seq_) {
+            if (high_ == 0) return false; // no previous epoch; avoid unsigned underflow poisoning RX
             high = high_ - 1;
         } else {
             high = high_;

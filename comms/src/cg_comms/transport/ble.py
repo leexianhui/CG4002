@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from typing import AsyncIterator
 
+import structlog
 from bleak import BleakClient
 
 from cg_comms.transport.base import ITransport, TransportClosed
@@ -18,6 +19,7 @@ _DEFAULT_MTU = 244  # ATT MTU 247 - 3 bytes of ATT overhead; updated after conne
 _WRITE_TIMEOUT_S = 3.0  # bleak's WinRT backend can hang a write-without-response forever with no
 # exception (observed in the field); bound it so a stuck write surfaces as TransportClosed instead of
 # silently wedging the caller (the heartbeat sender) for good.
+logger = structlog.get_logger(__name__)
 
 
 class BleTransport(ITransport):
@@ -26,35 +28,54 @@ class BleTransport(ITransport):
         self._notify_uuid = notify_char_uuid
         self._write_uuid = write_char_uuid
         self._client: BleakClient | None = None
-        self._queue: "asyncio.Queue[bytes | None]" = asyncio.Queue()
+        self._queue: "asyncio.Queue[bytes | None]" = asyncio.Queue(256)
+        self._overflow = False
+        self._write_lock = asyncio.Lock()
         self._mtu = _DEFAULT_MTU
 
     async def connect(self) -> None:
-        self._client = BleakClient(self._address)
+        self._client = BleakClient(self._address, disconnected_callback=self._on_disconnect)
         await self._client.connect()
+        await self._client.start_notify(self._notify_uuid, self._on_notify)
         negotiated = getattr(self._client, "mtu_size", None)
         if negotiated:
             self._mtu = max(negotiated - 3, 20)
-        await self._client.start_notify(self._notify_uuid, self._on_notify)
+        if self._mtu < 68:
+            raise TransportClosed(f"BLE payload MTU {self._mtu} cannot carry a SENSOR_FRAME (68)")
+        logger.info("ble_connected", mtu_payload=self._mtu)
 
     def _on_notify(self, _handle: int, data: bytearray) -> None:
+        if self._overflow:
+            return
+        if self._queue.full():
+            self._overflow = True
+            logger.error("ble_receive_overflow", capacity=self._queue.maxsize)
+            self._on_disconnect(self._client)
+            return
         self._queue.put_nowait(bytes(data))
 
-    async def disconnect(self) -> None:
-        if self._client is not None and self._client.is_connected:
-            await self._client.stop_notify(self._notify_uuid)
-            await self._client.disconnect()
-        self._client = None
+    def _on_disconnect(self, _client) -> None:
+        while not self._queue.empty():
+            self._queue.get_nowait()
         self._queue.put_nowait(None)
+
+    async def disconnect(self) -> None:
+        try:
+            if self._client is not None and self._client.is_connected:
+                await asyncio.wait_for(self._client.disconnect(), 5)
+        finally:
+            self._client = None
+            self._on_disconnect(None)
 
     async def send(self, frame: bytes) -> None:
         if self._client is None or not self._client.is_connected:
             raise TransportClosed("ble transport not connected")
         try:
-            await asyncio.wait_for(
-                self._client.write_gatt_char(self._write_uuid, frame, response=False),
-                timeout=_WRITE_TIMEOUT_S,
-            )
+            async with self._write_lock:
+                await asyncio.wait_for(
+                    self._client.write_gatt_char(self._write_uuid, frame, response=False),
+                    timeout=_WRITE_TIMEOUT_S,
+                )
         except asyncio.TimeoutError as exc:
             raise TransportClosed("ble write timed out") from exc
 

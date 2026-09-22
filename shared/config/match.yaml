@@ -9,3 +9,4 @@ guard_arc_deg: 120         # resolver step 9 — defender must be facing the att
 min_confidence: 0.6        # resolver step 5 — classifier actionConfidence floor; also relay's ACTION_RESULT floor (§8)
 position_max_age_ms: 1000  # resolver step 7 — a stale POSITION makes the engine unable to adjudicate fairly
 reorder_delay_ms: 60       # engine reorder buffer (§10.2) — tune from measured cross-player arrival skew in Week 11
+guard_grace_ms: 50         # intentional late guard activation leeway; inclusive; late guard blocks, never parries

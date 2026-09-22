@@ -318,25 +318,12 @@ def test_boundary_parry_at_exactly_150ms():
     assert d.outcome == CombatOutcome.PARRY
 
 
-def test_branch10_parry_window_is_one_sided_guard_raised_after_attack_is_block_not_parry():
-    """Catches an abs()-based implementation bug. §10.3 mandates the ONE-SIDED comparison
-    0 <= (attack_ts - guard_entered_ts) <= parry_window_ms -- explicitly NOT
-    abs(attack_ts - guard_entered_ts) <= parry_window_ms. Here guard_entered_ts is AFTER the
-    attack's timestamp (attack_ts - guard_entered_ts == -50, i.e. the guard went up 50ms too
-    late to matter), so the one-sided condition's '0 <=' half fails and this must fall
-    through to the plain GUARDING branch (BLOCK), never PARRY. A symmetric/abs()
-    implementation would incorrectly treat a guard raised shortly *after* the attack landed
-    as a valid parry, which defeats the entire point of a reaction-window mechanic."""
+def test_late_guard_requires_explicit_grace_and_never_parries():
     defender = make_defender(guard_state=GuardState.GUARDING, guard_entered_ts=T + 50)
-    d = resolve(make_state(defender=defender), make_event(), make_rules())
-    assert d.outcome == CombatOutcome.BLOCK
-    assert d.outcome != CombatOutcome.PARRY
-
-
-# ---------------------------------------------------------------------------------------
-# Branch 11 — GUARDING (outside the parry window) -> BLOCK
-# (damage * block_multiplier, rounded up)
-# ---------------------------------------------------------------------------------------
+    rules = make_rules()
+    assert resolve(make_state(defender=defender), make_event(), rules).outcome == CombatOutcome.HIT
+    rules.config.guard_grace_ms = 50
+    assert resolve(make_state(defender=defender), make_event(), rules).outcome == CombatOutcome.BLOCK
 
 
 def test_branch11_block_outside_parry_window():

@@ -1,8 +1,8 @@
 // Editor-only scene generator for the P1 comms demo HUD (visualizer_demo/README.md "Building the
 // scene"). Builds the same GameObject graph the README's manual recipe describes, but through
 // Unity's own Editor APIs so the resulting Assets/Scenes/Demo.unity is Unity-serialized (real
-// GUIDs/file IDs) instead of hand-authored YAML. Safe to re-run: DoCreate() always starts from a
-// brand-new empty scene, so it never mutates or duplicates content in an already-open scene.
+// GUIDs/file IDs) instead of hand-authored YAML. This is a scaffold, NOT the source of truth for
+// the working phone scene/network setup. Refuses to overwrite an existing Demo.unity.
 //
 // Run via Window > CG4002 Demo > Create Demo Scene inside the Editor, or headless:
 //   Unity.exe -batchmode -quit -projectPath "<project>" -executeMethod Cg4002.VisualizerDemo.EditorTools.CreateDemoScene.DoCreate
@@ -25,6 +25,8 @@ namespace Cg4002.VisualizerDemo.EditorTools
         [MenuItem("Window/CG4002 Demo/Create Demo Scene")]
         public static void DoCreate()
         {
+            if (System.IO.File.Exists(ScenePath))
+                throw new System.InvalidOperationException("Demo.unity already exists. Preserve the working phone scene; use a separate project for scaffold generation.");
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
             var player1Avatar = CreateAvatar("Player1Avatar", new Vector3(0f, 0.5f, 0f));

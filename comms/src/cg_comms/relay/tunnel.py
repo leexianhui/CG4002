@@ -64,16 +64,26 @@ class TunnelSupervisor:
     _stop_event: asyncio.Event = field(default_factory=asyncio.Event, init=False)
     _supervise_task: "asyncio.Task[None] | None" = field(default=None, init=False)
 
-    async def start(self) -> None:
-        self._supervise_task = asyncio.create_task(self._run())
-        await self._wait_connectable()
+    async def start(self, wait_ready: bool = True) -> None:
+        if self._supervise_task is None:
+            self._supervise_task = asyncio.create_task(self._run())
+        if wait_ready:
+            await self._wait_connectable()
 
     async def stop(self) -> None:
         self._stop_event.set()
         if self._process is not None and self._process.returncode is None:
             self._process.terminate()
         if self._supervise_task is not None:
-            await self._supervise_task
+            self._supervise_task.cancel()
+            await asyncio.gather(self._supervise_task, return_exceptions=True)
+            self._supervise_task = None
+        if self._process is not None and self._process.returncode is None:
+            try:
+                await asyncio.wait_for(self._process.wait(), 3)
+            except asyncio.TimeoutError:
+                self._process.kill()
+                await self._process.wait()
 
     async def _wait_connectable(self) -> None:
         loop = asyncio.get_running_loop()

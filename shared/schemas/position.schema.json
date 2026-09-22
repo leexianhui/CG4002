@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://cg4002.internal/schemas/position.schema.json",
   "title": "POSITION",
-  "description": "visualizer -> engine, echoed engine -> visualizer. See shared/protocol/app_messages.md §2.3.",
+  "description": "Canonical POSITION: metres, x=Unity +x, y=Unity +z; heading degrees counterclockwise from +x. Timestamp is measurement time in a stable sender clock domain; engine anchors per connection. See shared/protocol/app_messages.md section 2.3.",
   "type": "object",
   "properties": {
     "type": { "const": "POSITION" },

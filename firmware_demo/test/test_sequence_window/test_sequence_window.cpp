@@ -47,6 +47,7 @@ void test_below_window_floor_is_rejected() {
     t.reset();
     uint32_t ext_seq = 0;
     for (uint16_t i = 1; i <= 200; i++) {
+        if (i == 180) continue; // leave a genuine gap; a previously received 180 is a duplicate
         TEST_ASSERT_TRUE(t.accept(i, &ext_seq));
     }
     TEST_ASSERT_FALSE(t.accept(100, &ext_seq));
@@ -111,6 +112,15 @@ void test_reset_clears_window() {
 
 }  // namespace
 
+void test_pre_wrap_underflow_cannot_poison_fresh_session() {
+    CgSequenceTracker tracker;
+    uint32_t ext;
+    TEST_ASSERT_TRUE(tracker.accept(10, &ext));
+    TEST_ASSERT_FALSE(tracker.accept(65535, &ext));
+    TEST_ASSERT_TRUE(tracker.accept(11, &ext));
+    TEST_ASSERT_EQUAL_UINT32(11, ext);
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_long_monotonic_stream_all_accepted);
@@ -120,5 +130,6 @@ int main(int, char **) {
     RUN_TEST(test_large_jump_clears_window);
     RUN_TEST(test_wrap_produces_continuous_ext_seq);
     RUN_TEST(test_reset_clears_window);
+    RUN_TEST(test_pre_wrap_underflow_cannot_poison_fresh_session);
     return UNITY_END();
 }

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 from pathlib import Path
 
@@ -17,9 +18,11 @@ import structlog
 from cg_comms.config import EngineSettings
 from cg_comms.engine.broadcaster import broadcast_to_visualizers, send_to_relay
 from cg_comms.engine.game_state_task import GameStateTask
-from cg_comms.engine.inbound import route_inbound
+from cg_comms.engine.inbound import LinkReset, ResetMatch, route_inbound
 from cg_comms.engine.rules import Rules
 from cg_comms.engine.ws_server import (
+    CONTROL_PATH,
+    RELAY_PATHS,
     VISUALIZER_PATHS,
     ConnectionRegistry,
     WsServerConfig,
@@ -36,6 +39,9 @@ logger = structlog.get_logger(__name__)
 
 async def run_engine(settings: EngineSettings) -> None:
     rules = Rules.load()
+    if settings.reorder_delay_ms != rules.config.reorder_delay_ms:
+        logger.warning("engine_reorder_config_ignored", configured=settings.reorder_delay_ms,
+                       effective=rules.config.reorder_delay_ms, source="shared/config/match.yaml")
     registry = ConnectionRegistry(send_queue_depth=settings.send_queue_depth)
     stop_event = asyncio.Event()
 
@@ -44,6 +50,10 @@ async def run_engine(settings: EngineSettings) -> None:
 
     async def on_match_state(state: WireMatchState) -> None:
         await broadcast_to_visualizers(registry, state)
+        if state.reason == "reset":
+            control = registry.connection_for_path(CONTROL_PATH)
+            if control is not None:
+                await control.enqueue(dump_app_message(state))
 
     async def on_combat_feedback(player_id: int, feedback: CombatFeedback) -> None:
         await send_to_relay(registry, player_id, feedback)
@@ -63,11 +73,25 @@ async def run_engine(settings: EngineSettings) -> None:
     )
 
     async def on_message(path: str, raw: str) -> None:
+        if path == CONTROL_PATH:
+            try:
+                command = json.loads(raw)
+            except ValueError:
+                command = None
+            if command == {"type": "RESET_MATCH", "version": 1}:
+                logger.info("match_reset_requested", path=path)
+                await task.submit(ResetMatch())
+            else:
+                logger.warning("control_command_rejected")
+            return
         event = route_inbound(path, raw)
         if event is not None:
             await task.submit(event)
 
     async def on_connect(path: str) -> None:
+        if path in RELAY_PATHS or path in VISUALIZER_PATHS:
+            pid = RELAY_PATHS.get(path, VISUALIZER_PATHS.get(path))
+            await task.submit(LinkReset(pid, "action" if path in RELAY_PATHS else "position"))
         if path in VISUALIZER_PATHS:
             # §7.4: a phone that attaches after the match has been running otherwise sees only
             # placeholder text until the next HP change, which in a P1-only run never comes.

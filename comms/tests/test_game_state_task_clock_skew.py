@@ -149,7 +149,7 @@ async def test_action_resolves_despite_huge_relay_clock_skew() -> None:
         make_action(player_id=ATTACKER_ID, action=ActionClass.HORIZONTAL_SWING, relay_ts=relay_now)
     )
 
-    assert len(task._reorder) == 1, "action should be buffered, not dropped, despite the clock skew"
+    assert len(task._reorder) == 4, "action should be buffered, not dropped, despite the clock skew"
     await _run_until_resolved(task)
 
     assert task.state.players[DEFENDER_ID].hp == 90, "attack should have resolved as a full HIT"
@@ -191,7 +191,7 @@ async def test_action_and_position_channels_anchor_independently() -> None:
         )
     )
 
-    assert len(task._reorder) == 1
+    assert len(task._reorder) == 4
     await _run_until_resolved(task)
     assert task.state.players[DEFENDER_ID].hp == 90
 

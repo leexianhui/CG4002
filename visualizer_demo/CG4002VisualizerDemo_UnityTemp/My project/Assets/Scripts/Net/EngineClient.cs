@@ -43,184 +43,156 @@ namespace Cg4002.VisualizerDemo.Net
         public event Action<string> OnConnectionStatus;
 
         private static readonly int[] ReconnectBackoffSeconds = { 1, 2, 4, 8 };
-
         private ClientWebSocket _ws;
-        private CancellationTokenSource _cts;
-        // Unity API calls (events -> scene objects) must happen on the main thread; the receive
-        // loop runs on a background task, so hand messages back via this queue and drain it in Update.
+        private CancellationTokenSource _lifetime;
+        private readonly SemaphoreSlim _sendLock = new SemaphoreSlim(1, 1);
         private readonly ConcurrentQueue<string> _inbox = new ConcurrentQueue<string>();
-        private Coroutine _reconnectCoroutine;
-        private bool _disconnectRequested;
-        // Guards against a second Connect() starting while one is already in flight - without this,
-        // a stale connection (Android silently killed the socket while backgrounded, so IsConnected
-        // never went false) plus a fresh reconnect attempt could both end up alive at once, each
-        // registering /visualizer/<id> and knocking the other off (engine's "ws_duplicate_path_replaced"
-        // flapping, seen after leaving the app backgrounded for ~5 minutes).
-        private bool _connecting;
+        private bool _resumeOnForeground;
 
         public bool IsConnected => _ws != null && _ws.State == WebSocketState.Open;
 
-        public async void Connect()
+        public void Connect()
         {
-            if (_connecting || IsConnected) return;
-            _connecting = true;
-            _disconnectRequested = false;
-            TeardownSocket();
-            _cts = new CancellationTokenSource();
-            _ws = new ClientWebSocket();
-            _ws.Options.SetRequestHeader("Authorization", $"Bearer {BearerToken}");
-
-            string scheme = UseTls ? "wss" : "ws";
-            var uri = new Uri($"{scheme}://{Host}:{Port}/visualizer/{PlayerId}");
-            try
-            {
-                await _ws.ConnectAsync(uri, _cts.Token);
-                _connecting = false;
-                OnConnectionStatus?.Invoke("connected");
-                _ = ReceiveLoop(_cts.Token);
-            }
-            catch (Exception e)
-            {
-                _connecting = false;
-                OnConnectionStatus?.Invoke($"connect_failed: {e.Message}");
-                BeginReconnect();
-            }
+            if (_lifetime != null) return; // exactly one reconnect owner
+            _lifetime = new CancellationTokenSource();
+            _ = ConnectionLoop(_lifetime);
         }
 
         public void Disconnect()
         {
-            _disconnectRequested = true;
-            if (_reconnectCoroutine != null)
-            {
-                StopCoroutine(_reconnectCoroutine);
-                _reconnectCoroutine = null;
-            }
-            DisconnectInternal();
-        }
-
-        private async void DisconnectInternal()
-        {
-            _cts?.Cancel();
-            if (_ws != null && _ws.State == WebSocketState.Open)
-            {
-                try
-                {
-                    await _ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "closing", CancellationToken.None);
-                }
-                catch (Exception)
-                {
-                    // Best-effort - the socket may already be dead (e.g. after backgrounding).
-                }
-            }
-            TeardownSocket();
-        }
-
-        // Synchronous, defensive teardown - Abort() transitions the socket to Aborted immediately
-        // even if it's already broken (unlike CloseAsync, which can hang/throw on a dead connection).
-        // Always call this before starting a new connection so at most one ClientWebSocket is ever
-        // live at a time.
-        private void TeardownSocket()
-        {
-            _cts?.Cancel();
-            if (_ws != null)
-            {
-                try { _ws.Abort(); } catch { /* already aborted/disposed */ }
-                _ws.Dispose();
-            }
+            var lifetime = _lifetime;
+            _lifetime = null;
+            lifetime?.Cancel();
+            // Abort synchronously; an old asynchronous close must never dispose a replacement socket.
+            _ws?.Abort();
             _ws = null;
+            while (_inbox.TryDequeue(out _)) { }
         }
 
-        // Capped backoff (1, 2, 4, 8s, repeating at 8s) so a killed/restarted engine (U3 test:
-        // "killing/restarting the engine shows disconnected then connected again without an app
-        // restart") is recovered from automatically instead of leaving the demo stuck.
-        private void BeginReconnect()
-        {
-            if (_disconnectRequested || _reconnectCoroutine != null) return;
-            _reconnectCoroutine = StartCoroutine(ReconnectLoop());
-        }
-
-        private IEnumerator ReconnectLoop()
+        private async Task ConnectionLoop(CancellationTokenSource lifetime)
         {
             int attempt = 0;
-            while (!_disconnectRequested && !IsConnected)
+            try
             {
-                int delay = ReconnectBackoffSeconds[Mathf.Min(attempt, ReconnectBackoffSeconds.Length - 1)];
-                OnConnectionStatus?.Invoke($"reconnecting_in_{delay}s");
-                yield return new WaitForSeconds(delay);
-                if (_disconnectRequested) break;
-                attempt++;
-                Connect();
-                // Give Connect()'s async ConnectAsync a moment to resolve before checking IsConnected
-                // again; a hard failure re-enters BeginReconnect via the catch block below anyway.
-                yield return new WaitForSeconds(0.1f);
+                while (!lifetime.IsCancellationRequested)
+                {
+                    using var socket = new ClientWebSocket();
+                    socket.Options.SetRequestHeader("Authorization", $"Bearer {BearerToken}");
+                    socket.Options.KeepAliveInterval = TimeSpan.FromSeconds(5);
+                    var started = System.Diagnostics.Stopwatch.StartNew();
+                    try
+                    {
+                        using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token))
+                        {
+                            timeout.CancelAfter(TimeSpan.FromSeconds(5));
+                            string scheme = UseTls ? "wss" : "ws";
+                            await socket.ConnectAsync(new Uri($"{scheme}://{Host}:{Port}/visualizer/{PlayerId}"),
+                                                      timeout.Token);
+                        }
+                        if (lifetime.IsCancellationRequested) break;
+                        _ws = socket;
+                        OnConnectionStatus?.Invoke("connected");
+                        await ReceiveLoop(socket, lifetime.Token);
+                    }
+                    catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { break; }
+                    catch (Exception e)
+                    {
+                        if (ReferenceEquals(_lifetime, lifetime))
+                            OnConnectionStatus?.Invoke($"connection_failed: {e.Message}");
+                    }
+                    finally
+                    {
+                        socket.Abort();
+                        if (ReferenceEquals(_ws, socket)) _ws = null;
+                    }
+                    if (lifetime.IsCancellationRequested) break;
+                    while (_inbox.TryDequeue(out _)) { }
+                    OnConnectionStatus?.Invoke("disconnected");
+                    if (started.Elapsed.TotalSeconds >= 10) attempt = 0;
+                    int delay = ReconnectBackoffSeconds[Math.Min(attempt++, ReconnectBackoffSeconds.Length - 1)];
+                    OnConnectionStatus?.Invoke($"reconnecting_in_{delay}s");
+                    await Task.Delay(TimeSpan.FromSeconds(delay), lifetime.Token);
+                }
             }
-            _reconnectCoroutine = null;
+            catch (OperationCanceledException) { }
+            finally
+            {
+                if (ReferenceEquals(_lifetime, lifetime)) _lifetime = null;
+                lifetime.Dispose();
+            }
+        }
+
+        // Existing POSITION is canonical: metres, +x Unity right, +y Unity forward,
+        // heading zero +x, positive toward +y. Unity yaw is zero +z and turns toward +x.
+        public static float HeadingFromUnityYaw(float yaw) => Mathf.Repeat(90f - yaw, 360f);
+
+        public void SendUnityPosition(float x, float z, float yaw)
+        {
+            SendPosition(x, z, HeadingFromUnityYaw(yaw));
         }
 
         public async void SendPosition(float x, float y, float heading)
         {
-            if (!IsConnected) return;
-            var position = new Position
-            {
-                Type = "POSITION",
-                Version = 1,
-                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                PlayerId = PlayerId,
-                X = x,
-                Y = y,
-                Heading = heading,
-            };
-            string json = JsonConvert.SerializeObject(position);
-            byte[] bytes = Encoding.UTF8.GetBytes(json);
-            await _ws.SendAsync(bytes, WebSocketMessageType.Text, true, CancellationToken.None);
-        }
-
-        private async Task ReceiveLoop(CancellationToken token)
-        {
-            var buffer = new byte[8192];
+            var socket = _ws;
+            var lifetime = _lifetime;
+            if (socket == null || lifetime == null || !IsConnected) return;
+            // Never accumulate position sends behind a stalled tunnel.
+            if (!await _sendLock.WaitAsync(0)) return;
             try
             {
-                while (!token.IsCancellationRequested && _ws.State == WebSocketState.Open)
-                {
-                    using var stream = new System.IO.MemoryStream();
-                    WebSocketReceiveResult result;
-                    do
-                    {
-                        result = await _ws.ReceiveAsync(buffer, token);
-                        if (result.MessageType == WebSocketMessageType.Close)
-                        {
-                            _inbox.Enqueue(null);  // sentinel: signal disconnect to the main thread
-                            return;
-                        }
-                        stream.Write(buffer, 0, result.Count);
-                    } while (!result.EndOfMessage);
-
-                    string json = Encoding.UTF8.GetString(stream.ToArray());
-                    _inbox.Enqueue(json);
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                // Disconnect() was called - expected, not an error.
+                var position = new Position {
+                    Type = "POSITION", Version = 1,
+                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    PlayerId = PlayerId, X = x, Y = y, Heading = heading,
+                };
+                byte[] bytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(position));
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+                timeout.CancelAfter(TimeSpan.FromSeconds(3));
+                await socket.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, timeout.Token);
             }
             catch (Exception e)
             {
-                _inbox.Enqueue(null);
-                Debug.LogError($"EngineClient receive loop failed: {e}");
+                if (ReferenceEquals(_ws, socket)) {
+                    Debug.LogWarning($"EngineClient send failed: {e.Message}");
+                    socket.Abort(); // the owning receive loop detects this and reconnects
+                }
+            }
+            finally { _sendLock.Release(); }
+        }
+
+        private async Task ReceiveLoop(ClientWebSocket socket, CancellationToken token)
+        {
+            var buffer = new byte[8192];
+            while (!token.IsCancellationRequested)
+            {
+                using var stream = new System.IO.MemoryStream();
+                WebSocketReceiveResult result;
+                do
+                {
+                    result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), token);
+                    if (result.MessageType == WebSocketMessageType.Close) return;
+                    stream.Write(buffer, 0, result.Count);
+                    if (stream.Length > 65536) throw new InvalidOperationException("Engine message too large");
+                } while (!result.EndOfMessage);
+                if (token.IsCancellationRequested) return;
+                if (_inbox.Count >= 256) throw new InvalidOperationException("Engine inbox capacity exceeded");
+                _inbox.Enqueue(Encoding.UTF8.GetString(stream.ToArray()));
             }
         }
 
         private void Update()
         {
-            while (_inbox.TryDequeue(out string json))
-            {
-                if (json == null)
-                {
-                    OnConnectionStatus?.Invoke("disconnected");
-                    BeginReconnect();
-                    continue;
-                }
-                DispatchMessage(json);
+            while (_inbox.TryDequeue(out string json)) DispatchMessage(json);
+        }
+
+        private void OnApplicationPause(bool paused)
+        {
+            if (paused) {
+                _resumeOnForeground = _lifetime != null;
+                Disconnect();
+            } else if (_resumeOnForeground) {
+                _resumeOnForeground = false;
+                Connect();
             }
         }
 
@@ -265,7 +237,7 @@ namespace Cg4002.VisualizerDemo.Net
 
         private void OnDestroy()
         {
-            _cts?.Cancel();
+            Disconnect();
         }
 
         // Certificate pinning is wired up via ServicePointManager's callback on platforms where
