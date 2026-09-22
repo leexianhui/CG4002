@@ -80,11 +80,13 @@ async def _handle_client(
     trigger_map: dict[str, Any] | None,
 ) -> None:
     cycle = itertools.cycle(steps if steps else _default_steps())
+    loop = asyncio.get_running_loop()
     try:
         while True:
             line = await reader.readline()
             if not line:
                 return
+            received_at = loop.time()
             parsed = parse_app_message(line.decode("utf-8").strip())
             if isinstance(parsed, MessageDropped):
                 logger.warning("ultra96_sim_bad_message", reason=parsed.reason.value, detail=parsed.detail)
@@ -104,8 +106,10 @@ async def _handle_client(
                 match_info = {"matched_row": step.payload}
 
             line_out = result.model_dump_json(by_alias=True) + "\n"
+            prepared_at = loop.time()
             writer.write(line_out.encode("utf-8"))
             await writer.drain()
+            sent_at = loop.time()
             # The classifier stand-in is the one hop with no other observer: the relay logs the
             # window going out and the action coming back, but nothing showed that this process
             # is alive and cycling the scenario. Without this, a wedged sim is indistinguishable
@@ -118,6 +122,10 @@ async def _handle_client(
                 action=result.action.value,
                 action_confidence=result.action_confidence,
                 guard_state=result.guard_state.value,
+                window_timestamp_ms=parsed.timestamp,
+                processing_ms=round((prepared_at - received_at) * 1000, 3),
+                write_drain_ms=round((sent_at - prepared_at) * 1000, 3),
+                service_ms=round((sent_at - received_at) * 1000, 3),
                 **match_info,
             )
     except (ConnectionResetError, OSError):

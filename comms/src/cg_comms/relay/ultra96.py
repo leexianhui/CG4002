@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from typing import Any
 
 import structlog
 
+from cg_comms.clock import monotonic_ms
 from cg_comms.messages.enums import ActionClass
 from cg_comms.messages.models import ActionResult, SensorWindow
 from cg_comms.messages.validate import MessageDropped, parse_app_message
@@ -90,22 +92,61 @@ class Ultra96Client:
             raise Ultra96Unavailable("duplicate request ID")
         future: asyncio.Future[ActionResult] = asyncio.get_running_loop().create_future()
         self._pending[window.request_id] = future
+        loop = asyncio.get_running_loop()
+        sent_at: float | None = None
+        phase = "scheduled"
+        encode_ms = write_drain_ms = 0.0
+        request_bytes = 0
 
         async def exchange() -> ActionResult:
-            writer.write((window.model_dump_json(by_alias=True) + "\n").encode())
+            nonlocal sent_at, phase, encode_ms, write_drain_ms, request_bytes
+            phase = "encoding"
+            began = loop.time()
+            payload = (window.model_dump_json(by_alias=True) + "\n").encode()
+            request_bytes = len(payload)
+            encode_ms = (loop.time() - began) * 1000
+            phase = "write_drain"
+            began = loop.time()
+            writer.write(payload)
             await writer.drain()
+            sent_at = loop.time()
+            write_drain_ms = (sent_at - began) * 1000
+            phase = "response_wait"
             return await future
+
+        started = loop.time()
+
+        def timing() -> dict[str, Any]:
+            now = loop.time()
+            return dict(player_id=window.player_id, request_id=window.request_id,
+                        window_timestamp_ms=window.timestamp,
+                        elapsed_ms=round((now - started) * 1000, 3),
+                        encode_ms=round(encode_ms, 3), write_drain_ms=round(write_drain_ms, 3),
+                        response_wait_ms=(round((now - sent_at) * 1000, 3)
+                                          if sent_at is not None else None),
+                        window_age_ms=monotonic_ms() - window.timestamp,
+                        request_bytes=request_bytes, timeout_ms=self.request_timeout_ms)
 
         try:
             logger.info("classifier_request", player_id=window.player_id,
-                        request_id=window.request_id, trigger_id=window.trigger_id)
+                        request_id=window.request_id, trigger_id=window.trigger_id,
+                        window_timestamp_ms=window.timestamp,
+                        window_age_ms=monotonic_ms() - window.timestamp,
+                        timeout_ms=self.request_timeout_ms)
+            # Measure against the same monotonic interval as wait_for; logging before admission
+            # and cross-machine wall-clock offsets are not part of this RTT measurement.
+            started = loop.time()
             result = await asyncio.wait_for(exchange(), self.request_timeout_ms / 1000)
             if result.player_id != window.player_id or result.timestamp != window.timestamp:
                 raise Ultra96Unavailable("classifier correlation mismatch")
+            logger.info("classifier_response", **timing())
             return result
         except asyncio.TimeoutError:
             self.timeouts += 1
-            logger.warning("ultra96_timeout", request_id=window.request_id)
+            metrics = timing()
+            logger.warning("ultra96_timeout", **metrics, phase=phase,
+                           deadline_overrun_ms=round(max(0, metrics["elapsed_ms"]
+                                                        - self.request_timeout_ms), 3))
             writer.close()
             return None
         except (OSError, ConnectionError) as exc:

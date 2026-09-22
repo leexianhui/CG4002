@@ -4,6 +4,9 @@ Implemented 2026-09-21. This report describes the current code, not a claim that
 been exercised. Classification remains on Ultra96, with separate P1/P2 relay processes and the same
 8888 classifier / 8443 engine / phone SSH + socat arrangement.
 
+The 2026-09-22 [focused follow-up](GUARD_LATENCY_FOLLOWUP.md) records the subsequent hardware-log
+findings, controlled avatar rotations, classifier latency probe and richer drop diagnostics.
+
 ## A. Files changed
 
 Paths are relative to the repository. Some files serve more than one category.
@@ -234,12 +237,12 @@ The checklist below is a procedure to run on hardware, not a record of completed
 
 A successful action chain is:
 `[capture] start trigger_id=N frames=40` (board) ->
-`capture_started` -> `window_ready player_id=P trigger_id=N request_id=R timestamp=S` ->
+`capture_started` -> `window_ready player_id=P trigger_id=N request_id=R window_timestamp_ms=S` ->
 `classifier_request ... request_id=R` ->
 `ultra96_sim_classified player_id=P trigger_id=N request_id=R` (classifier simulator) ->
-`action_classified ... request_id=R timestamp=S` ->
-`action_received player_id=P source_timestamp=S timestamp=T` (engine) ->
-`combat_resolved timestamp=T` or `action_not_resolved`.
+`action_classified ... request_id=R window_timestamp_ms=S` ->
+`action_received player_id=P source_timestamp=S engine_timestamp_ms=T` (engine) ->
+`combat_resolved engine_timestamp_ms=T` or `action_not_resolved`.
 IDLE guard can produce STATE_ONLY; absent/stale positions can produce IGNORED while recognition still
 reaches the phones. Existing ACTION lacks requestId, so source timestamp bridges the last hop.
 
@@ -256,7 +259,7 @@ reaches the phones. Existing ACTION lacks requestId, so source timestamp bridges
 | 9. Restart one relay | Engine logs that relay path disconnected/reconnected. Board logs `[ble] disconnected, advertising again` then `[handshake] complete`; new relay logs `session_streaming`. Held weapon is reannounced. Other player continues without re-handshake. After >64 packets, repeat to exercise old replay-window history. |
 | 10. Power-cycle one board | Its relay logs `reconnecting`, possibly preceded by `heartbeat_stale`/`link_lost` or `session_failed`. Recovery logs `ble_connected`, `timesync_seeded`, `session_streaming`; other player's chain continues. Press GPIO4 after reboot. Silence/failed handshake instead produces `handshake_timeout expected=HELLO/TIME_SYNC_REQ`, then retry, never a stuck wait. |
 | 11. Restart/background one phone | Engine logs `ws_client_disconnected path=/visualizer/P`, then `ws_client_connected`. Foreground HUD shows `connected` and fresh MATCH_STATE. Rapidly repeat; persistent `ws_duplicate_path_replaced` flapping is a failure, though one replacement of a stale socket is legitimate. |
-| 12. Attack/guard timing | Put avatars in range and facing each other. Guard well before attack: BLOCK/PARRY per timing. After allowed grace: HIT; inside grace: BLOCK (no late PARRY). Observe `action_received.timestamp` and `combat_resolved.outcome`. Buttons alone cannot establish a 1 ms physical boundary; record synchronized instrumentation for T+50/T+51 checks. Unit tests cover those boundaries in converted time. |
+| 12. Attack/guard timing | Put avatars in range and facing each other. Guard well before attack: BLOCK/PARRY per timing. After allowed grace: HIT; inside grace: BLOCK (no late PARRY). Observe `action_received.engine_timestamp_ms` and `combat_resolved.outcome`. Buttons alone cannot establish a 1 ms physical boundary; record synchronized instrumentation for T+50/T+51 checks. Unit tests cover those boundaries in converted time. |
 | 13. Weapon around attack | Start a SWORD capture, switch to MACE during classification/queued resolution. Follow source timestamp/request chain: the first `window_ready weapon=SWORD` must yield SWORD recognition/combat; subsequent capture uses MACE. |
 | 14. Counters/notification pressure | Compare serial `generated`, `sensor_frames`, `dropped`, cumulative `notify_dropped`, `rx_dropped` for both orders. Failed RFID sends may show `accepted=0`, then `rfid_event retransmit attempt=...`, then `acked`; one received feedback gives one `[feedback] applied seq=...` despite lost ACK retries. Use a controlled loss rig if available; do not infer radio delivery from stack acceptance. |
 | 15. Recovered health + reset | After each fault run several fresh captures. No persistent `window_suppressed`, `stream_decode_drop reason=replay`, `retransmit`, `link_degraded`, `combat_feedback_undelivered`, or `ble_receive_overflow`. Run reset: engine `match_reset_requested` then `match_reset`; CLI and both phones receive `reason=reset`; active phone feed shows `> MATCH RESET`. Verify HP 100/100 and no client reconnect solely due to reset. |

@@ -411,7 +411,7 @@ class Session:
         self.windower.on_weapon_confirmed(weapon if weapon is not Weapon.NONE else None)
         if weapon is Weapon.NONE:
             return
-        logger.info("weapon_changed", player_id=self.config.player_id, timestamp=engine_ts,
+        logger.info("weapon_changed", player_id=self.config.player_id, relay_timestamp_ms=engine_ts,
                     weapon=weapon.value)
         await self.on_weapon_changed(
             WeaponChanged(timestamp=engine_ts, player_id=self.config.player_id, weapon=weapon)  # type: ignore[arg-type]
@@ -429,7 +429,7 @@ class Session:
             return
         logger.info("window_ready", player_id=window.player_id, request_id=window.request_id,
                     trigger_id=window.trigger_id, capture_id=self.windower._capture_id,
-                    timestamp=window.timestamp, weapon=window.weapon.value)
+                    window_timestamp_ms=window.timestamp, weapon=window.weapon.value)
         if len(self._classification_tasks) >= self.ultra96.max_in_flight:
             logger.warning("window_dropped", request_id=window.request_id, reason="classifier_capacity")
             return
@@ -460,7 +460,7 @@ class Session:
             )
             return
         logger.info("action_classified", player_id=result.player_id, request_id=result.request_id,
-                    trigger_id=window.trigger_id, timestamp=window.timestamp,
+                    trigger_id=window.trigger_id, window_timestamp_ms=window.timestamp,
                     action=result.action.value, confidence=result.action_confidence)
         await self.on_action_result(Action(
             timestamp=window.timestamp, player_id=window.player_id, weapon=window.weapon,

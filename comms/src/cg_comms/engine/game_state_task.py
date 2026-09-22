@@ -19,7 +19,7 @@ from cg_comms.engine.inbound import (
     ResetMatch,
 )
 from cg_comms.engine.reorder import ReorderBuffer
-from cg_comms.engine.resolver import ActionEvent, Decision, resolve
+from cg_comms.engine.resolver import ActionEvent, Decision, _angle_diff_deg, _bearing_deg, resolve
 from cg_comms.engine.rules import Rules
 from cg_comms.engine.state import MatchState as EngineMatchState
 from cg_comms.engine.state import PlayerState, Vec2
@@ -31,7 +31,14 @@ from cg_comms.messages.enums import (
     GuardState,
     MatchPhase,
 )
-from cg_comms.messages.models import ActionRecognized, CombatEvent, CombatFeedback
+from cg_comms.messages.models import (
+    Action,
+    ActionRecognized,
+    CombatEvent,
+    CombatFeedback,
+    Position,
+    WeaponChanged,
+)
 from cg_comms.messages.models import MatchState as WireMatchState
 
 logger = structlog.get_logger(__name__)
@@ -148,29 +155,35 @@ class GameStateTask:
 
     def _absorb(self, event: InboundEvent) -> None:
         now = monotonic_ms()
+        message: Action | Position | WeaponChanged
         if isinstance(event, InboundAction):
-            remote_ts, channel = event.action.timestamp, _CHANNEL_ACTION
+            message, channel = event.action, _CHANNEL_ACTION
         elif isinstance(event, InboundWeaponChanged):
-            remote_ts, channel = event.weapon_changed.timestamp, _CHANNEL_ACTION
+            message, channel = event.weapon_changed, _CHANNEL_ACTION
         elif isinstance(event, InboundPosition):
-            remote_ts, channel = event.position.timestamp, _CHANNEL_POSITION
+            message, channel = event.position, _CHANNEL_POSITION
         else:
             return
+        remote_ts = message.timestamp
         timestamp = self._anchor(event.player_id, channel, remote_ts, now)
+        timing = dict(player_id=event.player_id, message_type=message.type, channel=channel,
+                      source_timestamp=remote_ts, engine_timestamp_ms=timestamp,
+                      arrival_engine_timestamp_ms=now, event_age_ms=now - timestamp,
+                      released_timestamp_ms=self._reorder.released_timestamp,
+                      release_delay_ms=self._reorder.reorder_delay_ms)
         if isinstance(event, InboundAction):
-            logger.info("action_received", player_id=event.player_id, source_timestamp=remote_ts,
-                        timestamp=timestamp, weapon=event.action.weapon.value)
+            logger.info("action_received", **timing, weapon=event.action.weapon.value,
+                        action=event.action.action.value, guard_state=event.action.guard_state.value)
         if timestamp < self._reset_floor:
-            logger.warning("event_before_match_reset", player_id=event.player_id)
+            logger.warning("event_before_match_reset", **timing, reason="before_match_reset")
             return
-        dropped = self._reorder.dropped_late
-        self._reorder.push(timestamp, TimedInput(timestamp, event), now,
-                           priority=1 if isinstance(event, InboundAction) else 0)
-        if self._reorder.dropped_late != dropped:
+        reason = self._reorder.push(timestamp, TimedInput(timestamp, event), now,
+                                    priority=1 if isinstance(event, InboundAction) else 0)
+        if reason is not None:
             logger.warning(
-                           "action_dropped_late" if isinstance(event, InboundAction) else "event_dropped",
-                           player_id=event.player_id, timestamp=timestamp,
-                           total_dropped_late=self._reorder.dropped_late)
+                "action_dropped_late" if isinstance(event, InboundAction) else "event_dropped",
+                **timing, reason=reason, queue_depth=len(self._reorder),
+                total_dropped_late=self._reorder.dropped_late)
 
     async def reset_match(self) -> None:
         self.state = EngineMatchState()
@@ -227,7 +240,8 @@ class GameStateTask:
                 await self._resolve_one(ev, snapshot)
 
     async def _resolve_one(self, ev: ActionEvent, snapshot: EngineMatchState | None = None) -> None:
-        decision = resolve(snapshot if snapshot is not None else self.state, ev, self.rules)
+        resolution_state = snapshot if snapshot is not None else self.state
+        decision = resolve(resolution_state, ev, self.rules)
         attacker = self.state.players.get(decision.attacker_id)
         weapon = ev.weapon if ev.weapon is not None else (attacker.weapon if attacker else None)
         if attacker is not None:
@@ -275,7 +289,7 @@ class GameStateTask:
             # the single most likely reason a demo looks dead while every link is healthy.
             logger.info(
                 "action_not_resolved",
-                timestamp=ev.timestamp,
+                engine_timestamp_ms=ev.timestamp,
                 outcome=decision.outcome.value,
                 attacker=decision.attacker_id,
                 action=ev.action.value,
@@ -302,9 +316,15 @@ class GameStateTask:
             and weapon is not None
             and defender is not None
         ):
+            # Inspect the exact event-time snapshot used by resolve, including guard-only grace.
+            resolved_attacker = resolution_state.players[decision.attacker_id]
+            resolved_defender = resolution_state.players[defender.player_id]
+            assert resolved_attacker.position is not None and resolved_defender.position is not None
+            bearing = _bearing_deg(resolved_defender.position, resolved_attacker.position)
+            facing_error = _angle_diff_deg(resolved_defender.heading_deg, bearing)
             logger.info(
                 "combat_resolved",
-                timestamp=ev.timestamp,
+                engine_timestamp_ms=ev.timestamp,
                 outcome=decision.outcome.value,
                 attacker=decision.attacker_id,
                 defender=decision.defender_id,
@@ -314,6 +334,13 @@ class GameStateTask:
                 attacker_hp=attacker.hp,
                 defender_hp=defender.hp,
                 range_m=round(decision.range_m, 2),
+                defender_guard_state=resolved_defender.guard_state.value,
+                guard_entered_engine_timestamp_ms=resolved_defender.guard_entered_ts,
+                guard_age_ms=ev.timestamp - resolved_defender.guard_entered_ts,
+                defender_heading_deg=resolved_defender.heading_deg,
+                bearing_to_attacker_deg=bearing,
+                facing_error_deg=facing_error,
+                facing_attacker=facing_error <= self.rules.guard_arc_deg / 2,
             )
             await self.on_combat_event(
                 CombatEvent(
