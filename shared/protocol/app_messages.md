@@ -256,3 +256,16 @@ Gameplay channels cannot issue this command. The engine's single writer clears g
 combat, preserves socket registrations and clock anchors, starts a fresh match, and sends
 `MATCH_STATE` with `reason:"reset"` to both visualizers and the operator. See
 `python -m cg_comms.tools.reset_match --help`. This is intentionally not persistence.
+
+
+## Optional assessment trace
+
+SENSOR_WINDOW, ACTION_RESULT, ACTION and ACTION_RECOGNIZED accept optional `demoTraceId`
+(string, at most 96 characters). The reviewed assessment relay uses `P<player>-<session>-<trace>`.
+The classifier copies it into the correlated result; the relay and engine preserve it to the
+visualizer. Normal serializers omit this field when unused, preserving the previous normal shape.
+The trace is diagnostic correlation, not authentication or a replacement for request IDs/timestamps.
+
+Keyboard assessment uses one returned real-format sensor sample per hand with normal unit scaling.
+The dummy classifier accepts this schema-valid window; it does not represent a 40-sample trained
+model capture. The normal GPIO windowing path and its capture gates remain unchanged.

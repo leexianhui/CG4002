@@ -1,5 +1,9 @@
 # Communications assessment: gap analysis and demonstration plan
 
+> **Updated status and commands:** the implementation has now been reviewed and corrected locally.
+> See [COMMS_ASSESSMENT_REVIEW_AND_RUNBOOK.md](COMMS_ASSESSMENT_REVIEW_AND_RUNBOOK.md).
+> The table below is the original pre-implementation gap analysis, not the current feature inventory.
+
 Based on the supplied assessment requirements and repository inspection, 2026-09-23.
 This is a preparation plan, not a hardware pass report. Proposed features below are not
 implemented by this document. Existing hardware evidence and commands are in

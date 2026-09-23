@@ -16,9 +16,9 @@ import random
 import secrets
 import time
 from collections import deque
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Awaitable, Callable
 
 import structlog
 
@@ -38,7 +38,7 @@ from cg_comms.relay.throughput import ThroughputMeter
 from cg_comms.relay.timesync import LaptopSideSample, TimeSyncEstimator, estimate_offset_laptop_side
 from cg_comms.relay.ultra96 import Ultra96Client, Ultra96Unavailable, passes_confidence_gate
 from cg_comms.relay.windowing import PlayerWindower
-from cg_comms.transport.base import ITransport
+from cg_comms.transport.base import ITransport, TransportClosed
 
 logger = structlog.get_logger(__name__)
 
@@ -110,20 +110,23 @@ class Session:
     _streaming: bool = field(default=False, init=False)
     _last_weapon_ts: int = field(default=-1, init=False)
     echo: EchoPipeline = field(init=False)
-    _file_acks: asyncio.Queue[dict] = field(
-        default_factory=lambda: asyncio.Queue(64), init=False
-    )
+    _file_acks: asyncio.Queue[dict] = field(default_factory=lambda: asyncio.Queue(64), init=False)
     # At most ONE assessment reliable packet (ASSESS_ECHO_REQ / ASSESS_FILE_CHUNK) in flight. Not a
     # throughput choice -- a correctness one. If two were in flight and the earlier was lost, its
     # retransmit would arrive after the later packet had already advanced the receiver's replay
     # state; serializing makes "the retransmit is the newest assessment frame" an invariant the
     # firmware can rely on (firmware_demo/src/main.cpp, handle_assess_reliable).
+    _assess_tasks: set[asyncio.Task] = field(default_factory=set, init=False)
+    _file_data: asyncio.Queue[dict] = field(default_factory=lambda: asyncio.Queue(64), init=False)
     _assess_send_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
     meter: ThroughputMeter = field(init=False)
+    _ack_fault_armed: bool = field(default=False, init=False)
+    _ack_fault_target: int | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
-        self.meter = ThroughputMeter(player_id=self.config.player_id,
-                                     latest_path=self.config.throughput_latest_path)
+        self.meter = ThroughputMeter(
+            player_id=self.config.player_id, latest_path=self.config.throughput_latest_path
+        )
         self._time_sync = TimeSyncEstimator(ewma_alpha=self.config.ewma_alpha)
         self._reliability_out = ReliabilitySender(
             send_frame=self.transport.send,
@@ -144,8 +147,12 @@ class Session:
             seed = random.SystemRandom().getrandbits(64)
         self.echo = EchoPipeline(player_id=self.config.player_id, rng=random.Random(seed))
         if self.config.assessment_enabled:
-            logger.info("assess_seed", player_id=self.config.player_id, seed=seed,
-                        replay_hint="pass this as assessment.seed to repeat this variant sequence")
+            logger.info(
+                "assess_seed",
+                player_id=self.config.player_id,
+                seed=seed,
+                replay_hint="pass this as assessment.seed to repeat this variant sequence",
+            )
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -155,6 +162,8 @@ class Session:
         `stop()` is called. Raises HandshakeFailed if the device never completes the handshake."""
         try:
             await self.transport.connect()
+            if self.config.assessment_enabled and self.transport.mtu < 76:
+                raise TransportClosed("assessment revision 2 needs BLE payload capacity >=76 bytes")
             await self._handshake()
             logger.info("session_streaming", player_id=self.config.player_id, session_id=self.session_id)
             await self._stream()
@@ -163,6 +172,9 @@ class Session:
             # Release every keystroke still waiting on a response: the transport is going away, so
             # those traces cannot be resolved and waiting out each individual timeout is pointless.
             self.echo.abandon_all("session ended")
+            for task in list(self._assess_tasks):
+                task.cancel()
+            await asyncio.gather(*self._assess_tasks, return_exceptions=True)
             for task in self._classification_tasks:
                 task.cancel()
             await asyncio.gather(*self._classification_tasks, return_exceptions=True)
@@ -180,8 +192,11 @@ class Session:
                     session_id=self.session_id,
                     direction=Direction.DEVICE_TO_LAPTOP,
                     expected_player_id=self.config.player_id,
-                    sequence_tracker=(SequenceTracker()
-                                      if restarting and expect != PacketType.HELLO else self._rx_tracker),
+                    sequence_tracker=(
+                        SequenceTracker()
+                        if restarting and expect != PacketType.HELLO
+                        else self._rx_tracker
+                    ),
                 )
                 if isinstance(decoded, DecodeError):
                     logger.warning("handshake_decode_drop", reason=decoded.reason.value)
@@ -194,6 +209,7 @@ class Session:
                     raise HandshakeFailed("device restarted handshake; reconnect for fresh session")
                 logger.warning("handshake_unexpected_packet", got=decoded.header.packet_type)
             raise HandshakeFailed("transport closed during handshake")
+
         try:
             return await asyncio.wait_for(receive(), timeout_s)
         except asyncio.TimeoutError as exc:
@@ -279,9 +295,14 @@ class Session:
         offset = estimate_offset_laptop_side(samples, self.config.outlier_rtt_multiplier)
         self._time_sync.seed(offset)
         offsets = [s.t1 - s.t0 for s in samples]
-        logger.info("timesync_seeded", player_id=self.config.player_id, offset_ms=offset,
-                    samples=len(samples), sample_spread_ms=max(offsets) - min(offsets),
-                    accuracy="one_way_delay_unknown")
+        logger.info(
+            "timesync_seeded",
+            player_id=self.config.player_id,
+            offset_ms=offset,
+            samples=len(samples),
+            sample_spread_ms=max(offsets) - min(offsets),
+            accuracy="one_way_delay_unknown",
+        )
 
     # -- streaming ----------------------------------------------------------------------------
 
@@ -298,11 +319,16 @@ class Session:
             asyncio.create_task(self._feedback_loop()),
             asyncio.create_task(self._stop_event.wait()),
             asyncio.create_task(
-                run_heartbeat_sender(self._send_heartbeat, self.config.heartbeat_interval_ms, self._stop_event)
+                run_heartbeat_sender(
+                    self._send_heartbeat, self.config.heartbeat_interval_ms, self._stop_event
+                )
             ),
             asyncio.create_task(
                 run_liveness_watchdog(
-                    self._heartbeat_monitor, self._on_link_stale, poll_interval_ms=500, stop_event=self._stop_event
+                    self._heartbeat_monitor,
+                    self._on_link_stale,
+                    poll_interval_ms=500,
+                    stop_event=self._stop_event,
                 )
             ),
         ]
@@ -416,15 +442,36 @@ class Session:
             return await self._send_echo_request_locked(keycode)
 
     async def echo_keystroke(self, keycode: int) -> tuple[PendingEcho, bool]:
-        """One keystroke's device round trip: send, then wait (bounded by
-        config.assess_echo_timeout_s) for the verified response. Returns (pending, verified). On a
-        timeout the trace is retired and counted lost, so a response arriving later is recognised
-        as late rather than applied."""
-        pending = await self.send_echo_request(keycode)
-        verified = await wait_for_echo(pending, self.config.assess_echo_timeout_s)
-        if not pending.event.is_set():
-            self.echo.expire(pending.trace_id, self.config.assess_echo_timeout_s)
-        return pending, verified
+        """Own the round trip through classification; recover a lost reply even if its ACK arrived."""
+        owner = asyncio.current_task()
+        assert owner is not None
+        self._assess_tasks.add(owner)
+        pending = None
+        try:
+            async with self._assess_send_lock:
+                pending = await self._send_echo_request_locked(keycode)
+                # Retransmit the SAME request, not a new trace, when response alone was lost.
+                for attempt in range(3):
+                    if await wait_for_echo(pending, self.config.assess_echo_timeout_s / 3):
+                        break
+                    if pending.event.is_set():
+                        break
+                    if attempt < 2:
+                        logger.warning(
+                            "assess_echo_response_retry", trace_id=pending.trace_id, attempt=attempt + 1
+                        )
+                        await self._reliability_out.send_reliable(
+                            pending.request_seq, pending.request_frame
+                        )
+                if not pending.event.is_set():
+                    self.echo.expire(pending.trace_id, self.config.assess_echo_timeout_s)
+                if pending.matched:
+                    await self._forward_echo(pending)
+                return pending, pending.matched
+        finally:
+            if pending is not None and not pending.event.is_set():
+                self.echo.expire(pending.trace_id, self.config.assess_echo_timeout_s)
+            self._assess_tasks.discard(owner)
 
     def assess_busy(self) -> bool:
         return self._assess_send_lock.locked()
@@ -433,91 +480,194 @@ class Session:
     def streaming(self) -> bool:
         return self._streaming
 
-    async def send_file(self, data: bytes) -> FileTransferResult:
-        """Stop-and-wait file transfer to the device (relay/assess_file.py). Holds the assessment
-        send lock for the WHOLE transfer, not per chunk: an echo request slipped in between two
-        chunks would be the newest assessment frame, and a later retransmit of the chunk would then
-        fail the device's "retransmit is the newest request" rule (main.cpp handle_assess_reliable).
+    def arm_assessment_ack_loss(self) -> None:
+        self._ack_fault_armed = True
+        logger.warning(
+            "assess_fault_armed",
+            player_id=self.config.player_id,
+            fault="ignore exactly one received upload ACK; next F only",
+        )
 
-        Raises ValueError/FileTooLarge (from chunk_file) before sending anything for an empty or
-        oversize file."""
+    async def _assessment_send(self, kind: PacketType, fields: dict) -> Callable[[], Awaitable[None]]:
+        seq, ext_seq = self._tx_counter.next()
+        frame = codec.encode_packet(
+            packet_type=kind,
+            seq=seq,
+            player_id=self.config.player_id,
+            fields=fields,
+            psk=self.config.psk,
+            session_id=self.session_id,
+            direction=Direction.LAPTOP_TO_DEVICE,
+            ext_seq=ext_seq,
+        )
+        if kind is PacketType.ASSESS_FILE_CHUNK and self._ack_fault_armed:
+            self._ack_fault_armed = False
+            self._ack_fault_target = seq
 
-        async def send_chunk(fields: dict) -> Callable[[], Awaitable[None]]:
-            seq, ext_seq = self._tx_counter.next()
-            frame = codec.encode_packet(
-                packet_type=PacketType.ASSESS_FILE_CHUNK, seq=seq, player_id=self.config.player_id,
-                fields=fields, psk=self.config.psk, session_id=self.session_id,
-                direction=Direction.LAPTOP_TO_DEVICE, ext_seq=ext_seq,
-            )
+        async def resend() -> None:
             await self._reliability_out.send_reliable(seq, frame)
 
-            async def resend() -> None:
-                # Identical ciphertext under the SAME seq: the device's exact-frame cache recognises
-                # it, re-ACKs and re-sends its last FILE_ACK without appending the chunk again.
-                await self._reliability_out.send_reliable(seq, frame)
+        await resend()
+        return resend
 
-            return resend
+    async def send_file(self, data: bytes) -> FileTransferResult:
+        """Upload and reconstruct actual board RAM bytes under one session/operation lock."""
+        owner = asyncio.current_task()
+        assert owner is not None
+        self._assess_tasks.add(owner)
+        returned = bytearray()
 
-        async with self._assess_send_lock:
-            return await run_file_transfer(
-                data, player_id=self.config.player_id, send_chunk=send_chunk, acks=self._file_acks
-            )
+        async def send_chunk(fields: dict) -> Callable[[], Awaitable[None]]:
+            return await self._assessment_send(PacketType.ASSESS_FILE_CHUNK, fields)
+
+        async def readback(transfer_id: int, size: int) -> bytes:
+            while not self._file_data.empty():
+                self._file_data.get_nowait()
+            for index in range((size + 31) // 32):
+                resend = await self._assessment_send(
+                    PacketType.ASSESS_FILE_READ, {"transfer_id": transfer_id, "chunk_index": index}
+                )
+                reply = None
+                for attempt in range(3):
+                    deadline = asyncio.get_running_loop().time() + 1.0
+                    while asyncio.get_running_loop().time() < deadline:
+                        try:
+                            candidate = await asyncio.wait_for(
+                                self._file_data.get(),
+                                max(0.001, deadline - asyncio.get_running_loop().time()),
+                            )
+                        except asyncio.TimeoutError:
+                            break
+                        if candidate["transfer_id"] == transfer_id and candidate["chunk_index"] == index:
+                            reply = candidate
+                            break
+                    if reply is not None:
+                        break
+                    if attempt < 2:
+                        await resend()
+                if reply is None:
+                    raise TimeoutError(f"readback chunk {index}")
+                n = min(32, size - index * 32)
+                if (
+                    reply["total_bytes"] != size
+                    or reply["chunk_len"] != n
+                    or reply["reserved"] != 0
+                    or any(reply["data"][n:])
+                ):
+                    raise ValueError(f"invalid readback chunk {index}")
+                returned.extend(reply["data"][:n])
+            return bytes(returned)
+
+        try:
+            async with self._assess_send_lock:
+                result = await run_file_transfer(
+                    data,
+                    player_id=self.config.player_id,
+                    send_chunk=send_chunk,
+                    acks=self._file_acks,
+                    readback=readback,
+                )
+                if result.ok and self.config.throughput_latest_path is not None:
+                    directory = self.config.throughput_latest_path.parent / "assessment"
+                    directory.mkdir(parents=True, exist_ok=True)
+                    path = (
+                        directory
+                        / f"received-p{self.config.player_id}-{self.session_id:08x}-{time.time_ns()}.bin"
+                    )
+                    path.write_bytes(returned)
+                    result.received_path = str(path)
+                    logger.info(
+                        "assess_file_saved",
+                        player_id=self.config.player_id,
+                        path=str(path),
+                        returned_sha256=result.returned_sha256,
+                    )
+                return result
+        finally:
+            self._ack_fault_target = None
+            self._assess_tasks.discard(owner)
 
     async def _send_echo_request_locked(self, keycode: int) -> PendingEcho:
-        pending, fields = self.echo.build_request(keycode)
+        pending, fields = self.echo.build_request(keycode, self.windower.current_weapon or Weapon.SWORD)
         seq, ext_seq = self._tx_counter.next()
         frame = encode_echo_request(
-            fields=fields, seq=seq, player_id=self.config.player_id,
-            psk=self.config.psk, session_id=self.session_id, ext_seq=ext_seq,
+            fields=fields,
+            seq=seq,
+            player_id=self.config.player_id,
+            psk=self.config.psk,
+            session_id=self.session_id,
+            ext_seq=ext_seq,
         )
-        logger.info("assess_echo_sent", player_id=self.config.player_id,
-                    trace_id=pending.trace_id, seq=seq, keycode=keycode,
-                    key=chr(keycode) if 32 <= keycode < 127 else None,
-                    variant=pending.variant.name, values=pending.variant.values,
-                    transform=pending.transform_id, expected=pending.expected,
-                    frame_bytes=len(frame))
+        pending.request_frame, pending.request_seq = frame, seq
+        pending.demo_trace_id = f"P{self.config.player_id}-{self.session_id:08x}-{pending.trace_id}"
+        logger.info(
+            "assess_echo_sent",
+            demo_trace_id=pending.demo_trace_id,
+            player_id=self.config.player_id,
+            trace_id=pending.trace_id,
+            seq=seq,
+            keycode=keycode,
+            key=chr(keycode) if 32 <= keycode < 127 else None,
+            variant=pending.variant.name,
+            values=pending.variant.values,
+            transform=pending.transform_id,
+            expected=pending.expected,
+            frame_bytes=len(frame),
+        )
         self.echo.mark_sent()
         try:
             await self._reliability_out.send_reliable(seq, frame)
         except LinkDegraded:
+            if pending.matched:
+                return pending  # the authenticated response itself proves request receipt
             # The device never ACKed. Retire the trace now rather than leaving the caller to wait out
             # the full echo timeout for a response that provably cannot arrive.
             self.echo.forget(pending.trace_id)
             self.echo.lost += 1
             pending.mismatch = "link degraded: request never ACKed"
             pending.event.set()
-            logger.error("assess_echo_undelivered", player_id=self.config.player_id,
-                         trace_id=pending.trace_id, seq=seq)
+            logger.error(
+                "assess_echo_undelivered",
+                player_id=self.config.player_id,
+                trace_id=pending.trace_id,
+                seq=seq,
+            )
         return pending
 
     async def _handle_echo_response(self, decoded: DecodedPacket) -> None:
-        """Verifies the device's transform, then pushes the result through the SAME Ultra96 ->
-        engine -> visualizer path a real classified window takes."""
-        pending = self.echo.on_response(decoded.fields)
-        if pending is None or not pending.matched:
-            return  # unknown trace or failed verification; both already logged
+        self.echo.on_response(decoded.fields)
 
+    async def _forward_echo(self, pending: PendingEcho) -> None:
         # A window needs a real weapon (RealWeapon excludes NONE), and the engine only emits
         # ActionRecognized when the attacker has a confirmed weapon. Without one the pipeline would
         # stop dead at the engine with every link healthy, so say so explicitly instead.
         weapon = self.windower.current_weapon
         if weapon is None or weapon is Weapon.NONE:
-            logger.warning("assess_echo_no_weapon", player_id=self.config.player_id,
-                           trace_id=pending.trace_id,
-                           hint="tap the RFID tag / press the weapon button first -- the engine "
-                                "cannot emit ActionRecognized without a confirmed weapon")
+            logger.warning(
+                "assess_echo_no_weapon",
+                player_id=self.config.player_id,
+                trace_id=pending.trace_id,
+                hint="tap the RFID tag / press the weapon button first -- the engine "
+                "cannot emit ActionRecognized without a confirmed weapon",
+            )
             return
 
         window = self.echo.synthetic_window(
-            pending, weapon=weapon, request_id=self.windower.next_request_id()
+            pending, weapon=pending.weapon, request_id=self.windower.next_request_id()
         )
         if len(self._classification_tasks) >= self.ultra96.max_in_flight:
-            logger.warning("assess_echo_dropped", trace_id=pending.trace_id,
-                           reason="classifier_capacity")
+            logger.warning(
+                "assess_echo_dropped", trace_id=pending.trace_id, reason="classifier_capacity"
+            )
             return
-        task = asyncio.create_task(self._classify(window))
-        self._classification_tasks.add(task)
-        task.add_done_callback(self._classification_done)
+        logger.info(
+            "assess_pipeline_forward",
+            player_id=self.config.player_id,
+            demo_trace_id=pending.demo_trace_id,
+            request_id=window.request_id,
+            dominant_first=window.dominant[0],
+        )
+        await self._classify(window)
 
     def queue_combat_feedback(self, feedback: CombatFeedback) -> None:
         if not self._streaming or feedback.player_id != self.config.player_id:
@@ -562,7 +712,16 @@ class Session:
         if packet_type == int(PacketType.HEARTBEAT):
             self._heartbeat_monitor.mark_received()
         elif packet_type == int(PacketType.ACK):
-            self._reliability_out.on_ack(decoded.fields["acked_seq"])
+            if self._ack_fault_target == decoded.fields["acked_seq"]:
+                logger.warning(
+                    "assess_fault_consumed",
+                    player_id=self.config.player_id,
+                    acked_seq=self._ack_fault_target,
+                    fault="local ACK suppression",
+                )
+                self._ack_fault_target = None
+            else:
+                self._reliability_out.on_ack(decoded.fields["acked_seq"])
         elif packet_type == int(PacketType.SENSOR_FRAME):
             self._heartbeat_monitor.mark_received()
             await self._handle_sensor_frame(decoded)
@@ -577,11 +736,18 @@ class Session:
             t1 = monotonic_ms()
             seq, ext_seq = self._tx_counter.next()
             response = codec.encode_packet(
-                packet_type=PacketType.TIME_SYNC_RESP, seq=seq, player_id=self.config.player_id,
-                fields={"t0": decoded.fields["t0"], "t1": t1 & 0xFFFFFFFF,
-                        "t2": monotonic_ms() & 0xFFFFFFFF},
-                psk=self.config.psk, session_id=self.session_id,
-                direction=Direction.LAPTOP_TO_DEVICE, ext_seq=ext_seq,
+                packet_type=PacketType.TIME_SYNC_RESP,
+                seq=seq,
+                player_id=self.config.player_id,
+                fields={
+                    "t0": decoded.fields["t0"],
+                    "t1": t1 & 0xFFFFFFFF,
+                    "t2": monotonic_ms() & 0xFFFFFFFF,
+                },
+                psk=self.config.psk,
+                session_id=self.session_id,
+                direction=Direction.LAPTOP_TO_DEVICE,
+                ext_seq=ext_seq,
             )
             await self.transport.send(response)
         elif packet_type == int(PacketType.ASSESS_ECHO_RESP):
@@ -591,12 +757,19 @@ class Session:
             # (info), never applied twice.
             self._heartbeat_monitor.mark_received()
             await self._handle_echo_response(decoded)
+        elif packet_type == int(PacketType.ASSESS_FILE_DATA):
+            self._heartbeat_monitor.mark_received()
+            if not self._file_data.full():
+                self._file_data.put_nowait(decoded.fields)
         elif packet_type == int(PacketType.ASSESS_FILE_ACK):
             self._heartbeat_monitor.mark_received()
-            logger.info("assess_file_ack", player_id=self.config.player_id,
-                        chunk_index=decoded.fields["chunk_index"],
-                        running_crc=f"0x{decoded.fields['running_crc']:04X}",
-                        received_bytes=decoded.fields["received_bytes"])
+            logger.debug(
+                "assess_file_ack",
+                player_id=self.config.player_id,
+                chunk_index=decoded.fields["chunk_index"],
+                running_crc=f"0x{decoded.fields['running_crc']:04X}",
+                received_bytes=decoded.fields["received_bytes"],
+            )
             try:
                 self._file_acks.put_nowait(decoded.fields)
             except asyncio.QueueFull:
@@ -616,8 +789,12 @@ class Session:
         self.windower.on_weapon_confirmed(weapon if weapon is not Weapon.NONE else None)
         if weapon is Weapon.NONE:
             return
-        logger.info("weapon_changed", player_id=self.config.player_id, relay_timestamp_ms=engine_ts,
-                    weapon=weapon.value)
+        logger.info(
+            "weapon_changed",
+            player_id=self.config.player_id,
+            relay_timestamp_ms=engine_ts,
+            weapon=weapon.value,
+        )
         await self.on_weapon_changed(
             WeaponChanged(timestamp=engine_ts, player_id=self.config.player_id, weapon=weapon)  # type: ignore[arg-type]
         )
@@ -632,9 +809,15 @@ class Session:
         )
         if window is None:
             return
-        logger.info("window_ready", player_id=window.player_id, request_id=window.request_id,
-                    trigger_id=window.trigger_id, capture_id=self.windower._capture_id,
-                    window_timestamp_ms=window.timestamp, weapon=window.weapon.value)
+        logger.info(
+            "window_ready",
+            player_id=window.player_id,
+            request_id=window.request_id,
+            trigger_id=window.trigger_id,
+            capture_id=self.windower._capture_id,
+            window_timestamp_ms=window.timestamp,
+            weapon=window.weapon.value,
+        )
         if len(self._classification_tasks) >= self.ultra96.max_in_flight:
             logger.warning("window_dropped", request_id=window.request_id, reason="classifier_capacity")
             return
@@ -651,8 +834,12 @@ class Session:
         try:
             result = await self.ultra96.request(window)
         except Ultra96Unavailable as exc:
-            logger.warning("window_dropped", player_id=window.player_id,
-                           request_id=window.request_id, reason=str(exc))
+            logger.warning(
+                "window_dropped",
+                player_id=window.player_id,
+                request_id=window.request_id,
+                reason=str(exc),
+            )
             return
         if result is None:
             return
@@ -664,11 +851,25 @@ class Session:
                 request_id=window.request_id,
             )
             return
-        logger.info("action_classified", player_id=result.player_id, request_id=result.request_id,
-                    trigger_id=window.trigger_id, window_timestamp_ms=window.timestamp,
-                    action=result.action.value, confidence=result.action_confidence)
-        await self.on_action_result(Action(
-            timestamp=window.timestamp, player_id=window.player_id, weapon=window.weapon,
-            action=result.action, action_confidence=result.action_confidence,
-            guard_state=result.guard_state, guard_confidence=result.guard_confidence,
-        ))
+        logger.info(
+            "action_classified",
+            player_id=result.player_id,
+            request_id=result.request_id,
+            demo_trace_id=window.demo_trace_id,
+            trigger_id=window.trigger_id,
+            window_timestamp_ms=window.timestamp,
+            action=result.action.value,
+            confidence=result.action_confidence,
+        )
+        await self.on_action_result(
+            Action(
+                timestamp=window.timestamp,
+                player_id=window.player_id,
+                weapon=window.weapon,
+                action=result.action,
+                action_confidence=result.action_confidence,
+                guard_state=result.guard_state,
+                guard_confidence=result.guard_confidence,
+                demo_trace_id=window.demo_trace_id,
+            )
+        )

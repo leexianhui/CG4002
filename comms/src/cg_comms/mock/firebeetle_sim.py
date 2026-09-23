@@ -29,7 +29,7 @@ from cg_comms.messages.enums import Weapon
 from cg_comms.mock.assess_device import FileRxState, FileVerdict, build_echo_response
 from cg_comms.mock.scenario import ScenarioStep, load_scenario
 from cg_comms.protocol import codec
-from cg_comms.protocol.codec import DecodeError, DecodedPacket
+from cg_comms.protocol.codec import DecodedPacket, DecodeError
 from cg_comms.protocol.constants import PROTOCOL_VERSION, Direction, PacketType
 from cg_comms.protocol.crypto import OutgoingSequenceCounter, SequenceTracker
 from cg_comms.protocol.framing import Framer
@@ -191,7 +191,9 @@ class FireBeetleSim:
                         Direction.DEVICE_TO_LAPTOP,
                     )
                 elif decoded.header.packet_type in (
-                    int(PacketType.ASSESS_ECHO_REQ), int(PacketType.ASSESS_FILE_CHUNK)
+                    int(PacketType.ASSESS_ECHO_REQ),
+                    int(PacketType.ASSESS_FILE_CHUNK),
+                    int(PacketType.ASSESS_FILE_READ),
                 ):
                     await self._handle_assess(decoded)
 
@@ -207,20 +209,49 @@ class FireBeetleSim:
             return
         if decoded.header.packet_type == int(PacketType.ASSESS_ECHO_REQ):
             resp = (PacketType.ASSESS_ECHO_RESP, build_echo_response(decoded.fields, monotonic_ms()))
-            logger.info("sim_assess_echo", trace_id=decoded.fields["trace_id"],
-                        transform_id=resp[1]["transform_id"])
+            logger.info(
+                "sim_assess_echo",
+                trace_id=decoded.fields["trace_id"],
+                transform_id=resp[1]["transform_id"],
+            )
+        elif decoded.header.packet_type == int(PacketType.ASSESS_FILE_READ):
+            f = decoded.fields
+            index = f["chunk_index"]
+            if (
+                not self.file_rx.complete
+                or f["transfer_id"] != self.file_rx.transfer_id
+                or not 0 <= index < self.file_rx.total_chunks
+            ):
+                return
+            piece = self.file_rx.data[index * 32 : (index + 1) * 32]
+            resp = (
+                PacketType.ASSESS_FILE_DATA,
+                {
+                    "transfer_id": f["transfer_id"],
+                    "chunk_index": index,
+                    "total_bytes": self.file_rx.received_bytes,
+                    "chunk_len": len(piece),
+                    "reserved": 0,
+                    "data": piece.ljust(32, b"\0"),
+                },
+            )
         else:
             verdict, nxt, reason = self.file_rx.evaluate(decoded.fields)
             if verdict is FileVerdict.MALFORMED:
-                logger.warning("sim_file_chunk_malformed", reason=reason,
-                               chunk_index=decoded.fields["chunk_index"])
+                logger.warning(
+                    "sim_file_chunk_malformed", reason=reason, chunk_index=decoded.fields["chunk_index"]
+                )
                 return
             self.file_rx = nxt
-            resp = (PacketType.ASSESS_FILE_ACK, {
-                "chunk_index": decoded.fields["chunk_index"],
-                "running_crc": nxt.running_crc,
-                "received_bytes": nxt.received_bytes,
-            })
+            resp = (
+                PacketType.ASSESS_FILE_ACK,
+                {
+                    "transfer_id": decoded.fields["transfer_id"],
+                    "chunk_index": decoded.fields["chunk_index"],
+                    "running_crc": nxt.running_crc,
+                    "received_bytes": nxt.received_bytes,
+                },
+            )
         await self._send(*resp, Direction.DEVICE_TO_LAPTOP)
         self._assess_last_req_seq = seq
         self._assess_last_resp = resp
@@ -287,12 +318,16 @@ def main() -> None:
     args = parser.parse_args()
 
     configure_logging(
-        f"firebeetle-sim-p{args.player_id}", args.logs_dir, level=getattr(logging, args.log_level.upper())
+        f"firebeetle-sim-p{args.player_id}",
+        args.logs_dir,
+        level=getattr(logging, args.log_level.upper()),
     )
 
     async def _main() -> None:
         transport = TcpServerTransport(host="0.0.0.0", port=args.tcp_port)
-        sim = FireBeetleSim(transport=transport, psk=bytes.fromhex(args.psk_hex), player_id=args.player_id)
+        sim = FireBeetleSim(
+            transport=transport, psk=bytes.fromhex(args.psk_hex), player_id=args.player_id
+        )
         steps = load_scenario(args.scenario)
         logger.info(
             "firebeetle_sim_listening",

@@ -55,6 +55,11 @@ static inline void cg_assess_build_echo_resp(const cg_payload_assess_echo_req_t 
     resp->value_a = a;
     resp->value_b = b;
     resp->value_c = c;
+    resp->flags = req->flags;
+    resp->weapon_id = req->weapon_id;
+    memcpy(resp->dominant_gyro, req->dominant_gyro, sizeof(resp->dominant_gyro));
+    memcpy(resp->offhand, req->offhand, sizeof(resp->offhand));
+    memcpy(resp->torso, req->torso, sizeof(resp->torso));
 }
 
 enum CgFileVerdict {
@@ -64,6 +69,7 @@ enum CgFileVerdict {
 };
 
 struct CgAssessFileRx {
+    uint32_t transfer_id = 0;
     bool active = false;       // a transfer has started (chunk 0 seen) this session
     uint16_t total_chunks = 0;
     uint16_t next_index = 0;   // == total_chunks once complete
@@ -85,7 +91,7 @@ struct CgAssessFileRx {
         const uint8_t len = chunk->chunk_len;
         if (chunk->reserved != 0) { *reason = "reserved!=0"; return CG_FILE_MALFORMED; }
         if (len == 0 || len > CG_ASSESS_FILE_CHUNK_DATA_LEN) { *reason = "chunk_len"; return CG_FILE_MALFORMED; }
-        if (total == 0 || index >= total) { *reason = "index>=total"; return CG_FILE_MALFORMED; }
+        if (chunk->transfer_id == 0 || total == 0 || total > 128 || index >= total) { *reason = "index>=total"; return CG_FILE_MALFORMED; }
         // Only the final chunk may be short; anything else means the sender's chunking is broken.
         if (index + 1u < total && len != CG_ASSESS_FILE_CHUNK_DATA_LEN) { *reason = "short_non_final"; return CG_FILE_MALFORMED; }
         for (unsigned i = len; i < CG_ASSESS_FILE_CHUNK_DATA_LEN; i++) {
@@ -95,8 +101,9 @@ struct CgAssessFileRx {
         if (index == 0) {
             next->reset();
             next->active = true;
+            next->transfer_id = chunk->transfer_id;
             next->total_chunks = total;
-        } else if (!active || total != total_chunks || index != next_index) {
+        } else if (!active || chunk->transfer_id != transfer_id || total != total_chunks || index != next_index) {
             *reason = "out_of_sequence";
             return CG_FILE_OUT_OF_SEQUENCE;
         }
@@ -107,3 +114,9 @@ struct CgAssessFileRx {
         return CG_FILE_APPENDED;
     }
 };
+
+static_assert(sizeof(cg_payload_assess_echo_req_t) == 48, "echo request layout");
+static_assert(sizeof(cg_payload_assess_echo_resp_t) == 50, "echo response layout");
+static_assert(sizeof(cg_payload_assess_file_chunk_t) == 42, "file chunk layout");
+static_assert(sizeof(cg_payload_assess_file_ack_t) == 12, "file ack layout");
+static_assert(sizeof(cg_payload_assess_file_data_t) == 42, "file readback layout");

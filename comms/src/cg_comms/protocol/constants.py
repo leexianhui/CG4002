@@ -51,6 +51,8 @@ class PacketType(IntEnum):
     ASSESS_ECHO_RESP = 0x41
     ASSESS_FILE_CHUNK = 0x42
     ASSESS_FILE_ACK = 0x43
+    ASSESS_FILE_READ = 0x44
+    ASSESS_FILE_DATA = 0x45
 
 
 # Delivery-sensitive types. RFID/feedback use ACK + retransmit; handshake/time-sync use bounded
@@ -65,6 +67,7 @@ RELIABLE_PACKET_TYPES: frozenset[PacketType] = frozenset(
         PacketType.COMBAT_FEEDBACK,
         PacketType.ASSESS_ECHO_REQ,
         PacketType.ASSESS_FILE_CHUNK,
+        PacketType.ASSESS_FILE_READ,
     }
 )
 
@@ -88,6 +91,7 @@ ACK_RETRANSMIT_PACKET_TYPES: frozenset[PacketType] = frozenset(
         PacketType.COMBAT_FEEDBACK,
         PacketType.ASSESS_ECHO_REQ,
         PacketType.ASSESS_FILE_CHUNK,
+        PacketType.ASSESS_FILE_READ,
     }
 )
 

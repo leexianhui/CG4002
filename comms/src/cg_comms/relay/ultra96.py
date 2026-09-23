@@ -67,6 +67,8 @@ class Ultra96Client:
                 line = await reader.readline()
                 if not line:
                     raise ConnectionError("classifier EOF")
+                if not line.endswith(b"\n"):
+                    raise ConnectionError("classifier unterminated line")
                 parsed = parse_app_message(line.decode("utf-8").strip())
                 if isinstance(parsed, MessageDropped) or not isinstance(parsed, ActionResult):
                     logger.warning("ultra96_bad_message")
@@ -106,7 +108,7 @@ class Ultra96Client:
             nonlocal sent_at, phase, encode_ms, write_drain_ms, request_bytes
             phase = "encoding"
             began = loop.time()
-            payload = (window.model_dump_json(by_alias=True) + "\n").encode()
+            payload = (window.model_dump_json(by_alias=True, exclude={"demo_trace_id"} if window.demo_trace_id is None else set()) + "\n").encode()
             request_bytes = len(payload)
             encode_ms = (loop.time() - began) * 1000
             phase = "write_drain"
@@ -141,7 +143,8 @@ class Ultra96Client:
             # and cross-machine wall-clock offsets are not part of this RTT measurement.
             started = loop.time()
             result = await asyncio.wait_for(exchange(), self.request_timeout_ms / 1000)
-            if result.player_id != window.player_id or result.timestamp != window.timestamp:
+            if (result.player_id != window.player_id or result.timestamp != window.timestamp
+                    or result.demo_trace_id != window.demo_trace_id):
                 raise Ultra96Unavailable("classifier correlation mismatch")
             logger.info("classifier_response", **timing())
             return result

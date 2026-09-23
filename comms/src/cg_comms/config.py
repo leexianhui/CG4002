@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -145,6 +145,12 @@ class RelaySettings(BaseSettings):
     ultra96: Ultra96Config = Field(default_factory=Ultra96Config)
     engine_link: EngineLinkConfig = Field(default_factory=EngineLinkConfig)
     assessment: AssessmentConfig = Field(default_factory=AssessmentConfig)
+
+    @field_validator("player_id", mode="before")
+    @classmethod
+    def parse_player_id(cls, value: object) -> object:
+        # Environment values are strings; keep the Literal validation for every other value.
+        return int(value) if isinstance(value, str) and value in ("1", "2") else value
 
     @property
     def psk(self) -> bytes:

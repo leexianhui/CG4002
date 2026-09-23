@@ -1,5 +1,10 @@
 # Communications assessment implementation, live demo and video plan
 
+> **Reviewed implementation available:** use
+> [COMMS_ASSESSMENT_REVIEW_AND_RUNBOOK.md](COMMS_ASSESSMENT_REVIEW_AND_RUNBOOK.md)
+> for actual supported commands, review fixes, remaining hardware checks and the live/video script.
+> This document records the original proposal; its proposed CLI flags are not an operator reference.
+
 **Status:** proposed implementation plan, 2026-09-23. No features in this plan have been
 implemented or physically verified by writing this document. Commands explicitly marked
 **proposed** will work only after their implementation milestones pass.

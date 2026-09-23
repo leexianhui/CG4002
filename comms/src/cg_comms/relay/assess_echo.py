@@ -7,7 +7,7 @@ Assessment requirement (the one that exempts demoing each channel separately):
     send it back to the Ultra96 via the laptop. The Ultra96 will then generate a random AI action
     event and pass it to the Visualizer."
 
-Four hops, each independently evidenced in the logs by one `trace_id` (see `assess_dummy`,
+Four hops, correlated by `demo_trace_id` (with a numeric BLE `trace_id`; see `assess_dummy`,
 `assess_transform`, and the `assess_*` log events below):
 
     key -> ASSESS_ECHO_REQ (laptop->device, reliable)
@@ -15,23 +15,11 @@ Four hops, each independently evidenced in the logs by one `trace_id` (see `asse
         -> SENSOR_WINDOW to Ultra96 -> random ACTION_RESULT
         -> Action -> engine -> ActionRecognized -> visualizer
 
-WHY THIS BYPASSES THE WINDOWER (the important design decision):
-
-The obvious implementation would feed echo responses through `PlayerWindower` like sensor frames.
-That is wrong here, for three concrete reasons:
-
-1. `windowing.py`'s triggered mode only clears its refractory state on an UNTAGGED frame. A stream of
-   continuously-tagged assessment frames would jam it after the first capture and the demo would go
-   dead with every link healthy.
-2. A window needs 40 samples at 50 Hz (~780 ms) before it completes, but `request_timeout_ms` is
-   120 ms in the demo config. One keystroke cannot produce a window at all.
-3. The span/staleness/weapon gates exist to protect real classification quality. An echo packet is
-   not motion data, so passing it through those gates would mean reasoning about, and weakening,
-   gates the real game depends on.
-
-So this module constructs its own single-sample `SensorWindow` and calls `Ultra96Client.request()`
-directly. The windower, its gates and its refractory state are left completely untouched, which also
-means running the assessment demo cannot regress the normal triggered-action demo.
+The assessment simulator accepts a one-sample SENSOR_WINDOW. This is a synthetic protocol demo,
+not the production model's 40-sample capture. The 120 ms classifier deadline starts only AFTER a
+window is built; it does not limit capture duration. The normal windower remains unchanged.
+The request and reply carry the full sensor layout; the board transforms dominant accel axes,
+and the relay scales the actual validated returned readings using the normal IMU units.
 """
 
 from __future__ import annotations
@@ -49,6 +37,7 @@ from cg_comms.protocol import codec
 from cg_comms.protocol.constants import Direction, PacketType
 from cg_comms.relay.assess_dummy import DummyVariant, choose
 from cg_comms.relay.assess_transform import apply_transform, transform_for
+from cg_comms.relay.windowing import _scale_sample
 
 logger = structlog.get_logger(__name__)
 
@@ -77,6 +66,11 @@ class PendingEcho:
     event: asyncio.Event = field(default_factory=asyncio.Event)
     matched: bool = False
     mismatch: str | None = None
+    returned: dict | None = None
+    weapon: Weapon = Weapon.SWORD
+    request_frame: bytes = b""
+    request_seq: int = 0
+    demo_trace_id: str | None = None
 
 
 @dataclass
@@ -106,7 +100,7 @@ class EchoPipeline:
         self._next_trace_id = 1 if trace_id >= 0xFFFFFFFF else trace_id + 1
         return trace_id
 
-    def build_request(self, keycode: int) -> tuple[PendingEcho, dict[str, int]]:
+    def build_request(self, keycode: int, weapon: Weapon = Weapon.SWORD) -> tuple[PendingEcho, dict]:
         """Chooses a random dummy variant and returns the pending record plus ASSESS_ECHO_REQ fields.
 
         The expected response is computed HERE, at send time, from the same transform table the
@@ -123,9 +117,10 @@ class EchoPipeline:
             expected=apply_transform(transform_id, variant.values, keycode),
             transform_id=transform_id,
             sent_ms=sent_ms,
+            weapon=weapon,
         )
         self._pending[trace_id] = pending
-        fields: dict[str, int] = {
+        fields: dict = {
             "trace_id": trace_id,
             "sent_ms": sent_ms & 0xFFFFFFFF,
             "keycode": keycode,
@@ -133,6 +128,11 @@ class EchoPipeline:
             "value_a": variant.values[0],
             "value_b": variant.values[1],
             "value_c": variant.values[2],
+            "flags": 0,
+            "weapon_id": weapon.wire_value,
+            "dominant_gyro": (164, 0, -82),
+            "offhand": (0, 0, 2048, 0, 0, 0),
+            "torso": (0, 0, 2048, 0, 0, 0),
         }
         return pending, fields
 
@@ -150,8 +150,13 @@ class EchoPipeline:
             if outcome is not None:
                 # Expected, not an error: the device re-sends its last response whenever our ACK for
                 # the request was lost, and a response can also land after its trace timed out.
-                logger.info("assess_echo_duplicate_response", player_id=self.player_id,
-                            trace_id=trace_id, earlier_outcome=outcome, action="ignored")
+                logger.info(
+                    "assess_echo_duplicate_response",
+                    player_id=self.player_id,
+                    trace_id=trace_id,
+                    earlier_outcome=outcome,
+                    action="ignored",
+                )
             else:
                 logger.warning("assess_echo_unknown_trace", player_id=self.player_id, trace_id=trace_id)
             return None
@@ -163,6 +168,17 @@ class EchoPipeline:
             problems.append(f"payload_kind {fields['payload_kind']} != {pending.variant.kind}")
         if fields["transform_id"] != pending.transform_id:
             problems.append(f"transform_id {fields['transform_id']} != {pending.transform_id}")
+        expected_fields = {
+            "reserved": 0,
+            "flags": 0,
+            "weapon_id": pending.weapon.wire_value,
+            "dominant_gyro": (164, 0, -82),
+            "offhand": (0, 0, 2048, 0, 0, 0),
+            "torso": (0, 0, 2048, 0, 0, 0),
+        }
+        for name, expected in expected_fields.items():
+            if fields.get(name) != expected:
+                problems.append(f"{name} mismatch")
         if got != pending.expected:
             problems.append(f"values {got} != expected {pending.expected}")
 
@@ -174,20 +190,36 @@ class EchoPipeline:
             # this laptop believes it does. That is a worse state than a dropped packet, and the one
             # thing a naive echo demo would happily report as success.
             logger.error(
-                "assess_echo_mismatch", player_id=self.player_id, trace_id=trace_id,
-                variant=pending.variant.name, sent=pending.variant.values, received=got,
-                expected=pending.expected, transform_id=pending.transform_id,
-                keycode=pending.keycode, rtt_ms=rtt_ms, problems=pending.mismatch,
+                "assess_echo_mismatch",
+                player_id=self.player_id,
+                trace_id=trace_id,
+                demo_trace_id=pending.demo_trace_id,
+                variant=pending.variant.name,
+                sent=pending.variant.values,
+                received=got,
+                expected=pending.expected,
+                transform_id=pending.transform_id,
+                keycode=pending.keycode,
+                rtt_ms=rtt_ms,
+                problems=pending.mismatch,
             )
         else:
+            pending.returned = dict(fields)
             pending.matched = True
             self.verified += 1
             logger.info(
-                "assess_echo_verified", player_id=self.player_id, trace_id=trace_id,
-                variant=pending.variant.name, sent=pending.variant.values, received=got,
-                transform=pending.transform_id, keycode=pending.keycode,
+                "assess_echo_verified",
+                player_id=self.player_id,
+                trace_id=trace_id,
+                demo_trace_id=pending.demo_trace_id,
+                variant=pending.variant.name,
+                sent=pending.variant.values,
+                received=got,
+                transform=pending.transform_id,
+                keycode=pending.keycode,
                 key=chr(pending.keycode) if 32 <= pending.keycode < 127 else None,
-                device_timestamp_ms=fields["device_timestamp_ms"], rtt_ms=rtt_ms,
+                device_timestamp_ms=fields["device_timestamp_ms"],
+                rtt_ms=rtt_ms,
             )
         # Retire the trace as soon as it is resolved. Leaving it in `_pending` would leak one entry
         # per keystroke over a long demo, make `in_flight` meaningless, and let `abandon_all` later
@@ -213,8 +245,14 @@ class EchoPipeline:
             return
         self.lost += 1
         pending.mismatch = f"no response within {timeout_s:g} s"
-        logger.error("assess_echo_timeout", player_id=self.player_id, trace_id=trace_id,
-                     timeout_s=timeout_s, variant=pending.variant.name, keycode=pending.keycode)
+        logger.error(
+            "assess_echo_timeout",
+            player_id=self.player_id,
+            trace_id=trace_id,
+            timeout_s=timeout_s,
+            variant=pending.variant.name,
+            keycode=pending.keycode,
+        )
         self._retire(trace_id, "timed_out")
         pending.event.set()
 
@@ -223,39 +261,40 @@ class EchoPipeline:
         otherwise hang until each individual timeout."""
         if not self._pending:
             return
-        logger.warning("assess_echo_abandoned", player_id=self.player_id,
-                       in_flight=len(self._pending), reason=reason)
+        logger.warning(
+            "assess_echo_abandoned",
+            player_id=self.player_id,
+            in_flight=len(self._pending),
+            reason=reason,
+        )
         self.lost += len(self._pending)
         for trace_id, pending in list(self._pending.items()):
             pending.mismatch = f"abandoned: {reason}"
             self._retire(trace_id, "abandoned")
             pending.event.set()
 
-    def synthetic_window(
-        self, pending: PendingEcho, *, weapon: Weapon, request_id: int
-    ) -> SensorWindow:
-        """Wraps a verified echo as a one-sample SENSOR_WINDOW so the existing Ultra96 path carries
-        it, with no new relay->Ultra96 message type and therefore no JSON schema change.
-
-        The six IMU columns hold the echo's three transformed values twice (accel then gyro slots)
-        rather than zeros, so the payload visibly changes with the dummy variant when the professor
-        edits the table -- a window of zeros would look identical for every variant.
-        """
-        a, b, c = pending.expected
-        sample = [float(a), float(b), float(c), float(a), float(b), float(c)]
+    def synthetic_window(self, pending: PendingEcho, *, weapon: Weapon, request_id: int) -> SensorWindow:
+        """Scale the actual authenticated returned sensor sample; never synthesize from expectation."""
+        if not pending.matched or pending.returned is None:
+            raise ValueError("cannot forward an unverified echo")
+        received = pending.returned
+        dominant = (
+            tuple(received[k] for k in ("value_a", "value_b", "value_c")) + received["dominant_gyro"]
+        )
         now = monotonic_ms()
         return SensorWindow(
             timestamp=now,
-            player_id=self.player_id,  # type: ignore[arg-type]
+            player_id=self.player_id,
             request_id=request_id,
-            weapon=weapon,  # type: ignore[arg-type]
-            window_start_ts=pending.sent_ms,
+            weapon=weapon,
+            window_start_ts=now,
             window_end_ts=now,
             sample_rate_hz=_SYNTHETIC_SAMPLE_RATE_HZ,
-            dominant=[sample],
-            offhand=[sample],
+            dominant=[_scale_sample(dominant)],
+            offhand=[_scale_sample(received["offhand"])],
             stale_pct=0.0,
             trigger_id=None,
+            demo_trace_id=pending.demo_trace_id,
         )
 
     def mark_sent(self) -> None:
@@ -265,13 +304,17 @@ class EchoPipeline:
         self.sent += 1
 
     def stats(self) -> dict[str, int]:
-        return {"sent": self.sent, "verified": self.verified,
-                "mismatched": self.mismatched, "lost": self.lost,
-                "in_flight": len(self._pending)}
+        return {
+            "sent": self.sent,
+            "verified": self.verified,
+            "mismatched": self.mismatched,
+            "lost": self.lost,
+            "in_flight": len(self._pending),
+        }
 
 
 def encode_echo_request(
-    *, fields: dict[str, int], seq: int, player_id: int, psk: bytes, session_id: int, ext_seq: int
+    *, fields: dict, seq: int, player_id: int, psk: bytes, session_id: int, ext_seq: int
 ) -> bytes:
     """Encodes ASSESS_ECHO_REQ. Separate from Session so the encoding can be unit-tested without a
     transport, and so the packet is built by the same generic codec as every other type."""

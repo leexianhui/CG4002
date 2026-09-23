@@ -5,6 +5,7 @@
   "description": "relay -> engine. See shared/protocol/app_messages.md §2.1.",
   "type": "object",
   "properties": {
+    "demoTraceId": {"type": ["string", "null"], "maxLength": 96},
     "type": { "const": "ACTION" },
     "version": { "type": "integer", "const": 1 },
     "timestamp": { "type": "integer", "minimum": 0 },

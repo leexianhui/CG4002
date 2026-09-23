@@ -5,6 +5,7 @@
   "description": "engine -> both visualizers. See shared/protocol/app_messages.md §2.8. Reports that an action was recognised, independent of whether it resolved into combat (docs/DEMO_TRIGGERED_ACTION_PLAN.md §6/§7.2). `action` permits IDLE deliberately: a guard-only report is action=IDLE, guardState=GUARDING.",
   "type": "object",
   "properties": {
+    "demoTraceId": {"type": ["string", "null"], "maxLength": 96},
     "type": { "const": "ACTION_RECOGNIZED" },
     "version": { "type": "integer", "const": 1 },
     "timestamp": { "type": "integer", "minimum": 0 },

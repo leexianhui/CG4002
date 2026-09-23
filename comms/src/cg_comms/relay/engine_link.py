@@ -86,7 +86,7 @@ class EngineLinkClient:
                     self._outbox.get_nowait()
 
     async def send_action(self, action: Action) -> None:
-        await self._send(action.model_dump_json(by_alias=True))
+        await self._send(action.model_dump_json(by_alias=True, exclude={"demo_trace_id"} if action.demo_trace_id is None else set()))
 
     async def send_weapon_changed(self, weapon_changed: WeaponChanged) -> None:
         await self._send(weapon_changed.model_dump_json(by_alias=True))

@@ -46,8 +46,8 @@
 // firmware's capture and the trigger_id gets attached to the wrong (or no) SensorWindow.
 #define CG_DEMO_CAPTURE_FRAMES 40
 
-// Overridable at build time for the throughput sweep, without editing this file, e.g. in PowerShell:
-//   $env:PLATFORMIO_BUILD_FLAGS="-D CG_DEMO_SENSOR_FRAME_INTERVAL_MS=10"   (100 Hz)
+// Use the dedicated *_bench100 / *_bench200 PlatformIO environments for rate sweeps.
+// Do not replace PLATFORMIO_BUILD_FLAGS: doing so can discard P2 identity/include flags.
 // The relay's windowing.frame_rate_hz assumes 50 Hz; at another rate the triggered-action span gate
 // may suppress windows. That is expected during a rate sweep -- restore 20 for the game demo.
 #ifndef CG_DEMO_SENSOR_FRAME_INTERVAL_MS

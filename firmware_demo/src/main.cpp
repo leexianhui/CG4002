@@ -53,6 +53,7 @@ CgReliableReceiveCache g_feedback_cache;
 // assessment frame" holds and one monotonic watermark per kind is sufficient.
 CgReliableReceiveCache g_assess_cache;
 CgAssessFileRx g_file_rx;
+uint8_t g_file_data[4096]; // retained only for this BLE session; no flash writes
 // The last request frame we answered and the response PLAINTEXT we sent for it. A retransmit of that
 // request means our ACK was lost -- and possibly our response too -- so the response is re-sent with
 // the re-ACK. It is re-encoded under a FRESH sequence number rather than replayed byte-for-byte: a
@@ -293,7 +294,7 @@ void send_ack_for(uint16_t acked_seq) {
 }
 
 bool is_assess_reliable(uint8_t packet_type) {
-    return packet_type == CG_PKT_ASSESS_ECHO_REQ || packet_type == CG_PKT_ASSESS_FILE_CHUNK;
+    return packet_type == CG_PKT_ASSESS_ECHO_REQ || packet_type == CG_PKT_ASSESS_FILE_CHUNK || packet_type == CG_PKT_ASSESS_FILE_READ;
 }
 
 // Handles one authenticated, length-checked ASSESS_ECHO_REQ / ASSESS_FILE_CHUNK. Returns true if the
@@ -312,6 +313,7 @@ bool handle_assess_reliable(uint8_t packet_type, const uint8_t *plaintext, uint1
     if (packet_type == CG_PKT_ASSESS_ECHO_REQ) {
         cg_payload_assess_echo_req_t req;
         memcpy(&req, plaintext, sizeof(req));
+        if (req.trace_id == 0 || req.weapon_id < 1 || req.weapon_id > 3 || req.flags != 0) return false;
         cg_payload_assess_echo_resp_t echo;
         cg_assess_build_echo_resp(&req, millis(), &echo);
         resp_type = CG_PKT_ASSESS_ECHO_RESP;
@@ -330,6 +332,23 @@ bool handle_assess_reliable(uint8_t packet_type, const uint8_t *plaintext, uint1
                       (unsigned)req.payload_kind, (unsigned)echo.transform_id,
                       (int)req.value_a, (int)req.value_b, (int)req.value_c,
                       (int)echo.value_a, (int)echo.value_b, (int)echo.value_c);
+    } else if (packet_type == CG_PKT_ASSESS_FILE_READ) {
+        cg_payload_assess_file_read_t req;
+        memcpy(&req, plaintext, sizeof(req));
+        if (!g_file_rx.complete() || req.transfer_id != g_file_rx.transfer_id ||
+            req.chunk_index >= g_file_rx.total_chunks) return false;
+        cg_payload_assess_file_data_t data = {};
+        data.transfer_id = req.transfer_id;
+        data.chunk_index = req.chunk_index;
+        data.total_bytes = (uint16_t)g_file_rx.received_bytes;
+        const uint32_t offset = (uint32_t)req.chunk_index * 32;
+        const uint32_t remaining = g_file_rx.received_bytes - offset;
+        data.chunk_len = (uint8_t)(remaining < 32 ? remaining : 32);
+        memcpy(data.data, g_file_data + offset, data.chunk_len);
+        resp_type = CG_PKT_ASSESS_FILE_DATA;
+        resp_len = sizeof(data);
+        memcpy(resp, &data, resp_len);
+        if (!send_packet(resp_type, resp, resp_len, nullptr, 0)) return false;
     } else {
         cg_payload_assess_file_chunk_t chunk;
         memcpy(&chunk, plaintext, sizeof(chunk));
@@ -342,6 +361,7 @@ bool handle_assess_reliable(uint8_t packet_type, const uint8_t *plaintext, uint1
             return false;  // never ACK a malformed chunk; the relay gives up with LinkDegraded
         }
         cg_payload_assess_file_ack_t ack;
+        ack.transfer_id = chunk.transfer_id;
         ack.chunk_index = chunk.chunk_index;
         ack.running_crc = next.running_crc;
         ack.received_bytes = next.received_bytes;
@@ -350,6 +370,9 @@ bool handle_assess_reliable(uint8_t packet_type, const uint8_t *plaintext, uint1
         memcpy(resp, &ack, resp_len);
         if (!send_packet(resp_type, resp, resp_len, nullptr, 0)) {
             return false;  // `next` discarded: the retransmit must not append the bytes twice
+        }
+        if (verdict == CG_FILE_APPENDED) {
+            memcpy(g_file_data + (uint32_t)chunk.chunk_index * 32, chunk.data, chunk.chunk_len);
         }
         g_file_rx = next;
         // Per-chunk printing would add a few ms of blocking serial per chunk; print only the edges
@@ -416,7 +439,8 @@ void drain_incoming_non_blocking() {
         if ((packet_type == CG_PKT_ACK && len != 2) ||
             (packet_type == CG_PKT_COMBAT_FEEDBACK && len != sizeof(cg_payload_combat_feedback_t)) ||
             (packet_type == CG_PKT_ASSESS_ECHO_REQ && len != sizeof(cg_payload_assess_echo_req_t)) ||
-            (packet_type == CG_PKT_ASSESS_FILE_CHUNK && len != sizeof(cg_payload_assess_file_chunk_t))) continue;
+            (packet_type == CG_PKT_ASSESS_FILE_CHUNK && len != sizeof(cg_payload_assess_file_chunk_t)) ||
+            (packet_type == CG_PKT_ASSESS_FILE_READ && len != sizeof(cg_payload_assess_file_read_t))) continue;
         if (is_assess_reliable(packet_type)) {
             // Replay state is committed only if the request was actually answered (see
             // handle_assess_reliable); otherwise the retransmit must look brand new.
@@ -454,6 +478,7 @@ bool do_handshake() {
     // sequence numbers, so a stale cache entry or half-finished file transfer must not survive it.
     g_assess_cache.reset();
     g_file_rx.reset();
+    memset(g_file_data, 0, sizeof(g_file_data));
     g_assess_last_req_len = 0;
     g_assess_last_resp_type = 0;
     g_assess_last_resp_len = 0;
@@ -469,7 +494,7 @@ bool do_handshake() {
     memcpy(hello, device_mac, 6);
     hello[6] = CG_DEMO_PLAYER_ID;
     hello[7] = CG_PROTOCOL_VERSION;
-    hello[8] = 1;
+    hello[8] = 2;
     hello[9] = 0;  // firmware_version = 1 (u16 LE)
     memcpy(hello + 10, &g_device_nonce, 4);
     hello[14] = 0;

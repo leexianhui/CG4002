@@ -12,9 +12,10 @@ firmware_demo/lib/cg_protocol/cg_assess.h). For each chunk:
 
 Step 3 is the integrity evidence: the CRC is computed by the FireBeetle over the bytes it actually
 decrypted, and compared by the laptop against the source. A transport ACK alone is never reported as
-success. What this does NOT do (say so on the video): the device keeps only a running CRC-16, not the
-file, so there is no readback and no device-side SHA-256. The SHA-256 printed here identifies the
-SOURCE file; the device-side proof is CRC-16/CCITT-FALSE plus exact length, checked after every chunk.
+success. The board retains up to 4096 bytes in RAM. Session.send_file then reads those actual bytes back
+and compares them byte-for-byte and by SHA-256. The upload-only helper can be unit-tested separately;
+only a successful readback is logged as assess_file_verified. Every reply carries a transfer ID,
+so a delayed acknowledgement from an earlier transfer cannot verify a new one.
 
 Failure handling (every path aborts and reports; none claims success):
   - chunk never ACKed (LinkDegraded) or transport gone      -> abort, "link"
@@ -25,16 +26,16 @@ Failure handling (every path aborts and reports; none claims success):
     re-applying the chunk. Bounded by _RESPONSE_RECOVERY_ATTEMPTS, then abort.
 There is no resume: the next attempt starts again at chunk 0, which the device treats as a new transfer.
 
-A FILE_ACK for any other chunk_index (a late re-sent response for an earlier chunk) is ignored, not
-treated as an error. A stale ack can at worst cause a spurious mismatch ABORT -- it can never make a
-transfer report success for bytes the device does not hold, because success needs every chunk's
-length and CRC to agree with the source.
+A FILE_ACK for another transfer_id or chunk_index is ignored. Every accepted chunk must match
+the source length and running CRC; final verification additionally requires equal readback bytes
+and SHA-256. An upload-only result is labelled separately from a verified round trip.
 """
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -48,8 +49,7 @@ from cg_comms.transport.base import TransportClosed
 
 logger = structlog.get_logger(__name__)
 
-# The firmware holds no file bytes, so this cap is not a RAM limit on the device; it keeps a
-# stop-and-wait demo transfer to a few seconds and matches the plan's proposed 4 KiB bound.
+# Matches the fixed board RAM buffer; also bounds the stop-and-wait operation.
 MAX_FILE_BYTES = 4096
 # total_chunks is a u16 on the wire; MAX_FILE_BYTES keeps us far below it, asserted in chunk_file.
 _MAX_CHUNKS = 0xFFFF
@@ -63,7 +63,7 @@ class FileTooLarge(ValueError):
     pass
 
 
-@dataclass(frozen=True)
+@dataclass
 class FileTransferResult:
     ok: bool
     reason: str
@@ -76,12 +76,15 @@ class FileTransferResult:
     source_crc: int
     device_crc: int | None  # the device's last reported running CRC
 
+    returned_sha256: str | None = None
+    received_path: str | None = None
+
     @property
     def bytes_per_s(self) -> float:
         return round(self.confirmed_bytes / self.elapsed_s, 1) if self.elapsed_s > 0 else 0.0
 
 
-def chunk_file(data: bytes) -> list[dict]:
+def chunk_file(data: bytes, transfer_id: int = 1) -> list[dict]:
     """Splits `data` into ASSESS_FILE_CHUNK field dicts: 32-byte chunks, the last one short and
     zero-padded (the device rejects non-zero padding as malformed)."""
     if not data:
@@ -92,14 +95,17 @@ def chunk_file(data: bytes) -> list[dict]:
     assert total <= _MAX_CHUNKS
     chunks = []
     for index in range(total):
-        piece = data[index * ASSESS_FILE_CHUNK_DATA_LEN:(index + 1) * ASSESS_FILE_CHUNK_DATA_LEN]
-        chunks.append({
-            "chunk_index": index,
-            "total_chunks": total,
-            "chunk_len": len(piece),
-            "reserved": 0,
-            "data": piece.ljust(ASSESS_FILE_CHUNK_DATA_LEN, b"\x00"),
-        })
+        piece = data[index * ASSESS_FILE_CHUNK_DATA_LEN : (index + 1) * ASSESS_FILE_CHUNK_DATA_LEN]
+        chunks.append(
+            {
+                "transfer_id": transfer_id,
+                "chunk_index": index,
+                "total_chunks": total,
+                "chunk_len": len(piece),
+                "reserved": 0,
+                "data": piece.ljust(ASSESS_FILE_CHUNK_DATA_LEN, b"\x00"),
+            }
+        )
     return chunks
 
 
@@ -111,6 +117,8 @@ async def run_file_transfer(
     acks: asyncio.Queue[dict],
     ack_timeout_s: float = _FILE_ACK_TIMEOUT_S,
     clock: Callable[[], float] = time.monotonic,
+    transfer_id: int | None = None,
+    readback: Callable[[int, int], Awaitable[bytes]] | None = None,
 ) -> FileTransferResult:
     """Runs one transfer. `send_chunk(fields)` encodes the chunk under a fresh seq, sends it reliably
     and returns a `resend()` coroutine function that re-sends that SAME frame reliably (used only for
@@ -119,7 +127,8 @@ async def run_file_transfer(
 
     Raises ValueError/FileTooLarge before sending anything if `data` cannot be transferred.
     """
-    chunks = chunk_file(data)
+    transfer_id = transfer_id or secrets.randbelow(0xFFFFFFFF) + 1
+    chunks = chunk_file(data, transfer_id)
     sha = hashlib.sha256(data).hexdigest()
     source_crc = crc16(data)
     total = len(chunks)
@@ -128,8 +137,15 @@ async def run_file_transfer(
     while not acks.empty():
         acks.get_nowait()
         stale += 1
-    logger.info("assess_file_start", player_id=player_id, total_bytes=len(data), total_chunks=total,
-                sha256=sha, source_crc=f"0x{source_crc:04X}", stale_acks_discarded=stale)
+    logger.info(
+        "assess_file_start",
+        player_id=player_id,
+        total_bytes=len(data),
+        total_chunks=total,
+        sha256=sha,
+        source_crc=f"0x{source_crc:04X}",
+        stale_acks_discarded=stale,
+    )
 
     started = clock()
     running_crc = 0xFFFF
@@ -139,62 +155,101 @@ async def run_file_transfer(
 
     def result(ok: bool, reason: str, confirmed_chunks: int) -> FileTransferResult:
         return FileTransferResult(
-            ok=ok, reason=reason, total_bytes=len(data), total_chunks=total,
-            chunks_confirmed=confirmed_chunks, confirmed_bytes=confirmed_bytes,
-            elapsed_s=round(clock() - started, 3), sha256=sha, source_crc=source_crc,
+            ok=ok,
+            reason=reason,
+            total_bytes=len(data),
+            total_chunks=total,
+            chunks_confirmed=confirmed_chunks,
+            confirmed_bytes=confirmed_bytes,
+            elapsed_s=round(clock() - started, 3),
+            sha256=sha,
+            source_crc=source_crc,
             device_crc=device_crc,
         )
 
     for fields in chunks:
         index = fields["chunk_index"]
         expect_bytes = confirmed_bytes + fields["chunk_len"]
-        expect_crc = crc16_update(running_crc, fields["data"][:fields["chunk_len"]])
+        expect_crc = crc16_update(running_crc, fields["data"][: fields["chunk_len"]])
         try:
             resend = await send_chunk(fields)
-            ack = await _await_file_ack(acks, index, ack_timeout_s)
+            ack = await _await_file_ack(acks, index, ack_timeout_s, transfer_id)
             recoveries = 0
             while ack is None and recoveries < _RESPONSE_RECOVERY_ATTEMPTS:
                 recoveries += 1
-                logger.warning("assess_file_ack_missing", player_id=player_id, chunk_index=index,
-                               recovery_attempt=recoveries,
-                               action="re-sending identical chunk; device re-sends its last response")
+                logger.warning(
+                    "assess_file_ack_missing",
+                    player_id=player_id,
+                    chunk_index=index,
+                    recovery_attempt=recoveries,
+                    action="re-sending identical chunk; device re-sends its last response",
+                )
                 await resend()
-                ack = await _await_file_ack(acks, index, ack_timeout_s)
+                ack = await _await_file_ack(acks, index, ack_timeout_s, transfer_id)
         except (LinkDegraded, TransportClosed, ConnectionError) as exc:
             r = result(False, f"link: chunk {index} not delivered ({type(exc).__name__})", index)
             _log_result(player_id, r)
             return r
         if ack is None:
-            r = result(False, f"no FILE_ACK for chunk {index} after "
-                              f"{_RESPONSE_RECOVERY_ATTEMPTS} recovery attempts", index)
+            r = result(
+                False,
+                f"no FILE_ACK for chunk {index} after {_RESPONSE_RECOVERY_ATTEMPTS} recovery attempts",
+                index,
+            )
             _log_result(player_id, r)
             return r
 
         device_crc = ack["running_crc"]
         if ack["received_bytes"] != expect_bytes or ack["running_crc"] != expect_crc:
             # An out-of-sequence chunk lands here too (device state unchanged => byte count lags).
-            r = result(False, (f"device state mismatch at chunk {index}: device reports "
-                               f"received_bytes={ack['received_bytes']} crc=0x{ack['running_crc']:04X}, "
-                               f"source expects received_bytes={expect_bytes} crc=0x{expect_crc:04X}"),
-                       index)
+            r = result(
+                False,
+                (
+                    f"device state mismatch at chunk {index}: device reports "
+                    f"received_bytes={ack['received_bytes']} crc=0x{ack['running_crc']:04X}, "
+                    f"source expects received_bytes={expect_bytes} crc=0x{expect_crc:04X}"
+                ),
+                index,
+            )
             _log_result(player_id, r)
             return r
         running_crc = expect_crc
         confirmed_bytes = expect_bytes
         if (index + 1) / total >= next_progress and index + 1 < total:
-            logger.info("assess_file_progress", player_id=player_id, chunks=f"{index + 1}/{total}",
-                        confirmed_bytes=confirmed_bytes, device_crc=f"0x{device_crc:04X}")
+            logger.info(
+                "assess_file_progress",
+                player_id=player_id,
+                chunks=f"{index + 1}/{total}",
+                confirmed_bytes=confirmed_bytes,
+                device_crc=f"0x{device_crc:04X}",
+            )
             while (index + 1) / total >= next_progress:
                 next_progress += 0.25
 
     # Every chunk's length and CRC agreed; the last one covers the whole file.
     assert confirmed_bytes == len(data) and running_crc == source_crc
-    r = result(True, "device CRC-16 and length match the source after every chunk", total)
+    r = result(True, "upload CRC-16 and length checked; readback not requested", total)
+    if readback is not None:
+        try:
+            returned = await readback(transfer_id, len(data))
+        except (LinkDegraded, TransportClosed, ConnectionError, TimeoutError, ValueError) as exc:
+            r = result(False, f"readback failed: {exc}", total)
+            _log_result(player_id, r)
+            return r
+        r.returned_sha256 = hashlib.sha256(returned).hexdigest()
+        if returned != data or r.returned_sha256 != sha:
+            r.ok = False
+            r.reason = "readback bytes/SHA-256 mismatch"
+        else:
+            r.reason = "board RAM readback bytes, SHA-256, upload CRC-16 and length match"
+        r.elapsed_s = round(clock() - started, 3)
     _log_result(player_id, r)
     return r
 
 
-async def _await_file_ack(acks: asyncio.Queue[dict], index: int, timeout_s: float) -> dict | None:
+async def _await_file_ack(
+    acks: asyncio.Queue[dict], index: int, timeout_s: float, transfer_id: int
+) -> dict | None:
     """Returns the first FILE_ACK for `index` within `timeout_s`, skipping acks for other chunks."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
@@ -206,22 +261,37 @@ async def _await_file_ack(acks: asyncio.Queue[dict], index: int, timeout_s: floa
             ack = await asyncio.wait_for(acks.get(), remaining)
         except asyncio.TimeoutError:
             return None
-        if ack["chunk_index"] == index:
+        if ack["chunk_index"] == index and ack.get("transfer_id") == transfer_id:
             return ack
-        logger.debug("assess_file_ack_ignored", chunk_index=ack["chunk_index"], waiting_for=index,
-                     reason="re-sent response for another chunk")
+        logger.debug(
+            "assess_file_ack_ignored",
+            chunk_index=ack["chunk_index"],
+            waiting_for=index,
+            reason="re-sent response for another chunk",
+        )
 
 
 def _log_result(player_id: int, r: FileTransferResult) -> None:
     fields = dict(
-        player_id=player_id, reason=r.reason, total_bytes=r.total_bytes,
-        chunks=f"{r.chunks_confirmed}/{r.total_chunks}", confirmed_bytes=r.confirmed_bytes,
-        elapsed_s=r.elapsed_s, bytes_per_s=r.bytes_per_s, sha256=r.sha256,
+        player_id=player_id,
+        reason=r.reason,
+        total_bytes=r.total_bytes,
+        chunks=f"{r.chunks_confirmed}/{r.total_chunks}",
+        confirmed_bytes=r.confirmed_bytes,
+        elapsed_s=r.elapsed_s,
+        bytes_per_s=r.bytes_per_s,
+        source_sha256=r.sha256,
+        returned_sha256=r.returned_sha256,
         source_crc=f"0x{r.source_crc:04X}",
         device_crc=None if r.device_crc is None else f"0x{r.device_crc:04X}",
     )
     if r.ok:
-        logger.info("assess_file_verified", **fields)
+        logger.info(
+            "assess_file_verified" if r.returned_sha256 else "assess_file_upload_checked", **fields
+        )
     else:
-        logger.error("assess_file_failed", **fields,
-                     hint="nothing is resumed: the next transfer restarts at chunk 0")
+        logger.error(
+            "assess_file_failed",
+            **fields,
+            hint="nothing is resumed: the next transfer restarts at chunk 0",
+        )

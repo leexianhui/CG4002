@@ -143,15 +143,16 @@ namespace Cg4002.VisualizerDemo.Controllers
                 AppendFeedLine($"> P{msg.PlayerId} weapon = {msg.Weapon}");
             }
 
+            string trace = string.IsNullOrEmpty(msg.DemoTraceId) ? "" : $" [{msg.DemoTraceId}]";
             bool isGuard = msg.Action == "IDLE" && msg.GuardState == "GUARDING";
             if (isGuard)
             {
-                AppendFeedLine($"> P{msg.PlayerId} used GUARD");
+                AppendFeedLine($"> P{msg.PlayerId} used GUARD{trace}");
                 return;
             }
             if (msg.Action == "IDLE") return;
 
-            AppendFeedLine($"> P{msg.PlayerId} used {msg.Action}");
+            AppendFeedLine($"> P{msg.PlayerId} used {msg.Action}{trace}");
         }
 
         private void HandleCombatEvent(CombatEvent msg)

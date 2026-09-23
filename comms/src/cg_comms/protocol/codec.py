@@ -164,7 +164,7 @@ def reliable_kind(packet_type: PacketType) -> str:
     is always the newest packet of its group. Both assessment types share a group because the relay
     serializes them behind one lock (Session._assess_send_lock); every other type is its own group.
     """
-    if packet_type in (PacketType.ASSESS_ECHO_REQ, PacketType.ASSESS_FILE_CHUNK):
+    if packet_type in (PacketType.ASSESS_ECHO_REQ, PacketType.ASSESS_FILE_CHUNK, PacketType.ASSESS_FILE_READ):
         return "assess"
     return str(packet_type.name)
 

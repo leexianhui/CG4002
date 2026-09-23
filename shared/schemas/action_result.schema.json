@@ -5,6 +5,7 @@
   "description": "Ultra96 -> relay (laptop). See shared/protocol/app_messages.md §3.2. requestId echoes the triggering SENSOR_WINDOW's requestId.",
   "type": "object",
   "properties": {
+    "demoTraceId": {"type": ["string", "null"], "maxLength": 96},
     "type": { "const": "ACTION_RESULT" },
     "version": { "type": "integer", "const": 1 },
     "timestamp": { "type": "integer", "minimum": 0 },

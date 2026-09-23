@@ -222,7 +222,7 @@ class GameStateTask:
                     player.guard_entered_ts = timestamp
                 # ACTION carries its own weapon so fresh engine/reset state recovers on the next action.
                 ev = ActionEvent(event.player_id, action.action, action.action_confidence, timestamp,
-                                 action.guard_state, action.guard_confidence, action.weapon)
+                                 action.guard_state, action.guard_confidence, action.weapon, action.demo_trace_id)
                 snapshot = self.state.clone()
                 # Only guard activation may look forward. Later geometry/weapon/guard release never
                 # mutates this snapshot. A late activation can BLOCK but cannot retroactively PARRY.
@@ -267,6 +267,7 @@ class GameStateTask:
                     guard_state=ev.guard_state,
                     guard_confidence=ev.guard_confidence,
                     outcome=decision.outcome,
+                    demo_trace_id=ev.demo_trace_id,
                     target_id=target_id,  # type: ignore[arg-type]
                 )
             )

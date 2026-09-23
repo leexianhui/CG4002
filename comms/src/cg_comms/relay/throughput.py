@@ -16,7 +16,11 @@ consumes a seq even when the BLE stack refuses the notify. So over a span:
 
     generated = highest ext_seq - floor + 1      lost = generated - unique frames inside that span
 
-counts both on-chip notify refusals and radio loss. For the whole run, `floor` is the first ext_seq
+estimates missing sequence allocations of ALL packet types in the observed span, including
+on-chip notify refusals, rejected/corrupt frames and radio loss. It is NOT exact sensor loss and
+cannot see losses before the first or after the last received sequence. Interval gaps remain
+provisional under reordering; only cumulative reports can account for later arrivals.
+For the whole run, `floor` is the first ext_seq
 seen after streaming began. For one interval it is the previous interval's highest ext_seq + 1, so a
 gap that straddles an interval boundary is charged to exactly one interval instead of vanishing
 between them. A frame BELOW the floor (an RFID_EVENT retransmit reusing an older seq whose first copy
@@ -110,8 +114,10 @@ class _Counters:
 
 def _scaled(raw: list[int]) -> dict[str, list[float]]:
     """One raw int16 IMU sample -> physical units, the same scaling windowing._scale_sample uses."""
-    return {"accel_g": [round(v / ACCEL_LSB_PER_G, 3) for v in raw[:3]],
-            "gyro_dps": [round(v / GYRO_LSB_PER_DPS, 1) for v in raw[3:6]]}
+    return {
+        "accel_g": [round(v / ACCEL_LSB_PER_G, 3) for v in raw[:3]],
+        "gyro_dps": [round(v / GYRO_LSB_PER_DPS, 1) for v in raw[3:6]],
+    }
 
 
 def describe_frame(frame: bytes, decoded: DecodedPacket) -> dict[str, Any]:
@@ -131,7 +137,8 @@ def describe_frame(frame: bytes, decoded: DecodedPacket) -> dict[str, Any]:
         for k, v in decoded.fields.items()
     }
     readings = {
-        name: _scaled(fields[name]) for name in ("dominant", "offhand", "torso")
+        name: _scaled(fields[name])
+        for name in ("dominant", "offhand", "torso")
         if isinstance(fields.get(name), list) and len(fields[name]) == 6
     }
     return {
@@ -217,7 +224,10 @@ class ThroughputMeter:
             "transport_kbps": _kbps(c.transport_bytes, elapsed_s),
             "sensor_frames": c.sensor_frames,
             "frames": c.frames,
-            "generated": generated,
+            "loss_scope": "observed_all_packet_sequence_span_not_sensor_loss",
+            "sequence_span": generated,
+            "sequence_gaps": lost,
+            "generated": generated,  # legacy name; not a sender-reported generated count
             "lost": lost,
             "lost_pct": (round(100 * lost / generated, 2) if generated and lost is not None else None),
             "late_frames": c.late_frames,
@@ -236,9 +246,14 @@ class ThroughputMeter:
         if final:
             logger.info("throughput_run_summary", player_id=self.player_id, **total)
         else:
-            logger.info("throughput", player_id=self.player_id, **interval,
-                        run_elapsed_s=total["elapsed_s"], run_goodput_kbps=total["goodput_kbps"],
-                        run_lost_pct=total["lost_pct"])
+            logger.info(
+                "throughput",
+                player_id=self.player_id,
+                **interval,
+                run_elapsed_s=total["elapsed_s"],
+                run_goodput_kbps=total["goodput_kbps"],
+                run_lost_pct=total["lost_pct"],
+            )
             if self._sample is not None:
                 # Console visibility is decided by logging_setup's console filter (D key), so the
                 # JSONL file always carries one decoded frame per interval as evidence.
@@ -261,6 +276,7 @@ class ThroughputMeter:
             # Both relays run on the same laptop, and time.monotonic() is system-wide there, so the
             # two files' monotonic stamps are directly comparable for the overlap check.
             "monotonic_s": now,
+            "session_started_monotonic_s": self._started_at,
             "final": final,
             "interval": interval,
             "run": total,
@@ -279,9 +295,10 @@ class ThroughputMeter:
 def combine(docs: list[dict], now_monotonic: float, max_age_s: float) -> dict[str, Any]:
     """Aggregates the two relays' latest intervals. A stale or final document is reported, not
     silently summed -- adding a live rate to a dead relay's last rate would overstate the total."""
-    fresh = [d for d in docs if not d["final"] and now_monotonic - d["monotonic_s"] <= max_age_s]
+    fresh = [d for d in docs if not d["final"] and 0 <= now_monotonic - d["monotonic_s"] <= max_age_s]
     fresh_ids = {d["player_id"] for d in fresh}
     return {
+        "rate_scope": "sum_of_recent_intervals_not_synchronized_trial",
         "players_fresh": sorted(fresh_ids),
         "players_stale_or_final": sorted(
             d["player_id"] for d in docs if d["player_id"] not in fresh_ids
@@ -290,6 +307,56 @@ def combine(docs: list[dict], now_monotonic: float, max_age_s: float) -> dict[st
         "total_frame_kbps": round(sum(d["interval"]["frame_kbps"] for d in fresh), 2),
         "total_sensor_hz": round(sum(d["interval"]["sensor_hz"] for d in fresh), 1),
         "complete": fresh_ids == {1, 2},
+    }
+
+
+def summarize_trial(observations: dict[int, list[dict]]) -> dict[str, Any]:
+    """Cumulative-counter deltas; report per-player windows and their common coverage honestly."""
+    players = {}
+    starts, ends = [], []
+    errors = []
+    for pid in (1, 2):
+        records = observations.get(pid, [])
+        if len(records) < 2:
+            errors.append(f"P{pid}: insufficient data")
+            continue
+        first, last = records[0], records[-1]
+        sessions = {r.get("session_started_monotonic_s") for r in records}
+        if None in sessions or len(sessions) != 1:
+            errors.append(f"P{pid}: session changed or unidentified")
+            continue
+        start, end = first["monotonic_s"], last["monotonic_s"]
+        dt = end - start
+        gaps = [b["monotonic_s"] - a["monotonic_s"] for a, b in zip(records, records[1:], strict=False)]
+        count = last["run"]["sensor_frames"] - first["run"]["sensor_frames"]
+        if dt <= 0 or count < 0:
+            errors.append(f"P{pid}: invalid counters")
+            continue
+        # A prolonged no-data interval is not an uninterrupted robustness pass.
+        expected_period = max(first["interval"]["elapsed_s"], last["interval"]["elapsed_s"], 1)
+        if gaps and max(gaps) > max(12, expected_period * 2.5):
+            errors.append(f"P{pid}: missing summary interval")
+        if any(r["interval"]["sensor_frames"] == 0 for r in records[1:]):
+            errors.append(f"P{pid}: interval without sensor frames")
+        players[str(pid)] = {
+            "start_monotonic_s": start,
+            "end_monotonic_s": end,
+            "elapsed_s": round(dt, 3),
+            "sensor_frames": count,
+            "goodput_kbps": _kbps(count * SENSOR_PAYLOAD_BYTES, dt),
+            "frame_kbps": _kbps(count * 68, dt),
+        }
+        starts.append(start)
+        ends.append(end)
+    overlap = max(0.0, min(ends) - max(starts)) if len(starts) == 2 else 0.0
+    return {
+        "players": players,
+        "common_coverage_s": round(overlap, 3),
+        "over_60_seconds_both": overlap > 60 and not errors,
+        "errors": errors,
+        "rate_scope": "per-player cumulative deltas over listed windows; not PHY bitrate",
+        "loss_scope": "sequence gaps cannot establish exact sensor loss",
+        "observations": observations,
     }
 
 
@@ -306,12 +373,33 @@ def main_total() -> None:
     from cg_comms.logging_setup import enable_ansi_on_windows
 
     parser = argparse.ArgumentParser(description="Combine both relays' throughput (read-only)")
-    parser.add_argument("--logs-dir", type=Path, default=None,
-                        help="Directory holding throughput-p1/p2-latest.json (default: comms/logs)")
-    parser.add_argument("--max-age-s", type=float, default=12.0,
-                        help="Ignore a relay whose latest interval is older than this")
+    parser.add_argument(
+        "--logs-dir",
+        type=Path,
+        default=None,
+        help="Directory holding throughput-p1/p2-latest.json (default: comms/logs)",
+    )
+    parser.add_argument(
+        "--max-age-s",
+        type=float,
+        default=12.0,
+        help="Ignore a relay whose latest interval is older than this",
+    )
     parser.add_argument("--once", action="store_true")
+    parser.add_argument(
+        "--duration-s",
+        type=float,
+        default=None,
+        help="Record a bounded paired run (use 75 for >60 s common coverage)",
+    )
+    parser.add_argument("--output", type=Path, default=None, help="Save bounded-run JSON evidence")
     args = parser.parse_args()
+    if args.duration_s is not None and (not 0 < args.duration_s <= 3600 or args.once):
+        parser.error("--duration-s must be in (0, 3600] and cannot be used with --once")
+    if args.output is not None and args.duration_s is None:
+        parser.error("--output requires --duration-s")
+    trial_started = time.monotonic()
+    observations: dict[int, list[dict]] = {1: [], 2: []}
     logs_dir = args.logs_dir if args.logs_dir is not None else find_repo_root() / "comms" / "logs"
     colour = sys.stdout.isatty() and enable_ansi_on_windows()
 
@@ -319,6 +407,8 @@ def main_total() -> None:
         return f"{_ROW_COLOURS[pid]}{text}{_RESET}" if colour else text
 
     while True:
+        if colour:
+            print("\x1b[2J\x1b[H", end="")
         docs = []
         for pid in (1, 2):
             path = logs_dir / f"throughput-p{pid}-latest.json"
@@ -331,19 +421,43 @@ def main_total() -> None:
             i, r = d["interval"], d["run"]
             age = now - d["monotonic_s"]
             state = "FINAL" if d["final"] else (f"STALE {age:.0f}s" if age > args.max_age_s else "live")
-            print(paint(d["player_id"],
-                        f"P{d['player_id']}  {i['sensor_hz']:6.1f} Hz  "
-                        f"goodput={i['goodput_kbps']:6.2f} kbps  "
-                        f"frame={i['frame_kbps']:6.2f} kbps  lost={i['lost_pct']}%  "
-                        f"run={r['elapsed_s']:.0f}s avg={r['goodput_kbps']:.2f} kbps "
-                        f"lost={r['lost_pct']}%  [{state}]"))
+            print(
+                paint(
+                    d["player_id"],
+                    f"P{d['player_id']}  {i['sensor_hz']:6.1f} Hz  "
+                    f"goodput={i['goodput_kbps']:6.2f} kbps  "
+                    f"frame={i['frame_kbps']:6.2f} kbps  seq-gap={i['lost_pct']}%  "
+                    f"run={r['elapsed_s']:.0f}s avg={r['goodput_kbps']:.2f} kbps "
+                    f"seq-gap={r['lost_pct']}%  [{state}]",
+                )
+            )
+        for d in docs:
+            if (
+                args.duration_s is not None
+                and not d["final"]
+                and 0 <= now - d["monotonic_s"] <= args.max_age_s
+            ):
+                records = observations[d["player_id"]]
+                if not records or records[-1]["monotonic_s"] != d["monotonic_s"]:
+                    records.append(d)
         t = combine(docs, now, args.max_age_s)
-        print(f"TOTAL {t['total_sensor_hz']:6.1f} Hz  goodput={t['total_goodput_kbps']:6.2f} kbps  "
-              f"frame={t['total_frame_kbps']:6.2f} kbps  "
-              + ("both boards live" if t["complete"]
-                 else f"INCOMPLETE (live: {t['players_fresh']}, "
-                      f"not live: {t['players_stale_or_final']})"))
+        print(
+            f"TOTAL {t['total_sensor_hz']:6.1f} Hz  goodput={t['total_goodput_kbps']:6.2f} kbps  "
+            f"frame={t['total_frame_kbps']:6.2f} kbps  "
+            + (
+                "both boards live"
+                if t["complete"]
+                else f"INCOMPLETE (live: {t['players_fresh']}, not live: {t['players_stale_or_final']})"
+            )
+        )
         print("-" * 78)
+        if args.duration_s is not None and now - trial_started >= args.duration_s:
+            summary = summarize_trial(observations)
+            if args.output is not None:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+            print(json.dumps(summary, indent=2))
+            return
         if args.once:
             return
         time.sleep(1.0)

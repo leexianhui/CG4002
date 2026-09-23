@@ -166,7 +166,7 @@ def test_chunk_file_rejects_empty_and_oversize():
 
 
 def _chunk(**over) -> dict:
-    base = {"chunk_index": 0, "total_chunks": 2, "chunk_len": 32, "reserved": 0, "data": bytes(32)}
+    base = {"transfer_id": 1, "chunk_index": 0, "total_chunks": 2, "chunk_len": 32, "reserved": 0, "data": bytes(32)}
     base.update(over)
     return base
 
@@ -239,7 +239,7 @@ class _ScriptedDevice:
         if index == self.link_fails_at:
             raise LinkDegraded(index)
         _, self.rx, _ = self.rx.evaluate(fields)
-        self.last_ack = {"chunk_index": index, "running_crc": self.rx.running_crc,
+        self.last_ack = {"transfer_id": fields["transfer_id"], "chunk_index": index, "running_crc": self.rx.running_crc,
                          "received_bytes": self.rx.received_bytes}
         if index == self.corrupt_crc_at:
             self.last_ack["running_crc"] ^= 0x0001
@@ -284,12 +284,12 @@ async def test_transfer_recovers_lost_file_ack_without_double_append():
 
 async def test_transfer_skips_stale_acks_and_discards_leftovers():
     acks: asyncio.Queue = asyncio.Queue()
-    acks.put_nowait({"chunk_index": 5, "running_crc": 0, "received_bytes": 999})  # left from before
+    acks.put_nowait({"transfer_id": 0, "chunk_index": 5, "running_crc": 0, "received_bytes": 999})  # left from before
     device = _ScriptedDevice(acks)
     orig = device.send_chunk
 
     async def send_with_stale(fields):
-        acks.put_nowait({"chunk_index": 99, "running_crc": 0, "received_bytes": 0})
+        acks.put_nowait({"transfer_id": 0, "chunk_index": 99, "running_crc": 0, "received_bytes": 0})
         return await orig(fields)
 
     device.send_chunk = send_with_stale  # type: ignore[method-assign]
@@ -336,7 +336,7 @@ async def test_transfer_out_of_sequence_device_state_aborts():
 
     async def stuck(fields):
         if fields["chunk_index"] == 2:
-            acks.put_nowait({"chunk_index": 2, "running_crc": device.rx.running_crc,
+            acks.put_nowait({"transfer_id": fields["transfer_id"], "chunk_index": 2, "running_crc": device.rx.running_crc,
                              "received_bytes": device.rx.received_bytes})
 
             async def resend() -> None:

@@ -57,7 +57,7 @@ def validate_variants(variants: tuple[DummyVariant, ...] = DUMMY_VARIANTS) -> No
         raise ValueError("DUMMY_VARIANTS is empty -- at least one variant is required")
     seen: dict[int, str] = {}
     for v in variants:
-        if not 0 <= v.kind <= 255:
+        if type(v.kind) is not int or not 0 <= v.kind <= 255:
             raise ValueError(f"variant {v.name!r}: kind {v.kind} outside u8 range 0..255")
         if v.kind in seen:
             raise ValueError(
@@ -68,7 +68,7 @@ def validate_variants(variants: tuple[DummyVariant, ...] = DUMMY_VARIANTS) -> No
         if len(v.values) != 3:
             raise ValueError(f"variant {v.name!r}: expected exactly 3 values, got {len(v.values)}")
         for i, value in enumerate(v.values):
-            if not I16_MIN <= value <= I16_MAX:
+            if type(value) is not int or not I16_MIN <= value <= I16_MAX:
                 raise ValueError(
                     f"variant {v.name!r}: values[{i}] = {value} outside int16 range "
                     f"{I16_MIN}..{I16_MAX} (ASSESS_ECHO_REQ.value_* are I16)"

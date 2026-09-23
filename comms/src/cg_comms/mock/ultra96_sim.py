@@ -42,7 +42,9 @@ logger = structlog.get_logger(__name__)
 
 def _default_steps() -> list[ScenarioStep]:
     return [
-        ScenarioStep(delay_ms=0, kind="action_result", payload={"action": "IDLE", "action_confidence": 1.0})
+        ScenarioStep(
+            delay_ms=0, kind="action_result", payload={"action": "IDLE", "action_confidence": 1.0}
+        )
     ]
 
 
@@ -101,8 +103,9 @@ class RandomClassifier:
             # (which the relay forwards but the engine never turns into ActionRecognized) and say
             # so, rather than inventing an invalid pair.
             row: dict[str, Any] = {"action": "IDLE", "action_confidence": 1.0}
-            return _row_to_action_result(row, timestamp=window.timestamp, player_id=window.player_id,
-                                         request_id=window.request_id), {"random": "no_moves_for_weapon"}
+            return _row_to_action_result(
+                row, timestamp=window.timestamp, player_id=window.player_id, request_id=window.request_id
+            ), {"random": "no_moves_for_weapon"}
         row = {
             "action": self._rng.choice(choices),
             "action_confidence": round(self._rng.uniform(*_RANDOM_CONFIDENCE_RANGE), 3),
@@ -115,7 +118,9 @@ class RandomClassifier:
         return result, {"random": f"{len(choices)} moves for {window.weapon.value}"}
 
 
-def _classify_from_trigger_map(trigger_map: dict[str, Any], window: SensorWindow) -> tuple[ActionResult, dict]:
+def _classify_from_trigger_map(
+    trigger_map: dict[str, Any], window: SensorWindow
+) -> tuple[ActionResult, dict]:
     weapon_rows = trigger_map["triggers"].get(window.weapon.value, {})
     row = weapon_rows.get(window.trigger_id) if window.trigger_id is not None else None
     matched = row is not None
@@ -141,10 +146,15 @@ async def _handle_client(
             line = await reader.readline()
             if not line:
                 return
+            if not line.endswith(b"\n"):
+                logger.warning("ultra96_sim_bad_message", reason="unterminated_line")
+                return
             received_at = loop.time()
             parsed = parse_app_message(line.decode("utf-8").strip())
             if isinstance(parsed, MessageDropped):
-                logger.warning("ultra96_sim_bad_message", reason=parsed.reason.value, detail=parsed.detail)
+                logger.warning(
+                    "ultra96_sim_bad_message", reason=parsed.reason.value, detail=parsed.detail
+                )
                 continue
             if not isinstance(parsed, SensorWindow):
                 logger.warning("ultra96_sim_unexpected_type", msg_type=type(parsed).__name__)
@@ -157,12 +167,20 @@ async def _handle_client(
             else:
                 step = next(cycle)
                 result = _row_to_action_result(
-                    step.payload, timestamp=parsed.timestamp, player_id=parsed.player_id,
+                    step.payload,
+                    timestamp=parsed.timestamp,
+                    player_id=parsed.player_id,
                     request_id=parsed.request_id,
                 )
                 match_info = {"matched_row": step.payload}
 
-            line_out = result.model_dump_json(by_alias=True) + "\n"
+            result.demo_trace_id = parsed.demo_trace_id
+            line_out = (
+                result.model_dump_json(
+                    by_alias=True, exclude={"demo_trace_id"} if result.demo_trace_id is None else set()
+                )
+                + "\n"
+            )
             prepared_at = loop.time()
             writer.write(line_out.encode("utf-8"))
             await writer.drain()
@@ -174,6 +192,8 @@ async def _handle_client(
             logger.info(
                 "ultra96_sim_classified",
                 request_id=parsed.request_id,
+                demo_trace_id=parsed.demo_trace_id,
+                dominant_first=parsed.dominant[0] if parsed.demo_trace_id else None,
                 player_id=parsed.player_id,
                 trigger_id=parsed.trigger_id,
                 action=result.action.value,
@@ -185,7 +205,7 @@ async def _handle_client(
                 service_ms=round((sent_at - received_at) * 1000, 3),
                 **match_info,
             )
-    except (ConnectionResetError, OSError):
+    except (ConnectionResetError, OSError, ValueError, UnicodeError):
         logger.warning("ultra96_sim_client_disconnected")
     finally:
         writer.close()
@@ -199,20 +219,27 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Ultra96 inference service simulator")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8888)
-    parser.add_argument("--scenario", type=Path, default=None)
-    parser.add_argument(
-        "--trigger-map", type=Path, default=None,
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--scenario", type=Path, default=None)
+    mode.add_argument(
+        "--trigger-map",
+        type=Path,
+        default=None,
         help="Classify from SENSOR_WINDOW's (weapon, triggerId) via this table "
         "(docs/DEMO_TRIGGERED_ACTION_PLAN.md §5.2) instead of cycling --scenario.",
     )
-    parser.add_argument(
-        "--random", action="store_true",
+    mode.add_argument(
+        "--random",
+        action="store_true",
         help="Comms assessment: answer every window with a random move valid for its weapon "
-        "(shared/config/weapons.yaml). Overrides --scenario and --trigger-map.",
+        "(shared/config/weapons.yaml). Exclusive with --scenario and --trigger-map.",
     )
-    parser.add_argument("--seed", type=int, default=None,
-                        help="Seed for --random; omitted => fresh seed, logged so the run "
-                        "can be replayed.")
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Seed for --random; omitted => fresh seed, logged so the run can be replayed.",
+    )
     parser.add_argument("--logs-dir", type=Path, default=Path("logs"))
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
@@ -227,15 +254,20 @@ def main() -> None:
         seed = args.seed if args.seed is not None else random.SystemRandom().getrandbits(64)
         random_classifier = RandomClassifier.for_rules(RulesConfig.load(), random.Random(seed))
     logger.info(
-        "ultra96_sim_starting", host=args.host, port=args.port, scenario_steps=len(steps),
+        "ultra96_sim_starting",
+        host=args.host,
+        port=args.port,
+        scenario_steps=len(steps),
         trigger_map=str(args.trigger_map) if args.trigger_map is not None else None,
-        random=args.random, seed=seed,
+        random=args.random,
+        seed=seed,
     )
 
     async def _main() -> None:
         server = await asyncio.start_server(
             lambda r, w: _handle_client(r, w, steps, trigger_map, random_classifier),
-            args.host, args.port
+            args.host,
+            args.port,
         )
         async with server:
             await server.serve_forever()

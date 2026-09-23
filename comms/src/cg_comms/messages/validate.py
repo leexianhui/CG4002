@@ -91,4 +91,6 @@ def parse_app_message(raw: bytes | str) -> AppMessage | MessageDropped:
 
 def dump_app_message(message: AppMessage) -> str:
     """Serializes an app message back to its wire JSON form (camelCase aliases)."""
-    return message.model_dump_json(by_alias=True)
+    return message.model_dump_json(
+        by_alias=True, exclude={"demo_trace_id"} if getattr(message, "demo_trace_id", None) is None else set()
+    )

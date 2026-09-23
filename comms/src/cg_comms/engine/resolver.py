@@ -29,6 +29,7 @@ class ActionEvent:
     guard_state: GuardState = GuardState.IDLE
     guard_confidence: float = 0.0
     weapon: Weapon | None = None  # captured SENSOR_WINDOW weapon; never read a later weapon change
+    demo_trace_id: str | None = None
 
 
 @dataclass(frozen=True)

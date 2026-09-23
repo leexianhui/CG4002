@@ -64,6 +64,8 @@ class _AssessSession(Protocol):
 
     async def send_file(self, data: bytes) -> FileTransferResult: ...
 
+    def arm_assessment_ack_loss(self) -> None: ...
+
 
 @dataclass
 class AssessKeyboard:
@@ -109,6 +111,15 @@ class AssessKeyboard:
             set_console_event_visible("packet_sample", visible)
             logger.info("assess_packet_sample_console", player_id=self.player_id,
                         visible=visible, note="the JSONL log always records it")
+            return
+        if ch == "L":
+            reason = self.reject_reason(for_echo=False)
+            if reason is not None:
+                self._log_reject(ch, reason)
+                return
+            session = self.get_session()
+            if session is not None:
+                session.arm_assessment_ack_loss()
             return
         if ch == "F":
             reason = self.reject_reason(for_echo=False)
@@ -174,7 +185,7 @@ class AssessKeyboard:
         import msvcrt
 
         logger.info("assess_keyboard_ready", player_id=self.player_id, file=self.file_label,
-                    keys="letters/digits/space = echo | F = file | D = packet view | Q = stop keyboard")
+                    keys="letters/digits/space = echo | F = file | L = one ACK-loss test | D = packet view | Q = stop keyboard")
         try:
             while not self._stopped.is_set():
                 while msvcrt.kbhit():

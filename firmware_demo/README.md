@@ -97,3 +97,17 @@ unchanged. RX writes use a bounded FreeRTOS queue; stack rejection keeps RFID pe
 `generated`, `dropped`, cumulative `notify_dropped` and `rx_dropped`.
 See [the audit and hardware checklist](../docs/PRE_DEMO_ROBUSTNESS.md).
 Native tests require host gcc/g++, and cover CRC/nonce/sequence/reliability only (not ESP32 mbedTLS).
+
+
+## Reviewed communications assessment
+
+Use [the reviewed assessment runbook](../docs/COMMS_ASSESSMENT_REVIEW_AND_RUNBOOK.md) for the
+current paired firmware/relay deployment and exact live/video procedure. Assessment revision 2
+adds real sensor-body echo, transfer IDs and 4096-byte RAM file readback. Old assessment payloads
+are incompatible; flash both boards and update Python together.
+
+For rate comparisons, dedicated `firebeetle32_bench100`, `esp32dev_p2_bench100`,
+`firebeetle32_bench200`, `esp32dev_p2_bench200` environments preserve inherited includes and
+P2 identity. Do not globally replace PLATFORMIO_BUILD_FLAGS. Restore `firebeetle32` and
+`esp32dev_p2` before normal 50 Hz GPIO gesture capture. The P2 DevKit is a hardware stand-in,
+not a second physical FireBeetle. Benchmark compilation is not measured maximum RF throughput.

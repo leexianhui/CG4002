@@ -29,6 +29,7 @@ def build_echo_response(req: dict, now_ms: int) -> dict:
         "payload_kind": req["payload_kind"],
         "transform_id": transform_id,
         "reserved": 0,
+        **{name: req[name] for name in ("flags", "weapon_id", "dominant_gyro", "offhand", "torso")},
         "value_a": a,
         "value_b": b,
         "value_c": c,
@@ -46,12 +47,13 @@ class FileRxState:
     """CgAssessFileRx. Immutable so `evaluate` is visibly pure: the caller commits the returned
     state only after the FILE_ACK was actually sent, exactly like the firmware."""
 
+    transfer_id: int = 0
     active: bool = False
     total_chunks: int = 0
     next_index: int = 0
     running_crc: int = 0xFFFF
     received_bytes: int = 0
-    data: bytes = b""  # the sim keeps the bytes (the firmware only keeps the CRC) for test evidence
+    data: bytes = b""  # actual retained bytes, also held in bounded RAM by the firmware
 
     @property
     def complete(self) -> bool:
@@ -64,7 +66,9 @@ class FileRxState:
             return FileVerdict.MALFORMED, self, "reserved!=0"
         if not 1 <= length <= ASSESS_FILE_CHUNK_DATA_LEN:
             return FileVerdict.MALFORMED, self, "chunk_len"
-        if total == 0 or index >= total:
+        if not 0 < chunk.get("transfer_id", 0) <= 0xFFFFFFFF:
+            return FileVerdict.MALFORMED, self, "transfer_id"
+        if total == 0 or total > 128 or index >= total:
             return FileVerdict.MALFORMED, self, "index>=total"
         if index + 1 < total and length != ASSESS_FILE_CHUNK_DATA_LEN:
             return FileVerdict.MALFORMED, self, "short_non_final"
@@ -72,8 +76,13 @@ class FileRxState:
             return FileVerdict.MALFORMED, self, "padding!=0"
 
         if index == 0:
-            base = FileRxState(active=True, total_chunks=total)
-        elif not self.active or total != self.total_chunks or index != self.next_index:
+            base = FileRxState(active=True, total_chunks=total, transfer_id=chunk["transfer_id"])
+        elif (
+            not self.active
+            or chunk["transfer_id"] != self.transfer_id
+            or total != self.total_chunks
+            or index != self.next_index
+        ):
             return FileVerdict.OUT_OF_SEQUENCE, self, "out_of_sequence"
         else:
             base = self
