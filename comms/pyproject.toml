@@ -44,6 +44,8 @@ cg-firebeetle-sim = "cg_comms.mock.firebeetle_sim:main"
 cg-ultra96-sim = "cg_comms.mock.ultra96_sim:main"
 cg-visualizer-sim = "cg_comms.mock.visualizer_sim:main"
 cg-latency-report = "cg_comms.tools.latency_report:main"
+cg-throughput-total = "cg_comms.relay.throughput:main_total"
+cg-assessment-fixture = "cg_comms.tools.assessment_fixture:main"
 
 [build-system]
 requires = ["setuptools>=68"]

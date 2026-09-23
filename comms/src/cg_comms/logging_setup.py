@@ -33,6 +33,59 @@ _FOREIGN_PRE_CHAIN = [
     structlog.stdlib.ExtraAdder(),
 ]
 
+# Per-player console colour (comms assessment: "a different colour per connection"). Keyed by the
+# `component` name so each relay process tags its own lines; the JSONL file never sees these codes.
+_PLAYER_TAGS = {"relay-p1": ("\x1b[1;36m", "P1"), "relay-p2": ("\x1b[1;35m", "P2")}
+_RESET = "\x1b[0m"
+
+# Console-only event filter. `packet_sample` (one decoded frame per stats interval) is wide, so it
+# starts hidden on screen and the assessment keyboard's D key flips it. The file always keeps it.
+_console_hidden_events: set[str] = {"packet_sample"}
+
+
+def set_console_event_visible(event: str, visible: bool) -> None:
+    if visible:
+        _console_hidden_events.discard(event)
+    else:
+        _console_hidden_events.add(event)
+
+
+def console_event_visible(event: str) -> bool:
+    return event not in _console_hidden_events
+
+
+class _ConsoleEventFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.msg
+        return not (isinstance(msg, dict) and msg.get("event") in _console_hidden_events)
+
+
+def enable_ansi_on_windows() -> bool:
+    """Makes raw ANSI colour codes render on a Windows console. Returns False if that is not
+    possible, in which case callers print uncoloured text rather than escape-code garbage."""
+    if sys.platform != "win32":
+        return True
+    try:
+        import colorama  # installed via structlog's dev extras here; optional, never required
+
+        colorama.just_fix_windows_console()
+        return True
+    except (ImportError, AttributeError):
+        return False
+
+
+def _player_tagger(colors: bool):
+    def tag(_logger: object, _name: str, event_dict: dict) -> dict:
+        found = _PLAYER_TAGS.get(event_dict.get("component", ""))
+        if found is not None:
+            colour, label = found
+            event_dict["event"] = (f"{colour}[{label}]{_RESET} " if colors else f"[{label}] ") + str(
+                event_dict.get("event", "")
+            )
+        return event_dict
+
+    return tag
+
 
 def configure_logging(
     component: str,
@@ -61,12 +114,20 @@ def configure_logging(
 
     console_handler = logging.StreamHandler(sys.stderr)
     console_handler.setLevel(level if console_level is None else console_level)
+    colors = sys.stderr.isatty() and enable_ansi_on_windows()
     console_handler.setFormatter(
         structlog.stdlib.ProcessorFormatter(
-            processor=structlog.dev.ConsoleRenderer(colors=sys.stderr.isatty()),
+            processors=[
+                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                # Runs on the formatter's own copy of the event dict, so the tag never reaches the
+                # file handler's JSON.
+                _player_tagger(colors),
+                structlog.dev.ConsoleRenderer(colors=colors),
+            ],
             foreign_pre_chain=_FOREIGN_PRE_CHAIN,
         )
     )
+    console_handler.addFilter(_ConsoleEventFilter())
 
     root = logging.getLogger()
     root.setLevel(min(level, console_handler.level))

@@ -46,7 +46,16 @@
 // firmware's capture and the trigger_id gets attached to the wrong (or no) SensorWindow.
 #define CG_DEMO_CAPTURE_FRAMES 40
 
+// Overridable at build time for the throughput sweep, without editing this file, e.g. in PowerShell:
+//   $env:PLATFORMIO_BUILD_FLAGS="-D CG_DEMO_SENSOR_FRAME_INTERVAL_MS=10"   (100 Hz)
+// The relay's windowing.frame_rate_hz assumes 50 Hz; at another rate the triggered-action span gate
+// may suppress windows. That is expected during a rate sweep -- restore 20 for the game demo.
+#ifndef CG_DEMO_SENSOR_FRAME_INTERVAL_MS
 #define CG_DEMO_SENSOR_FRAME_INTERVAL_MS 20  // 50 Hz
+#endif
+#if CG_DEMO_SENSOR_FRAME_INTERVAL_MS < 1
+#error "CG_DEMO_SENSOR_FRAME_INTERVAL_MS must be >= 1"
+#endif
 #define CG_DEMO_HEARTBEAT_INTERVAL_MS 1000   // 1 Hz
 
 // Verbose per-packet Serial.printf logging (every inbound packet_type, every replay-window

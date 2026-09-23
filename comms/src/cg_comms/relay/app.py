@@ -17,11 +17,14 @@ import structlog
 from cg_comms.config import RelaySettings, find_repo_root
 from cg_comms.logging_setup import configure_logging
 from cg_comms.messages.models import Action, CombatFeedback, WeaponChanged
+from cg_comms.relay.assess_file import chunk_file
+from cg_comms.relay.assess_keyboard import AssessKeyboard
 from cg_comms.relay.engine_link import EngineLinkClient
 from cg_comms.relay.session import Session, SessionConfig
 from cg_comms.relay.tunnel import TunnelConfig, TunnelSupervisor
 from cg_comms.relay.ultra96 import Ultra96Client
 from cg_comms.relay.windowing import PlayerWindower
+from cg_comms.tools.assessment_fixture import build_fixture
 from cg_comms.transport.base import ITransport
 from cg_comms.transport.ble import BleTransport
 from cg_comms.transport.loopback import LoopbackTransport
@@ -44,7 +47,34 @@ def _build_transport(settings: RelaySettings) -> ITransport:
     raise ValueError(f"unknown transport kind: {t.kind!r}")
 
 
-async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
+def resolve_logs_dir(settings: RelaySettings) -> Path:
+    if settings.logs_dir.is_absolute():
+        return settings.logs_dir
+    return find_repo_root() / "comms" / settings.logs_dir
+
+
+def load_assessment_file(path: Path | None) -> tuple[bytes, str]:
+    """Returns (bytes, label) for the F key: the given file, or the built-in deterministic fixture.
+    Validated here, at startup, so an empty/oversize file fails before the demo rather than at F."""
+    if path is None:
+        data, label = build_fixture(), "built-in fixture (cg-assessment-fixture, 1037 B)"
+    else:
+        data, label = path.read_bytes(), str(path)
+    chunk_file(data)  # raises ValueError / FileTooLarge with a clear message
+    return data, label
+
+
+async def run_relay(
+    settings: RelaySettings,
+    use_tunnel: bool,
+    *,
+    assess_file: tuple[bytes, str] | None = None,
+    keyboard: bool = True,
+) -> None:
+    """`settings.assessment.enabled` turns on the assessment features (keyboard echo / file / kbps
+    summary file). `assess_file` is what F sends (default: the built-in fixture). `keyboard=False`
+    keeps the console keyboard off even in assessment mode (tests)."""
+    assessment = settings.assessment
     tunnel: TunnelSupervisor | None = None
     if use_tunnel and settings.ultra96.tunnel_enabled and not settings.ultra96.use_mock:
         u = settings.ultra96
@@ -116,7 +146,32 @@ async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
         reliability_max_attempts=settings.reliability.retry_max_attempts,
         reliability_jitter_pct=settings.reliability.retry_jitter_pct,
         min_action_confidence=settings.ultra96.min_confidence,
+        assessment_enabled=assessment.enabled,
+        assess_seed=assessment.seed,
+        assess_echo_timeout_s=assessment.echo_timeout_s,
+        stats_interval_s=assessment.stats_interval_s,
+        # Read by cg-throughput-total. Only in assessment mode, so tests and normal game runs never
+        # leave stats files behind.
+        throughput_latest_path=(
+            resolve_logs_dir(settings) / f"throughput-p{settings.player_id}-latest.json"
+            if assessment.enabled else None
+        ),
     )
+
+    keyboard_task: asyncio.Task | None = None
+    keys: AssessKeyboard | None = None
+    if assessment.enabled and keyboard:
+        file_bytes, file_label = assess_file if assess_file is not None else load_assessment_file(None)
+        # The keyboard lives for the whole relay process, across BLE reconnects; get_session()
+        # always returns the CURRENT session (None while reconnecting => OFFLINE).
+        keys = AssessKeyboard(
+            player_id=settings.player_id,
+            get_session=lambda: session,
+            upstream_ready=lambda: (ultra96.is_connected, engine_link.is_connected),
+            current_weapon=lambda: windower.current_weapon,
+            file_bytes=file_bytes,
+            file_label=file_label,
+        )
 
     backoff_ms = settings.heartbeat.reconnect_backoff_ms
     attempt = 0
@@ -125,6 +180,8 @@ async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
             await tunnel.start(wait_ready=False)
         ultra96.start()
         engine_link.start()
+        if keys is not None:
+            keyboard_task = asyncio.create_task(keys.run())
         while True:
             windower.reset_session()
             transport = _build_transport(settings)
@@ -151,6 +208,9 @@ async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
             logger.warning("reconnecting", player_id=settings.player_id, delay_s=delay)
             await asyncio.sleep(delay)
     finally:
+        if keyboard_task is not None:
+            keyboard_task.cancel()
+            await asyncio.gather(keyboard_task, return_exceptions=True)
         await engine_link.disconnect()
         await ultra96.disconnect()
         if tunnel is not None:
@@ -171,10 +231,33 @@ def main() -> None:
         "(comms-demo) they fire once per button press instead. The file keeps every event either "
         "way for cg-latency-report.",
     )
+    parser.add_argument(
+        "--assessment", action="store_true",
+        help="Comms assessment mode (same as assessment.enabled: true in the YAML): keyboard echo "
+        "pipeline, F = verified file transfer, D = decoded packet view, kbps summary file for "
+        "cg-throughput-total. Off by default; the normal demo is unchanged without it.",
+    )
+    parser.add_argument("--assess-file", type=Path, default=None,
+                        help="File the F key sends (<= 4096 B). Default: the built-in 1037 B fixture.")
+    parser.add_argument("--assess-seed", type=int, default=None,
+                        help="Replay a run's dummy-variant sequence "
+                             "(the seed its assess_seed line logged)")
     args = parser.parse_args()
 
     settings = RelaySettings.from_yaml(args.config)
-    logs_dir = settings.logs_dir if settings.logs_dir.is_absolute() else find_repo_root() / "comms" / settings.logs_dir
+    if args.assessment or args.assess_seed is not None:
+        updates: dict = {"enabled": True}
+        if args.assess_seed is not None:
+            updates["seed"] = args.assess_seed
+        settings.assessment = settings.assessment.model_copy(update=updates)
+    if args.assess_file is not None and not settings.assessment.enabled:
+        parser.error("--assess-file needs --assessment (or assessment.enabled: true in the config)")
+    # Fail before connecting anything if the transfer file is unusable.
+    try:
+        assess_file = load_assessment_file(args.assess_file) if settings.assessment.enabled else None
+    except (OSError, ValueError) as exc:
+        parser.error(f"--assess-file: {exc}")
+    logs_dir = resolve_logs_dir(settings)
     log_path = configure_logging(
         f"relay-p{settings.player_id}",
         logs_dir,
@@ -190,9 +273,10 @@ def main() -> None:
         ultra96=f"{settings.ultra96.host}:{settings.ultra96.port}",
         engine=f"{settings.engine_link.host}:{settings.engine_link.port}",
         log_path=str(log_path),
+        assessment=settings.assessment.enabled,
     )
 
-    asyncio.run(run_relay(settings, use_tunnel=not args.no_tunnel))
+    asyncio.run(run_relay(settings, use_tunnel=not args.no_tunnel, assess_file=assess_file))
 
 
 if __name__ == "__main__":

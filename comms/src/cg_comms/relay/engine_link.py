@@ -32,6 +32,10 @@ class EngineLinkClient:
     def start(self) -> None:
         self._worker.start()
 
+    @property
+    def is_connected(self) -> bool:
+        return self._worker.connected.is_set()
+
     async def connect(self) -> None:
         self.start()
         try:

@@ -205,7 +205,7 @@ typedef struct CG_PACKED {
 
 /* laptop -> device, one per keystroke at the relay laptop. 16 bytes.
  * `trace_id` is carried on the wire (rather than added to the relay's JSON messages) because every
- * every JSON schema in shared/schemas sets "additionalProperties": false and every model in messages/models.py
+ * JSON schema in shared/schemas sets "additionalProperties": false and every model in messages/models.py
  * inherits extra="forbid" -- a new JSON key would be a breaking change needing relay + engine +
  * Ultra96 + both phone APKs redeployed in lockstep. */
 typedef struct CG_PACKED {

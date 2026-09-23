@@ -12,10 +12,12 @@ reconnects. Streaming RFID/feedback use exact-ciphertext retransmission and dupl
 from __future__ import annotations
 
 import asyncio
+import random
 import secrets
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Awaitable, Callable
 
 import structlog
@@ -28,8 +30,11 @@ from cg_comms.protocol.codec import DecodedPacket, DecodeError
 from cg_comms.protocol.constants import PROTOCOL_VERSION, Direction, PacketType
 from cg_comms.protocol.crypto import OutgoingSequenceCounter, SequenceTracker
 from cg_comms.protocol.framing import Framer
+from cg_comms.relay.assess_echo import EchoPipeline, PendingEcho, encode_echo_request, wait_for_echo
+from cg_comms.relay.assess_file import FileTransferResult, run_file_transfer
 from cg_comms.relay.heartbeat import HeartbeatMonitor, run_heartbeat_sender, run_liveness_watchdog
 from cg_comms.relay.reliability import LinkDegraded, ReliabilitySender
+from cg_comms.relay.throughput import ThroughputMeter
 from cg_comms.relay.timesync import LaptopSideSample, TimeSyncEstimator, estimate_offset_laptop_side
 from cg_comms.relay.ultra96 import Ultra96Client, Ultra96Unavailable, passes_confidence_gate
 from cg_comms.relay.windowing import PlayerWindower
@@ -60,6 +65,19 @@ class SessionConfig:
     reliability_max_attempts: int
     reliability_jitter_pct: float
     min_action_confidence: float
+    # Assessment/demo only. When false (the default and the real-game value) the assessment packet
+    # types are still decoded and logged, but nothing in this class originates them, so the normal
+    # demo path is bit-for-bit unchanged.
+    assessment_enabled: bool = False
+    # None => draw a fresh random seed per session (the demo default). Set to an int to replay a
+    # previous run's dummy-variant sequence exactly.
+    assess_seed: int | None = None
+    # How long one keystroke's trace waits for its ASSESS_ECHO_RESP (AssessmentConfig.echo_timeout_s).
+    assess_echo_timeout_s: float = 6.0
+    # Receive-throughput report period, and where the latest summary JSON goes (None = no file).
+    # Reporting runs in every mode: one line per interval is cheap and useful for any soak run.
+    stats_interval_s: float = 5.0
+    throughput_latest_path: Path | None = None
 
 
 @dataclass
@@ -91,8 +109,21 @@ class Session:
     )
     _streaming: bool = field(default=False, init=False)
     _last_weapon_ts: int = field(default=-1, init=False)
+    echo: EchoPipeline = field(init=False)
+    _file_acks: asyncio.Queue[dict] = field(
+        default_factory=lambda: asyncio.Queue(64), init=False
+    )
+    # At most ONE assessment reliable packet (ASSESS_ECHO_REQ / ASSESS_FILE_CHUNK) in flight. Not a
+    # throughput choice -- a correctness one. If two were in flight and the earlier was lost, its
+    # retransmit would arrive after the later packet had already advanced the receiver's replay
+    # state; serializing makes "the retransmit is the newest assessment frame" an invariant the
+    # firmware can rely on (firmware_demo/src/main.cpp, handle_assess_reliable).
+    _assess_send_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
+    meter: ThroughputMeter = field(init=False)
 
     def __post_init__(self) -> None:
+        self.meter = ThroughputMeter(player_id=self.config.player_id,
+                                     latest_path=self.config.throughput_latest_path)
         self._time_sync = TimeSyncEstimator(ewma_alpha=self.config.ewma_alpha)
         self._reliability_out = ReliabilitySender(
             send_frame=self.transport.send,
@@ -105,6 +136,16 @@ class Session:
             interval_ms=self.config.heartbeat_interval_ms,
             liveness_timeout_factor=self.config.heartbeat_liveness_factor,
         )
+        # Per-session, so a reconnect cannot resolve a trace from the previous connection. The seed
+        # is drawn once and logged so "chosen at random" (per the requirement) is still a replayable
+        # run: passing the logged value back as assess_seed reproduces the exact variant sequence.
+        seed = self.config.assess_seed
+        if seed is None:
+            seed = random.SystemRandom().getrandbits(64)
+        self.echo = EchoPipeline(player_id=self.config.player_id, rng=random.Random(seed))
+        if self.config.assessment_enabled:
+            logger.info("assess_seed", player_id=self.config.player_id, seed=seed,
+                        replay_hint="pass this as assessment.seed to repeat this variant sequence")
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -119,6 +160,9 @@ class Session:
             await self._stream()
         finally:
             self._streaming = False
+            # Release every keystroke still waiting on a response: the transport is going away, so
+            # those traces cannot be resolved and waiting out each individual timeout is pointless.
+            self.echo.abandon_all("session ended")
             for task in self._classification_tasks:
                 task.cancel()
             await asyncio.gather(*self._classification_tasks, return_exceptions=True)
@@ -161,6 +205,7 @@ class Session:
         while self._frames:
             yield self._frames.popleft()
         async for raw in self.transport.frames():
+            self.meter.on_transport_bytes(len(raw))  # no-op until streaming starts
             self._frames.extend(self._framer.feed(raw))
             while self._frames:
                 yield self._frames.popleft()
@@ -246,7 +291,9 @@ class Session:
         # below first polls.
         self._heartbeat_monitor.reset()
         self._streaming = True
+        self.meter.start()
         tasks = [
+            asyncio.create_task(self._stats_loop()),
             asyncio.create_task(self._read_loop()),
             asyncio.create_task(self._feedback_loop()),
             asyncio.create_task(self._stop_event.wait()),
@@ -266,10 +313,26 @@ class Session:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            # Whole-run figure for this connection: the number to quote for ">1 min of dummy data".
+            self.meter.report(final=True)
         for task in done:
             exc = None if task.cancelled() else task.exception()
             if exc is not None:
                 raise exc
+
+    async def _stats_loop(self) -> None:
+        # Never returns on its own: a return would complete the FIRST_COMPLETED wait in _stream and
+        # tear the session down. Absolute deadlines so the period does not drift under load.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time()
+        while True:
+            deadline += self.config.stats_interval_s
+            if deadline < loop.time():  # stalled for more than a period: resync, never burst
+                deadline = loop.time() + self.config.stats_interval_s
+            await asyncio.sleep(max(deadline - loop.time(), 0))
+            self.meter.report()
+            if self.config.assessment_enabled and self.echo.sent:
+                logger.info("assess_echo_stats", player_id=self.config.player_id, **self.echo.stats())
 
     async def _on_link_stale(self) -> None:
         logger.error("link_lost", player_id=self.config.player_id)
@@ -336,6 +399,126 @@ class Session:
         except LinkDegraded:
             logger.error("combat_feedback_undelivered", player_id=self.config.player_id)
 
+    async def send_echo_request(self, keycode: int) -> PendingEcho:
+        """Sends one ASSESS_ECHO_REQ for a keystroke and returns its pending trace.
+
+        Sent reliably, reusing the existing ReliabilitySender: the assessment's "show reliability
+        features" item then covers this path too, and a dropped request is retransmitted with the
+        identical ciphertext rather than re-encrypted (which would change the nonce and break the
+        device's duplicate suppression).
+
+        `send_reliable` does not return until the device ACKs or attempts are exhausted, and sends
+        are serialized by `_assess_send_lock`. A direct caller queues behind the lock; the keyboard
+        (relay/assess_keyboard.py) checks `assess_busy()` first and rejects with BUSY instead, so
+        typing never builds an invisible backlog.
+        """
+        async with self._assess_send_lock:
+            return await self._send_echo_request_locked(keycode)
+
+    async def echo_keystroke(self, keycode: int) -> tuple[PendingEcho, bool]:
+        """One keystroke's device round trip: send, then wait (bounded by
+        config.assess_echo_timeout_s) for the verified response. Returns (pending, verified). On a
+        timeout the trace is retired and counted lost, so a response arriving later is recognised
+        as late rather than applied."""
+        pending = await self.send_echo_request(keycode)
+        verified = await wait_for_echo(pending, self.config.assess_echo_timeout_s)
+        if not pending.event.is_set():
+            self.echo.expire(pending.trace_id, self.config.assess_echo_timeout_s)
+        return pending, verified
+
+    def assess_busy(self) -> bool:
+        return self._assess_send_lock.locked()
+
+    @property
+    def streaming(self) -> bool:
+        return self._streaming
+
+    async def send_file(self, data: bytes) -> FileTransferResult:
+        """Stop-and-wait file transfer to the device (relay/assess_file.py). Holds the assessment
+        send lock for the WHOLE transfer, not per chunk: an echo request slipped in between two
+        chunks would be the newest assessment frame, and a later retransmit of the chunk would then
+        fail the device's "retransmit is the newest request" rule (main.cpp handle_assess_reliable).
+
+        Raises ValueError/FileTooLarge (from chunk_file) before sending anything for an empty or
+        oversize file."""
+
+        async def send_chunk(fields: dict) -> Callable[[], Awaitable[None]]:
+            seq, ext_seq = self._tx_counter.next()
+            frame = codec.encode_packet(
+                packet_type=PacketType.ASSESS_FILE_CHUNK, seq=seq, player_id=self.config.player_id,
+                fields=fields, psk=self.config.psk, session_id=self.session_id,
+                direction=Direction.LAPTOP_TO_DEVICE, ext_seq=ext_seq,
+            )
+            await self._reliability_out.send_reliable(seq, frame)
+
+            async def resend() -> None:
+                # Identical ciphertext under the SAME seq: the device's exact-frame cache recognises
+                # it, re-ACKs and re-sends its last FILE_ACK without appending the chunk again.
+                await self._reliability_out.send_reliable(seq, frame)
+
+            return resend
+
+        async with self._assess_send_lock:
+            return await run_file_transfer(
+                data, player_id=self.config.player_id, send_chunk=send_chunk, acks=self._file_acks
+            )
+
+    async def _send_echo_request_locked(self, keycode: int) -> PendingEcho:
+        pending, fields = self.echo.build_request(keycode)
+        seq, ext_seq = self._tx_counter.next()
+        frame = encode_echo_request(
+            fields=fields, seq=seq, player_id=self.config.player_id,
+            psk=self.config.psk, session_id=self.session_id, ext_seq=ext_seq,
+        )
+        logger.info("assess_echo_sent", player_id=self.config.player_id,
+                    trace_id=pending.trace_id, seq=seq, keycode=keycode,
+                    key=chr(keycode) if 32 <= keycode < 127 else None,
+                    variant=pending.variant.name, values=pending.variant.values,
+                    transform=pending.transform_id, expected=pending.expected,
+                    frame_bytes=len(frame))
+        self.echo.mark_sent()
+        try:
+            await self._reliability_out.send_reliable(seq, frame)
+        except LinkDegraded:
+            # The device never ACKed. Retire the trace now rather than leaving the caller to wait out
+            # the full echo timeout for a response that provably cannot arrive.
+            self.echo.forget(pending.trace_id)
+            self.echo.lost += 1
+            pending.mismatch = "link degraded: request never ACKed"
+            pending.event.set()
+            logger.error("assess_echo_undelivered", player_id=self.config.player_id,
+                         trace_id=pending.trace_id, seq=seq)
+        return pending
+
+    async def _handle_echo_response(self, decoded: DecodedPacket) -> None:
+        """Verifies the device's transform, then pushes the result through the SAME Ultra96 ->
+        engine -> visualizer path a real classified window takes."""
+        pending = self.echo.on_response(decoded.fields)
+        if pending is None or not pending.matched:
+            return  # unknown trace or failed verification; both already logged
+
+        # A window needs a real weapon (RealWeapon excludes NONE), and the engine only emits
+        # ActionRecognized when the attacker has a confirmed weapon. Without one the pipeline would
+        # stop dead at the engine with every link healthy, so say so explicitly instead.
+        weapon = self.windower.current_weapon
+        if weapon is None or weapon is Weapon.NONE:
+            logger.warning("assess_echo_no_weapon", player_id=self.config.player_id,
+                           trace_id=pending.trace_id,
+                           hint="tap the RFID tag / press the weapon button first -- the engine "
+                                "cannot emit ActionRecognized without a confirmed weapon")
+            return
+
+        window = self.echo.synthetic_window(
+            pending, weapon=weapon, request_id=self.windower.next_request_id()
+        )
+        if len(self._classification_tasks) >= self.ultra96.max_in_flight:
+            logger.warning("assess_echo_dropped", trace_id=pending.trace_id,
+                           reason="classifier_capacity")
+            return
+        task = asyncio.create_task(self._classify(window))
+        self._classification_tasks.add(task)
+        task.add_done_callback(self._classification_done)
+
     def queue_combat_feedback(self, feedback: CombatFeedback) -> None:
         if not self._streaming or feedback.player_id != self.config.player_id:
             logger.warning("combat_feedback_dropped", reason="no_matching_session")
@@ -365,6 +548,7 @@ class Session:
             reliable_duplicates=True,
         )
         if isinstance(decoded, DecodeError):
+            self.meter.on_drop(decoded.reason.value)
             logger.warning("stream_decode_drop", reason=decoded.reason.value)
             return
 
@@ -374,6 +558,7 @@ class Session:
         if decoded.header.player_id != self.config.player_id:
             logger.warning("stream_player_mismatch", actual=decoded.header.player_id)
             return
+        self.meter.on_frame(frame, decoded)
         if packet_type == int(PacketType.HEARTBEAT):
             self._heartbeat_monitor.mark_received()
         elif packet_type == int(PacketType.ACK):
@@ -399,6 +584,26 @@ class Session:
                 direction=Direction.LAPTOP_TO_DEVICE, ext_seq=ext_seq,
             )
             await self.transport.send(response)
+        elif packet_type == int(PacketType.ASSESS_ECHO_RESP):
+            # Best-effort inbound (the device does not expect an ACK for it); the REQ's own
+            # retransmit is what recovers a lost round trip. Duplicates are tolerated: a repeated
+            # RESP finds its trace already retired and is logged as assess_echo_duplicate_response
+            # (info), never applied twice.
+            self._heartbeat_monitor.mark_received()
+            await self._handle_echo_response(decoded)
+        elif packet_type == int(PacketType.ASSESS_FILE_ACK):
+            self._heartbeat_monitor.mark_received()
+            logger.info("assess_file_ack", player_id=self.config.player_id,
+                        chunk_index=decoded.fields["chunk_index"],
+                        running_crc=f"0x{decoded.fields['running_crc']:04X}",
+                        received_bytes=decoded.fields["received_bytes"])
+            try:
+                self._file_acks.put_nowait(decoded.fields)
+            except asyncio.QueueFull:
+                # The file sender is not waiting on acks (or is behind). Dropping is correct: the
+                # ack is already logged above, and the sender's own retransmit is what guarantees
+                # delivery -- blocking the BLE receive loop here would stall every other packet.
+                logger.warning("assess_file_ack_dropped", chunk_index=decoded.fields["chunk_index"])
         else:
             logger.warning("stream_unexpected_packet", packet_type=packet_type)
 

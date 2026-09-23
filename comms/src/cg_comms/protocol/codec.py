@@ -157,6 +157,18 @@ def encode_packet(
     return body + struct.pack("<H", crc)
 
 
+def reliable_kind(packet_type: PacketType) -> str:
+    """Groups ACK-retransmit types that share one replay watermark (SequenceTracker.reliable_high).
+
+    Types in one group must never have more than one packet in flight at a time, so that a retransmit
+    is always the newest packet of its group. Both assessment types share a group because the relay
+    serializes them behind one lock (Session._assess_send_lock); every other type is its own group.
+    """
+    if packet_type in (PacketType.ASSESS_ECHO_REQ, PacketType.ASSESS_FILE_CHUNK):
+        return "assess"
+    return str(packet_type.name)
+
+
 def decode_packet(
     frame: bytes,
     *,
@@ -223,7 +235,7 @@ def decode_packet(
         # A first RFID arrival may be >64 sensor packets late after multiple lost sends.
         # Give reliable application effects their own monotonic replay watermark.
         ext_seq = sequence_tracker.infer(seq)
-        if ext_seq <= sequence_tracker.reliable_high:
+        if ext_seq <= sequence_tracker.reliable_high.get(reliable_kind(packet_type), -1):
             return DecodeError(DropReason.REPLAY, f"reliable seq={seq}")
     if ext_seq is None:
         return DecodeError(DropReason.REPLAY, f"seq={seq}")
@@ -259,7 +271,7 @@ def decode_packet(
     sequence_tracker._seen = candidate._seen
     packet = DecodedPacket(header=header, ext_seq=ext_seq, fields=fields)
     if reliable:
-        sequence_tracker.reliable_high = ext_seq
+        sequence_tracker.reliable_high[reliable_kind(packet_type)] = ext_seq
         sequence_tracker.reliable_frames[frame] = (time.monotonic(), packet)
         while len(sequence_tracker.reliable_frames) > 16:
             sequence_tracker.reliable_frames.popitem(last=False)

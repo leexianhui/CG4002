@@ -61,7 +61,12 @@ class SequenceTracker:
     reliable_frames: OrderedDict[bytes, tuple[float, Any]] = field(
         default_factory=OrderedDict, init=False, repr=False
     )
-    reliable_high: int = field(default=-1, init=False)
+    # Highest reliable ext_seq applied, PER KIND (codec.reliable_kind). One shared watermark is wrong
+    # once two reliable kinds can be in flight in the same direction at once (COMBAT_FEEDBACK and an
+    # assessment packet, laptop -> device): if the earlier one is lost and the later delivered, a
+    # shared watermark rejects the earlier one's retransmit as a replay and it is never applied.
+    # Mirrors firmware_demo/src/main.cpp (g_feedback_cache.highest / g_assess_cache.highest).
+    reliable_high: dict[str, int] = field(default_factory=dict, init=False)
 
     def infer(self, seq: int) -> int:
         """Reconstruct a nonce for a late reliable packet without advancing the sensor window."""
