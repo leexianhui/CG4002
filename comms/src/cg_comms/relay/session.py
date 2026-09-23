@@ -839,9 +839,15 @@ class Session:
                 player_id=window.player_id,
                 request_id=window.request_id,
                 reason=str(exc),
+                demo_trace_id=window.demo_trace_id,
             )
             return
         if result is None:
+            logger.warning(
+                "window_dropped", player_id=window.player_id, request_id=window.request_id,
+                demo_trace_id=window.demo_trace_id, reason="classifier_timeout",
+                hint="BLE echo verification does not mean the action reached the engine or phone",
+            )
             return
         if not passes_confidence_gate(result, self.config.min_action_confidence):
             logger.info(

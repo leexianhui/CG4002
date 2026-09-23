@@ -4,6 +4,11 @@ Reviewed 2026-09-23 against the implementation at `fd63e23` and the professor's 
 Use this document for the **implemented commands**. The earlier implementation plan remains a design
 record; some proposed commands there were never implemented.
 
+**2026-09-24 hardware follow-up:** five of nine keyboard classifications hit the 120 ms deadline.
+The commands below now select a paired, opt-in assessment timing profile. See
+[ASSESSMENT_KEYBOARD_TIMEOUT_FOLLOWUP.md](ASSESSMENT_KEYBOARD_TIMEOUT_FOLLOWUP.md) for evidence,
+tradeoffs and the exact retest. The old button-demo commands retain configured gameplay timing.
+
 The review includes local fixes, Python integration tests and ESP32 firmware compilation. It does
 **not** certify physical BLE operation, measured maximum speed, Ultra96 deployment, Android builds,
 power-reset recovery or out-of-range recovery. Those are the rehearsals below. Review fixes are delivered in a follow-up commit after
@@ -28,8 +33,9 @@ did not establish every claimed property. These issues were corrected:
 | TCP peer could accept an unterminated final JSON record at EOF | Both classifier endpoints require a terminating newline; partial records are not accepted as complete messages. |
 | `.env` player ID string could fail settings validation | String `"1"`/`"2"` is normalized before the existing player-ID validation. |
 
-Normal combat rules, classifier timeout, guard grace, reorder hold, endpoints and credentials were
-not changed. Existing Unity scene/render/settings edits were preserved. Normal application JSON
+The original review left normal combat rules and timing defaults unchanged. The follow-up adds an
+explicit assessment-only timing profile; normal commands still use the configured deadline/hold.
+Guard grace, endpoints and credentials are unchanged. Existing Unity scene/render/settings edits were preserved. Normal application JSON
 omits the new optional trace field when it is unused.
 
 **Compatibility:** the assessment binary payloads changed together on Python and firmware. Flash
@@ -39,8 +45,13 @@ reviewed relay. The largest new frame is 76 bytes; hardware must support the neg
 
 **Important scope:** keyboard assessment sends one returned sample per hand in a valid SENSOR_WINDOW
 to the random classifier simulator. It is a communications demonstration, not a real 40-sample AI
-inference capture. Normal GPIO-triggered capture is unchanged. The 120 ms classifier deadline starts
-when submitting a completed window, not when sensor capture starts.
+inference capture. Normal GPIO-triggered capture is unchanged. The classifier deadline starts
+when submitting a completed window, not when sensor capture starts. The default remains 120 ms;
+`--latency-profile assessment` uses 500 ms on the relay and 600 ms base reorder on the engine, plus
+the existing 50 ms grace (650 ms total hold). Select the profile on BOTH relays and the engine.
+It adds 540 ms engine hold versus the normal 110 ms, and is a bounded demo budget, not a measured
+network guarantee. It applies to all actions handled by those processes, including GPIO windows
+if pressed during that assessment run. Do not use the longer deadline alone with the old engine hold.
 
 ## 2. Requirement coverage and remaining physical evidence
 
@@ -130,7 +141,7 @@ ssh -J e1138443@stujump.comp.nus.edu.sg xilinx@makerslab-fpga-53.ddns.comp.nus.e
 In each Ultra96 terminal, change to **the existing repository's `comms/` directory**. Terminal A1:
 
 ```bash
-.venv/bin/cg-engine --config configs/engine.yaml
+.venv/bin/cg-engine --config configs/engine.yaml --latency-profile assessment
 ```
 
 Terminal A2:
@@ -141,7 +152,8 @@ Terminal A2:
 
 `--random` replaces `--trigger-map`; do not supply both. Seed 7 makes the event sequence reproducible;
 omit the seed for a fresh logged seed. Random events are restricted to valid moves for the selected
-weapon, including guard. This is the required dummy AI service, not a claim of trained-model inference.
+weapon. In the current move table these random choices are attacks; the old trigger-map demo
+provides the explicit guard button mapping. This is the required dummy AI service, not a claim of trained-model inference.
 
 ### B. Relay laptop: keep the existing SSH tunnel running
 
@@ -179,14 +191,14 @@ P1 window:
 
 ```powershell
 cd C:\Users\T0332075\Desktop\CG4002\comms
-.\.venv\Scripts\python.exe -m cg_comms.relay.app --config configs\relay.p1.yaml --no-tunnel --assessment --assess-seed 11 --console-level INFO
+.\.venv\Scripts\python.exe -m cg_comms.relay.app --config configs\relay.p1.yaml --no-tunnel --assessment --latency-profile assessment --assess-seed 11 --console-level INFO
 ```
 
 P2 window:
 
 ```powershell
 cd C:\Users\T0332075\Desktop\CG4002\comms
-.\.venv\Scripts\python.exe -m cg_comms.relay.app --config configs\relay.p2.yaml --no-tunnel --assessment --assess-seed 22 --console-level INFO
+.\.venv\Scripts\python.exe -m cg_comms.relay.app --config configs\relay.p2.yaml --no-tunnel --assessment --latency-profile assessment --assess-seed 22 --console-level INFO
 ```
 
 If your working BLE addresses are in `logs/relay.p1.local.yaml` / `logs/relay.p2.local.yaml`, substitute
@@ -234,7 +246,8 @@ weapon for you; confirm both relays still report a real weapon.
 6. The engine sends ACTION_RECOGNIZED. On the phone, read the action/guard label and its `[P1-...]`
    trace. This closes the demonstrated chain; relay verification alone does not prove phone delivery.
 7. Repeat with lowercase `b` and `c`, then repeat in the P2 relay. Wait for each operation to finish.
-   Random guard events can leave HP unchanged; recognition plus matching trace is the pipeline proof.
+   Cooldown or range rejection can leave HP unchanged; recognition plus matching trace is the pipeline proof.
+   Space assessment keys at least four seconds apart if you also want each attack to cause damage.
 
 ```mermaid
 sequenceDiagram
@@ -569,7 +582,9 @@ Do not claim asynchronous code cannot stall: synchronous logging/work can delay 
 
 To return to your previous deterministic combat demo: restore normal firmware on both boards, stop
 the random classifier, restart it with your original `--trigger-map configs/scenarios/demo_trigger_map.yaml`,
-and restart the relays without `--assessment`. Keep the existing engine/tunnels/phone configuration.
+and restart the relays without `--assessment` or `--latency-profile assessment`. Also restart the engine
+with the original `.venv/bin/cg-engine --config configs/engine.yaml` command to restore its normal hold.
+Keep the existing tunnels and phone configuration.
 Reset the match and use [GUARD_LATENCY_FOLLOWUP.md](GUARD_LATENCY_FOLLOWUP.md) for combat-specific checks.
 
 ## 12. Verification performed in this review

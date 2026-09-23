@@ -14,6 +14,7 @@ from pathlib import Path
 
 import structlog
 
+from cg_comms.assessment_timing import relay_settings_for_profile
 from cg_comms.config import RelaySettings, find_repo_root
 from cg_comms.logging_setup import configure_logging
 from cg_comms.messages.models import Action, CombatFeedback, WeaponChanged
@@ -74,6 +75,7 @@ async def run_relay(
     """`settings.assessment.enabled` turns on the assessment features (keyboard echo / file / kbps
     summary file). `assess_file` is what F sends (default: the built-in fixture). `keyboard=False`
     keeps the console keyboard off even in assessment mode (tests)."""
+    settings = relay_settings_for_profile(settings)
     assessment = settings.assessment
     tunnel: TunnelSupervisor | None = None
     if use_tunnel and settings.ultra96.tunnel_enabled and not settings.ultra96.use_mock:
@@ -220,6 +222,11 @@ async def run_relay(
 def main() -> None:
     parser = argparse.ArgumentParser(description="CG4002 relay process")
     parser.add_argument("--config", type=Path, required=True, help="Path to a relay YAML config")
+    parser.add_argument(
+        "--latency-profile", choices=("configured", "assessment"), default=None,
+        help="assessment: 500 ms classifier deadline; also select this profile on the engine. "
+             "Without this option, retain the configured gameplay timing.",
+    )
     parser.add_argument("--no-tunnel", action="store_true", help="Skip starting the SSH tunnel supervisor")
     parser.add_argument("--log-level", default="INFO", help="Level for the JSONL log file")
     parser.add_argument(
@@ -245,11 +252,17 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = RelaySettings.from_yaml(args.config)
+    if args.latency_profile is not None:
+        settings.latency_profile = args.latency_profile
     if args.assessment or args.assess_seed is not None:
         updates: dict = {"enabled": True}
         if args.assess_seed is not None:
             updates["seed"] = args.assess_seed
         settings.assessment = settings.assessment.model_copy(update=updates)
+    try:
+        settings = relay_settings_for_profile(settings)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.assess_file is not None and not settings.assessment.enabled:
         parser.error("--assess-file needs --assessment (or assessment.enabled: true in the config)")
     # Fail before connecting anything if the transfer file is unusable.
@@ -274,7 +287,13 @@ def main() -> None:
         engine=f"{settings.engine_link.host}:{settings.engine_link.port}",
         log_path=str(log_path),
         assessment=settings.assessment.enabled,
+        latency_profile=settings.latency_profile,
+        classifier_timeout_ms=settings.ultra96.request_timeout_ms,
     )
+    if settings.latency_profile == "assessment":
+        logger.warning("assessment_timing_profile",
+                       hint="Engine must also use --latency-profile assessment; "
+                            "longer classifier timeout alone can produce late ACTION drops")
 
     asyncio.run(run_relay(settings, use_tunnel=not args.no_tunnel, assess_file=assess_file))
 

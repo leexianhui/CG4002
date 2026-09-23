@@ -172,6 +172,7 @@ class GameStateTask:
                       released_timestamp_ms=self._reorder.released_timestamp,
                       release_delay_ms=self._reorder.reorder_delay_ms)
         if isinstance(event, InboundAction):
+            timing["demo_trace_id"] = event.action.demo_trace_id
             logger.info("action_received", **timing, weapon=event.action.weapon.value,
                         action=event.action.action.value, guard_state=event.action.guard_state.value)
         if timestamp < self._reset_floor:

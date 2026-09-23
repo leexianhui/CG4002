@@ -12,10 +12,12 @@ import structlog
 import websockets
 from test_assessment import _LiveRig
 
+from cg_comms.assessment_timing import relay_settings_for_profile
+from cg_comms.clock import monotonic_ms
 from cg_comms.config import EngineSettings, RelaySettings, RulesConfig
 from cg_comms.engine.app import run_engine
 from cg_comms.messages.enums import Weapon
-from cg_comms.messages.models import SensorWindow
+from cg_comms.messages.models import Position, SensorWindow, WeaponChanged
 from cg_comms.messages.validate import dump_app_message
 from cg_comms.mock.assess_device import build_echo_response
 from cg_comms.mock.ultra96_sim import RandomClassifier, _handle_client
@@ -189,21 +191,38 @@ def test_environment_player_id_parses_without_yaml(monkeypatch):
     assert RelaySettings(_env_file=None).player_id == 2
 
 
-async def test_entire_keyboard_board_classifier_engine_visualizer_pipeline():
+@pytest.mark.parametrize("profile,reply_delay", [("configured", 0), ("assessment", 0.30)])
+async def test_entire_keyboard_board_classifier_engine_visualizer_pipeline(profile, reply_delay):
     """Actual TCP classifier + engine WebSocket; only the physical BLE board/phone are simulated."""
     token = "assessment-test-token"
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         engine_port = listener.getsockname()[1]
     classifier = RandomClassifier.for_rules(RulesConfig.load(), random.Random(7))
+
+    class DelayedReader:
+        async def readline(self):
+            line = await self.reader.readline()
+            if line:
+                await asyncio.sleep(reply_delay)
+            return line
+
+        def __init__(self, reader):
+            self.reader = reader
+
     server = await asyncio.start_server(
-        lambda r, w: _handle_client(r, w, [], None, classifier), "127.0.0.1", 0
+        lambda r, w: _handle_client(DelayedReader(r), w, [], None, classifier), "127.0.0.1", 0
     )
     classifier_port = server.sockets[0].getsockname()[1]
     engine = asyncio.create_task(
         run_engine(
             EngineSettings(
-                _env_file=None, host="127.0.0.1", port=engine_port, use_tls=False, bearer_token=token
+                _env_file=None,
+                host="127.0.0.1",
+                port=engine_port,
+                use_tls=False,
+                bearer_token=token,
+                latency_profile=profile,
             )
         )
     )
@@ -216,10 +235,30 @@ async def test_entire_keyboard_board_classifier_engine_visualizer_pipeline():
         ) as phone:
             async with _LiveRig() as rig:
                 rig.ultra96.port = classifier_port
-                rig.ultra96.request_timeout_ms = 2000  # local-test budget, not gameplay change
+                settings = relay_settings_for_profile(
+                    RelaySettings(_env_file=None, assessment={"enabled": True}, latency_profile=profile)
+                )
+                rig.ultra96.request_timeout_ms = settings.ultra96.request_timeout_ms
                 await rig.ultra96.connect()
                 rig.windower.on_weapon_confirmed(Weapon.SWORD)
                 rig.session.on_action_result = link.send_action
+                # Seed the action clock before classification. Ongoing phone positions must not
+                # advance the release watermark past a delayed action in the paired profile.
+                await link.send_weapon_changed(
+                    WeaponChanged(timestamp=monotonic_ms(), player_id=1, weapon=Weapon.SWORD)
+                )
+
+                async def positions():
+                    while True:
+                        await phone.send(
+                            dump_app_message(
+                                Position(timestamp=monotonic_ms(), player_id=1, x=0, y=0, heading=0)
+                            )
+                        )
+                        await asyncio.sleep(0.02)
+
+                position_task = asyncio.create_task(positions())
+                await asyncio.sleep(0.04)
                 try:
                     pending, verified = await rig.session.echo_keystroke(ord("a"))
                     assert verified
@@ -235,6 +274,8 @@ async def test_entire_keyboard_board_classifier_engine_visualizer_pipeline():
                     assert event["playerId"] == 1 and event["weapon"] == "SWORD"
                     assert event["action"] in classifier._moves["SWORD"]
                 finally:
+                    position_task.cancel()
+                    await asyncio.gather(position_task, return_exceptions=True)
                     await rig.ultra96.disconnect()
     finally:
         await link.disconnect()

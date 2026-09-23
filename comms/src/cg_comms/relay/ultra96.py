@@ -125,6 +125,7 @@ class Ultra96Client:
         def timing() -> dict[str, Any]:
             now = loop.time()
             return dict(player_id=window.player_id, request_id=window.request_id,
+                        demo_trace_id=window.demo_trace_id,
                         window_timestamp_ms=window.timestamp,
                         elapsed_ms=round((now - started) * 1000, 3),
                         encode_ms=round(encode_ms, 3), write_drain_ms=round(write_drain_ms, 3),
@@ -135,6 +136,7 @@ class Ultra96Client:
 
         try:
             logger.info("classifier_request", player_id=window.player_id,
+                        demo_trace_id=window.demo_trace_id,
                         request_id=window.request_id, trigger_id=window.trigger_id,
                         window_timestamp_ms=window.timestamp,
                         window_age_ms=monotonic_ms() - window.timestamp,

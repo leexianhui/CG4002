@@ -133,6 +133,7 @@ class RelaySettings(BaseSettings):
     )
 
     player_id: Literal[1, 2] = 1
+    latency_profile: Literal["configured", "assessment"] = "configured"
     psk_hex: str = ""
     logs_dir: Path = Path("logs")
 
@@ -167,6 +168,7 @@ class EngineSettings(BaseSettings):
     )
 
     host: str = "0.0.0.0"
+    latency_profile: Literal["configured", "assessment"] = "configured"
     port: int = 8443
     use_tls: bool = True
     cert_path: str = "certs/engine.crt"

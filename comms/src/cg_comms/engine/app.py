@@ -15,6 +15,7 @@ from pathlib import Path
 
 import structlog
 
+from cg_comms.assessment_timing import rules_for_profile  # type: ignore[import-untyped]
 from cg_comms.config import EngineSettings
 from cg_comms.engine.broadcaster import broadcast_to_visualizers, send_to_relay
 from cg_comms.engine.game_state_task import GameStateTask
@@ -38,8 +39,14 @@ logger = structlog.get_logger(__name__)
 
 
 async def run_engine(settings: EngineSettings) -> None:
-    rules = Rules.load()
-    if settings.reorder_delay_ms != rules.config.reorder_delay_ms:
+    rules = Rules(config=rules_for_profile(Rules.load().config, settings.latency_profile))
+    if settings.latency_profile == "assessment":
+        logger.warning("assessment_timing_profile", reorder_delay_ms=rules.config.reorder_delay_ms,
+                       guard_grace_ms=rules.config.guard_grace_ms,
+                       release_delay_ms=rules.config.reorder_delay_ms + rules.config.guard_grace_ms,
+                       hint="Use --latency-profile assessment on both assessment relays too; "
+                            "this profile deliberately adds demo latency")
+    elif settings.reorder_delay_ms != rules.config.reorder_delay_ms:
         logger.warning("engine_reorder_config_ignored", configured=settings.reorder_delay_ms,
                        effective=rules.config.reorder_delay_ms, source="shared/config/match.yaml")
     registry = ConnectionRegistry(send_queue_depth=settings.send_queue_depth)
@@ -125,6 +132,11 @@ async def run_engine(settings: EngineSettings) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="CG4002 Game Engine")
     parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument(
+        "--latency-profile", choices=("configured", "assessment"), default=None,
+        help="assessment: 600 ms base reorder delay plus unchanged guard grace. "
+             "Pair with --latency-profile assessment on both relays; default keeps shared match timing.",
+    )
     parser.add_argument("--log-level", default="INFO", help="Level for the JSONL log file")
     parser.add_argument(
         "--console-level",
@@ -134,6 +146,8 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = EngineSettings.from_yaml(args.config)
+    if args.latency_profile is not None:
+        settings.latency_profile = args.latency_profile
     log_path = configure_logging(
         "engine",
         settings.logs_dir,
@@ -147,6 +161,7 @@ def main() -> None:
         listen=f"{settings.host}:{settings.port}",
         tls=settings.use_tls,
         log_path=str(log_path),
+        latency_profile=settings.latency_profile,
     )
 
     asyncio.run(run_engine(settings))
