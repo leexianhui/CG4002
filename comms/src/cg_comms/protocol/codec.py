@@ -20,6 +20,7 @@ from cryptography.exceptions import InvalidTag
 
 from cg_comms.protocol import crc as crc_mod
 from cg_comms.protocol.constants import (
+    ACK_RETRANSMIT_PACKET_TYPES,
     CRC_SIZE,
     GCM_TAG_SIZE,
     HEADER_SIZE,
@@ -217,7 +218,7 @@ def decode_packet(
     candidate = copy.copy(sequence_tracker)
     candidate._seen = sequence_tracker._seen.copy()
     ext_seq = candidate.accept(seq)
-    reliable = reliable_duplicates and packet_type in (PacketType.RFID_EVENT, PacketType.COMBAT_FEEDBACK)
+    reliable = reliable_duplicates and packet_type in ACK_RETRANSMIT_PACKET_TYPES
     if reliable:
         # A first RFID arrival may be >64 sensor packets late after multiple lost sends.
         # Give reliable application effects their own monotonic replay watermark.
@@ -257,7 +258,7 @@ def decode_packet(
     sequence_tracker._highest_ext_seq = candidate._highest_ext_seq
     sequence_tracker._seen = candidate._seen
     packet = DecodedPacket(header=header, ext_seq=ext_seq, fields=fields)
-    if reliable_duplicates and packet_type in (PacketType.RFID_EVENT, PacketType.COMBAT_FEEDBACK):
+    if reliable:
         sequence_tracker.reliable_high = ext_seq
         sequence_tracker.reliable_frames[frame] = (time.monotonic(), packet)
         while len(sequence_tracker.reliable_frames) > 16:

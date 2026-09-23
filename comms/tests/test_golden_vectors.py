@@ -41,7 +41,12 @@ with _GOLDEN_VECTORS_PATH.open("r", encoding="utf-8") as _f:
 _PSK = bytes.fromhex(_GOLDEN_DOC["psk_hex"])
 _VECTORS = _GOLDEN_DOC["vectors"]
 
-assert len(_VECTORS) == 9, f"expected 9 golden vectors (one per packet type), found {len(_VECTORS)}"
+# Derived from PacketType rather than a literal, so adding a packet type does not require
+# bumping a magic number here as well as in the file. test_golden_vectors_cover_every_packet_type
+# checks WHICH types are covered; this only catches duplicates/missing at import time.
+assert len(_VECTORS) == len(PacketType), (
+    f"expected {len(PacketType)} golden vectors (one per packet type), found {len(_VECTORS)}"
+)
 
 
 def _fields_for(vector: dict) -> dict:

@@ -45,6 +45,12 @@ class PacketType(IntEnum):
     HEARTBEAT = 0x20
     ACK = 0x21
     COMBAT_FEEDBACK = 0x30
+    # Assessment/demo extension range (0x40-0x4F). Reserved for the comms-assessment features
+    # (keyboard-driven echo pipeline, file transfer); the real game never sends these.
+    ASSESS_ECHO_REQ = 0x40
+    ASSESS_ECHO_RESP = 0x41
+    ASSESS_FILE_CHUNK = 0x42
+    ASSESS_FILE_ACK = 0x43
 
 
 # Delivery-sensitive types. RFID/feedback use ACK + retransmit; handshake/time-sync use bounded
@@ -57,6 +63,31 @@ RELIABLE_PACKET_TYPES: frozenset[PacketType] = frozenset(
         PacketType.TIME_SYNC_RESP,
         PacketType.RFID_EVENT,
         PacketType.COMBAT_FEEDBACK,
+        PacketType.ASSESS_ECHO_REQ,
+        PacketType.ASSESS_FILE_CHUNK,
+    }
+)
+
+# The subset of RELIABLE_PACKET_TYPES that recovers via ACK + identical-ciphertext retransmit +
+# duplicate suppression, as opposed to the handshake/time-sync types, which recover by redoing the
+# whole handshake and must NOT be cached for retransmit.
+#
+# This set exists because codec.py used to hard-code `(RFID_EVENT, COMBAT_FEEDBACK)` inline in two
+# separate places. Adding a type to RELIABLE_PACKET_TYPES alone therefore did nothing at all: the
+# retransmit cache never held it and a duplicate was re-applied instead of re-ACKed. Any new
+# retransmittable type must be listed HERE, not just above.
+#
+# Both assessment entries are laptop -> device on purpose. The firmware's CgReliableSend is a single
+# slot shared with RFID_EVENT, so making a device -> laptop assessment type reliable would contend
+# with the working RFID path. Keeping the retransmitting end in Python (relay/reliability.py) leaves
+# that path untouched; the device only has to ACK, and the response direction is naturally re-driven
+# by the request's own retransmit.
+ACK_RETRANSMIT_PACKET_TYPES: frozenset[PacketType] = frozenset(
+    {
+        PacketType.RFID_EVENT,
+        PacketType.COMBAT_FEEDBACK,
+        PacketType.ASSESS_ECHO_REQ,
+        PacketType.ASSESS_FILE_CHUNK,
     }
 )
 

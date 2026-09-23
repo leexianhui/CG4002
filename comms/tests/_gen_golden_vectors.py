@@ -12,6 +12,7 @@ This file is not part of the test suite; delete after golden_vectors.json is gen
 """
 import json
 import struct
+import sys
 
 # ---------------------------------------------------------------------------
 # AES-128 core (FIPS-197), from scratch.
@@ -214,7 +215,10 @@ _tc2_expected = bytes.fromhex("0388dace60b6a392f328c2b971b2fe78" "ab6e47d42cec13
 _tc2_got = aes128_gcm_encrypt(_tc1_key, _tc1_nonce, _tc2_pt, b"")
 assert _tc2_got == _tc2_expected, f"GCM FAILED NIST Test Case 2: got {_tc2_got.hex()}"
 
-print("AES-128-GCM from-scratch implementation validated against FIPS-197 + NIST GCM Test Cases 1 & 2.")
+# stderr, not stdout: stdout is the JSON document, and this banner used to corrupt
+# `python _gen_golden_vectors.py > golden_vectors.json`.
+print("AES-128-GCM from-scratch implementation validated against FIPS-197 + NIST GCM Test Cases 1 & 2.",
+      file=sys.stderr)
 
 # ---------------------------------------------------------------------------
 # Wire framing (wire_protocol.md), from scratch.
@@ -233,6 +237,10 @@ PACKET_TYPES = {
     "HEARTBEAT": 0x20,
     "ACK": 0x21,
     "COMBAT_FEEDBACK": 0x30,
+    "ASSESS_ECHO_REQ": 0x40,
+    "ASSESS_ECHO_RESP": 0x41,
+    "ASSESS_FILE_CHUNK": 0x42,
+    "ASSESS_FILE_ACK": 0x43,
 }
 
 PSK = bytes.fromhex("000102030405060708090a0b0c0d0e0f")
@@ -383,6 +391,50 @@ vectors.append(normal_vector(
     "COMBAT_FEEDBACK", PACKET_TYPES["COMBAT_FEEDBACK"],
     session_id=SESSION_ID, player_id=1, direction=1, seq=2, ext_seq=2,
     plaintext=combat_feedback_plaintext,
+))
+
+# --- Assessment/demo extension types (0x40-0x4F) -------------------------------------------------
+# Directions matter here and are easy to get backwards: _REQ/_CHUNK are laptop -> device
+# (direction 1), _RESP/_ACK are device -> laptop (direction 0). Getting one wrong still produces a
+# self-consistent vector, so it would pass a round-trip test while disagreeing with the firmware.
+
+# trace_id, sent_ms, keycode ('a'), payload_kind, value_a..c
+assess_echo_req_plaintext = struct.pack("<IIBBhhh", 0x11223344, 777000, 0x61, 2, 1000, -2000, 3000)
+vectors.append(normal_vector(
+    "ASSESS_ECHO_REQ", PACKET_TYPES["ASSESS_ECHO_REQ"],
+    session_id=SESSION_ID, player_id=1, direction=1, seq=11, ext_seq=11,
+    plaintext=assess_echo_req_plaintext,
+))
+
+# trace_id echoed, device_timestamp_ms, keycode echoed, payload_kind echoed, transform_id, reserved,
+# transformed value_a..c (here: negate, transform_id 1)
+assess_echo_resp_plaintext = struct.pack(
+    "<IIBBBBhhh", 0x11223344, 777123, 0x61, 2, 1, 0, -1000, 2000, -3000,
+)
+vectors.append(normal_vector(
+    "ASSESS_ECHO_RESP", PACKET_TYPES["ASSESS_ECHO_RESP"],
+    session_id=SESSION_ID, player_id=1, direction=0, seq=12, ext_seq=12,
+    plaintext=assess_echo_resp_plaintext,
+))
+
+# chunk_index, total_chunks, chunk_len, reserved, data[32] (11 valid bytes, zero-padded -- exercises
+# the padding path, which is the part a fixed-length BYTES field makes easy to get wrong)
+assess_file_chunk_plaintext = struct.pack(
+    "<HHBB32s", 3, 7, 11, 0, b"hello world",
+)
+assert len(assess_file_chunk_plaintext) == 38
+vectors.append(normal_vector(
+    "ASSESS_FILE_CHUNK", PACKET_TYPES["ASSESS_FILE_CHUNK"],
+    session_id=SESSION_ID, player_id=1, direction=1, seq=13, ext_seq=13,
+    plaintext=assess_file_chunk_plaintext,
+))
+
+# chunk_index, running_crc, received_bytes
+assess_file_ack_plaintext = struct.pack("<HHI", 3, 0x29B1, 107)
+vectors.append(normal_vector(
+    "ASSESS_FILE_ACK", PACKET_TYPES["ASSESS_FILE_ACK"],
+    session_id=SESSION_ID, player_id=1, direction=0, seq=14, ext_seq=14,
+    plaintext=assess_file_ack_plaintext,
 ))
 
 output = {"psk_hex": PSK.hex(), "vectors": vectors}

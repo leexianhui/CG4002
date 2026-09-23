@@ -117,6 +117,58 @@
       "nonce_hex": "bebafeca0101020000000000",
       "aad_hex": "c901300200011600",
       "wire_frame_hex": "c9013002000116007274d402158a82e0fcb301204de276b9441affaf1dc3efd9"
+    },
+    {
+      "name": "ASSESS_ECHO_REQ",
+      "packet_type": 64,
+      "session_id": 3405691582,
+      "player_id": 1,
+      "direction": 1,
+      "seq": 11,
+      "ext_seq": 11,
+      "plaintext_hex": "4433221128db0b006102e80330f8b80b",
+      "nonce_hex": "bebafeca01010b0000000000",
+      "aad_hex": "c901400b00012000",
+      "wire_frame_hex": "c901400b00012000c6ca77951652b957f4c16e58b9d24a28bab422f35937b1b866456c46a3fcc1254efd"
+    },
+    {
+      "name": "ASSESS_ECHO_RESP",
+      "packet_type": 65,
+      "session_id": 3405691582,
+      "player_id": 1,
+      "direction": 0,
+      "seq": 12,
+      "ext_seq": 12,
+      "plaintext_hex": "44332211a3db0b006102010018fcd00748f4",
+      "nonce_hex": "bebafeca01000c0000000000",
+      "aad_hex": "c901410c00012200",
+      "wire_frame_hex": "c901410c00012200abc5edbc942164fcd0be9257e18b480bb6102e8bdb3ef53c307bc01fbf68e27fa7a8e5d1"
+    },
+    {
+      "name": "ASSESS_FILE_CHUNK",
+      "packet_type": 66,
+      "session_id": 3405691582,
+      "player_id": 1,
+      "direction": 1,
+      "seq": 13,
+      "ext_seq": 13,
+      "plaintext_hex": "030007000b0068656c6c6f20776f726c64000000000000000000000000000000000000000000",
+      "nonce_hex": "bebafeca01010d0000000000",
+      "aad_hex": "c901420d00013600",
+      "wire_frame_hex": "c901420d00013600ac147cde2116bf777a4391c12a5b8e8d6551f237a3cf2b391f63609639b7c3675e3a965277abe109b81f73763aa59687d9e5b6c7459dc5c4"
+    },
+    {
+      "name": "ASSESS_FILE_ACK",
+      "packet_type": 67,
+      "session_id": 3405691582,
+      "player_id": 1,
+      "direction": 0,
+      "seq": 14,
+      "ext_seq": 14,
+      "plaintext_hex": "0300b1296b000000",
+      "nonce_hex": "bebafeca01000e0000000000",
+      "aad_hex": "c901430e00011800",
+      "wire_frame_hex": "c901430e00011800a1c84be3032210d631b84c6d1986b6dc7a6433a46b8286cbd784"
     }
   ]
 }

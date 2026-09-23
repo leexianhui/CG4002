@@ -62,6 +62,18 @@ extern "C" {
 #define CG_PKT_ACK             0x21 /* both               never acked itself */
 #define CG_PKT_COMBAT_FEEDBACK 0x30 /* laptop -> device   reliable    */
 
+/* Assessment/demo extension range 0x40-0x4F. Used only by the comms-assessment demo features
+ * (keyboard-driven echo pipeline, file transfer); the real game never sends these.
+ *
+ * Only the laptop -> device directions are reliable (ACK + retransmit). That is deliberate: the
+ * firmware's CgReliableSend (lib/cg_protocol/cg_reliable.h) is a SINGLE SLOT already shared with
+ * RFID_EVENT, so a reliable device -> laptop assessment type would contend with the working RFID
+ * path. The device only has to ACK these; the _RESP direction is re-driven by the _REQ retransmit. */
+#define CG_PKT_ASSESS_ECHO_REQ    0x40 /* laptop -> device   reliable    */
+#define CG_PKT_ASSESS_ECHO_RESP   0x41 /* device -> laptop   best-effort */
+#define CG_PKT_ASSESS_FILE_CHUNK  0x42 /* laptop -> device   reliable    */
+#define CG_PKT_ASSESS_FILE_ACK    0x43 /* device -> laptop   best-effort */
+
 /* ------------------------------------------------------------------------------------------- */
 /* SENSOR_FRAME.flags bits                                                                      */
 /* ------------------------------------------------------------------------------------------- */
@@ -188,6 +200,60 @@ typedef struct CG_PACKED {
     uint16_t duration_ms;
     uint16_t repeat_count;
 } cg_payload_combat_feedback_t;
+
+/* --- Assessment/demo payloads (0x40-0x4F) ---------------------------------------------------- */
+
+/* laptop -> device, one per keystroke at the relay laptop. 16 bytes.
+ * `trace_id` is carried on the wire (rather than added to the relay's JSON messages) because every
+ * every JSON schema in shared/schemas sets "additionalProperties": false and every model in messages/models.py
+ * inherits extra="forbid" -- a new JSON key would be a breaking change needing relay + engine +
+ * Ultra96 + both phone APKs redeployed in lockstep. */
+typedef struct CG_PACKED {
+    uint32_t trace_id;
+    uint32_t sent_ms;      /* laptop clock at send */
+    uint8_t  keycode;      /* ASCII of the keystroke that generated this packet */
+    uint8_t  payload_kind; /* which dummy-packet variant */
+    int16_t  value_a;
+    int16_t  value_b;
+    int16_t  value_c;
+} cg_payload_assess_echo_req_t;
+
+/* device -> laptop, one per ASSESS_ECHO_REQ, after the device MODIFIES the values. 18 bytes.
+ * trace_id/keycode/payload_kind are echoed unchanged so the laptop can correlate; value_a..c are
+ * the transformed data, which is what proves the round trip actually reached the firmware. */
+typedef struct CG_PACKED {
+    uint32_t trace_id;
+    uint32_t device_timestamp_ms;
+    uint8_t  keycode;
+    uint8_t  payload_kind;
+    uint8_t  transform_id; /* which modification the device applied */
+    uint8_t  reserved;     /* must be 0x00 */
+    int16_t  value_a;
+    int16_t  value_b;
+    int16_t  value_c;
+} cg_payload_assess_echo_resp_t;
+
+/* laptop -> device, file transfer. 38 bytes.
+ * `data` is a FIXED 32 bytes with an explicit chunk_len rather than a variable-length field: the
+ * Python codec's FieldKind has no variable-length kind, and adding one would change the generic
+ * packer every other type shares. The last chunk is zero-padded; chunk_len says how much counts.
+ * Frame = 8 + (38+16) + 2 = 64 B, under the 68 B SENSOR_FRAME frame that the BLE MTU floor is
+ * already validated against, so no MTU guard changes. */
+typedef struct CG_PACKED {
+    uint16_t chunk_index;
+    uint16_t total_chunks;
+    uint8_t  chunk_len;    /* 1..32 valid bytes in `data` */
+    uint8_t  reserved;     /* must be 0x00 */
+    uint8_t  data[32];
+} cg_payload_assess_file_chunk_t;
+
+/* device -> laptop, one per received chunk. 8 bytes. `running_crc` is CRC-16/CCITT-FALSE over every
+ * file byte received so far, so the laptop can verify integrity incrementally as well as at the end. */
+typedef struct CG_PACKED {
+    uint16_t chunk_index;
+    uint16_t running_crc;
+    uint32_t received_bytes;
+} cg_payload_assess_file_ack_t;
 
 /* ------------------------------------------------------------------------------------------- */
 /* CRC-16/CCITT-FALSE                                                                            */
