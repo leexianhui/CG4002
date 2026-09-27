@@ -1,28 +1,20 @@
-"""Dummy assessment packet variants — the table the professor will edit during the demo.
+"""Live-editable keyboard IMU data. Save this file, then press b/c/d: no restart needed.
 
-Assessment requirement: "You should have multiple dummy packets that will be chosen at random...
-Prof will ask you to change the dummy packet data. You may have to recompile and rerun your code."
+EDIT ONLY the three values tuples in DUMMY_VARIANTS below (signed int16 literals).
+Mapping is fixed: b -> B, c -> C, d -> D. To demonstrate B := C, copy C's tuple
+onto B's row, save, then press b. Keep the names and IDs unchanged.
 
-So the whole point of this module is that it is the ONE place that data lives. Everything else
-(assess.py, the firmware transform, the logs) is written against `DUMMY_VARIANTS` generically, so
-editing a number below, or adding/removing a whole variant, needs no other file touched.
-
-Requirement: "Dummy data should be in the format of your actual packet... NOT just plain integers
-or text messages." These are not free-form blobs: each variant fills `ASSESS_ECHO_REQ`'s declared
-fields (protocol/payloads.py) and is sealed with AES-128-GCM + CRC16 by the same codec as every real
-packet, so what goes over the air is a genuine protocol frame.
-
-To change the dummy data during the demo:
-  1. Edit a `values` tuple, or add a whole `DummyVariant(...)` entry, below.
-  2. Restart the relay (no firmware reflash needed -- the device transforms whatever it receives).
-Each `values` entry must hold exactly three int16s (-32768..32767); `validate_variants()` is called
-at import time, so a typo fails immediately and loudly instead of at the first keystroke.
+Each press safely parses and validates the saved table before sending. Invalid edits
+reject the press, never send stale data. In-flight requests keep their original snapshot.
+These are dominant acceleration axes in the real 42-byte IMU body; the common gyro,
+offhand and torso fields remain fixed in assess_echo.py. GPIO data is independent.
 """
 
 from __future__ import annotations
 
-import random
+import ast
 from dataclasses import dataclass
+from pathlib import Path
 
 I16_MIN = -32768
 I16_MAX = 32767
@@ -42,11 +34,9 @@ class DummyVariant:
 
 # --- EDIT ME DURING THE DEMO -------------------------------------------------------------------
 DUMMY_VARIANTS: tuple[DummyVariant, ...] = (
-    DummyVariant(1, "zeros", (0, 0, 0), "identity check -- a transform bug is obvious"),
-    DummyVariant(2, "small_mixed", (1000, -2000, 3000), "typical IMU-scale magnitudes"),
-    DummyVariant(3, "extremes", (I16_MAX, I16_MIN, 0), "int16 saturation edges"),
-    DummyVariant(4, "imu_like", (2048, -1024, 512), "1g, -0.5g, 0.25g at ACCEL_LSB_PER_G"),
-    DummyVariant(5, "primes", (7, 13, 31), "small values -- readable raw in a hex dump"),
+    DummyVariant(1, "B", (2048, -1024, 512), "keyboard b: dominant acceleration raw int16"),
+    DummyVariant(2, "C", (1000, -2000, 3000), "keyboard c: dominant acceleration raw int16"),
+    DummyVariant(3, "D", (7, 13, 31), "keyboard d: dominant acceleration raw int16"),
 )
 # --- END EDIT ME -------------------------------------------------------------------------------
 
@@ -65,8 +55,8 @@ def validate_variants(variants: tuple[DummyVariant, ...] = DUMMY_VARIANTS) -> No
                 "payload_kind must be unique or responses cannot be attributed"
             )
         seen[v.kind] = v.name
-        if len(v.values) != 3:
-            raise ValueError(f"variant {v.name!r}: expected exactly 3 values, got {len(v.values)}")
+        if not isinstance(v.values, tuple) or len(v.values) != 3:
+            raise ValueError(f"variant {v.name!r}: expected a tuple of exactly 3 int16 values")
         for i, value in enumerate(v.values):
             if type(value) is not int or not I16_MIN <= value <= I16_MAX:
                 raise ValueError(
@@ -78,7 +68,37 @@ def validate_variants(variants: tuple[DummyVariant, ...] = DUMMY_VARIANTS) -> No
 validate_variants()
 
 
-def choose(rng: random.Random) -> DummyVariant:
-    """Picks a variant at random ("chosen at random" per the requirement). Takes an explicit Random
-    so a demo run can be seeded and reproduced, and so tests are deterministic."""
-    return rng.choice(DUMMY_VARIANTS)
+def for_key(keycode: int, source: Path | None = None) -> DummyVariant:
+    """Read the saved table on EVERY press, without executing edited Python code.
+
+    Only literal DummyVariant(...) entries are accepted. Invalid/partially saved edits fail
+    the operation before any BLE request; there is no silent fallback to stale values.
+    In-flight operations retain their original validated snapshot.
+    """
+    key = chr(keycode)
+    if key not in ("b", "c", "d"):
+        raise ValueError("IMU keys are b/c/d; a selects a weapon")
+    tree = ast.parse((source or Path(__file__)).read_text(encoding="utf-8-sig"))
+    tables = [
+        n.value
+        for n in tree.body
+        if isinstance(n, ast.AnnAssign)
+        and isinstance(n.target, ast.Name)
+        and n.target.id == "DUMMY_VARIANTS"
+    ]
+    if len(tables) != 1 or not isinstance(tables[0], (ast.Tuple, ast.List)):
+        raise ValueError("expected one literal DUMMY_VARIANTS table")
+    variants = []
+    for entry in tables[0].elts:
+        if (
+            not isinstance(entry, ast.Call)
+            or not isinstance(entry.func, ast.Name)
+            or entry.func.id != "DummyVariant"
+            or entry.keywords
+        ):
+            raise ValueError("use literal DummyVariant(kind, name, (x, y, z), note) entries")
+        variants.append(DummyVariant(*(ast.literal_eval(arg) for arg in entry.args)))
+    validate_variants(tuple(variants))
+    if [(v.kind, v.name) for v in variants] != [(1, "B"), (2, "C"), (3, "D")]:
+        raise ValueError("keep the three identities (1, B), (2, C), (3, D); edit only values/notes")
+    return variants[ord(key) - ord("b")]

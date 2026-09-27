@@ -195,6 +195,32 @@
       "nonce_hex": "bebafeca0100100000000000",
       "aad_hex": "c901451000013a00",
       "wire_frame_hex": "c901451000013a005964af6a9eaed75abb1fdd077ff252cefe56afd496581f2b7e33e65c1f08de7e5caf2159b1608ae85756bfd495a7aef6a3e275a37f62772f73d79f19"
+    },
+    {
+      "name": "ASSESS_WEAPON_REQ",
+      "packet_type": 70,
+      "session_id": 3405691582,
+      "player_id": 1,
+      "direction": 1,
+      "seq": 17,
+      "ext_seq": 17,
+      "plaintext_hex": "44332211",
+      "nonce_hex": "bebafeca0101110000000000",
+      "aad_hex": "c901461100011400",
+      "wire_frame_hex": "c901461100011400f74b4fabd02393a9a06bfdb275cdbb0d03348278b0f1"
+    },
+    {
+      "name": "ASSESS_WEAPON_RESP",
+      "packet_type": 71,
+      "session_id": 3405691582,
+      "player_id": 1,
+      "direction": 0,
+      "seq": 18,
+      "ext_seq": 18,
+      "plaintext_hex": "44332211a3db0b0002",
+      "nonce_hex": "bebafeca0100120000000000",
+      "aad_hex": "c901471200011900",
+      "wire_frame_hex": "c9014712000119007bf526eef172423ac72fea4230c16acc33cf30a6cca046bd055de5"
     }
   ]
 }

@@ -39,8 +39,8 @@ namespace Cg4002.VisualizerDemo.Controllers
         private readonly Queue<string> _feedLines = new Queue<string>();
         private float _positionTimer;
         // Tracks each player's last-announced weapon so the feed only prints a "weapon = X" line on
-        // change (§9.4) - the GPIO 4 press itself prints nothing; WEAPON_CHANGED is not broadcast to
-        // visualizers, so this is inferred from ActionRecognized.Weapon instead.
+        // change (§9.4) - WEAPON_CHANGED is now broadcast to
+        // visualizers; ActionRecognized.Weapon also provides a fallback after reconnect/reset.
         private readonly Dictionary<int, string> _lastWeapon = new Dictionary<int, string>();
         // §9.4's rendering rules fire on CHANGE, not on every MATCH_STATE snapshot (which is
         // rebroadcast on every connect/disconnect, not just on real HP/presence changes). The first
@@ -93,6 +93,9 @@ namespace Cg4002.VisualizerDemo.Controllers
         {
             var label = msg.PlayerId == 1 ? Player1WeaponLabel : Player2WeaponLabel;
             if (label != null) label.text = msg.Weapon;
+            if (!_lastWeapon.TryGetValue(msg.PlayerId, out string previous) || previous != msg.Weapon)
+                AppendFeedLine($"> P{msg.PlayerId} weapon = {msg.Weapon}");
+            _lastWeapon[msg.PlayerId] = msg.Weapon;
         }
 
         private void HandleMatchState(MatchState msg)

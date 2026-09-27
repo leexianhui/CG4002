@@ -103,7 +103,7 @@ class FireBeetleSim:
                 "device_mac": bytes([0x02, 0x00, 0x00, 0x00, 0x00, self.player_id]),
                 "player_id": self.player_id,
                 "protocol_version": PROTOCOL_VERSION,
-                "firmware_version": 1,
+                "firmware_version": 3,
                 "device_nonce": device_nonce,
                 "reserved": 0,
             },
@@ -194,6 +194,7 @@ class FireBeetleSim:
                     int(PacketType.ASSESS_ECHO_REQ),
                     int(PacketType.ASSESS_FILE_CHUNK),
                     int(PacketType.ASSESS_FILE_READ),
+                    int(PacketType.ASSESS_WEAPON_REQ),
                 ):
                     await self._handle_assess(decoded)
 
@@ -207,7 +208,16 @@ class FireBeetleSim:
                 await self._send(*self._assess_last_resp, Direction.DEVICE_TO_LAPTOP)
             await self._send_assess_ack(seq)
             return
-        if decoded.header.packet_type == int(PacketType.ASSESS_ECHO_REQ):
+        if decoded.header.packet_type == int(PacketType.ASSESS_WEAPON_REQ):
+            if not decoded.fields["trace_id"]:
+                return
+            self._weapon_id = self._weapon_id % 3 + 1
+            resp = (PacketType.ASSESS_WEAPON_RESP, {
+                "trace_id": decoded.fields["trace_id"],
+                "device_timestamp_ms": monotonic_ms() & 0xFFFFFFFF,
+                "weapon_id": self._weapon_id,
+            })
+        elif decoded.header.packet_type == int(PacketType.ASSESS_ECHO_REQ):
             resp = (PacketType.ASSESS_ECHO_RESP, build_echo_response(decoded.fields, monotonic_ms()))
             logger.info(
                 "sim_assess_echo",
@@ -253,6 +263,10 @@ class FireBeetleSim:
                 },
             )
         await self._send(*resp, Direction.DEVICE_TO_LAPTOP)
+        if decoded.header.packet_type == int(PacketType.ASSESS_WEAPON_REQ):
+            # Real firmware also announces the held selection through its existing RFID path.
+            await self._play_step(ScenarioStep(delay_ms=0, kind="rfid_event",
+                                               payload={"weapon": Weapon.from_wire(self._weapon_id).value}))
         self._assess_last_req_seq = seq
         self._assess_last_resp = resp
         await self._send_assess_ack(seq)

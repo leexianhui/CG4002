@@ -76,6 +76,7 @@ async def run_engine(settings: EngineSettings) -> None:
         on_match_state=on_match_state,
         on_combat_feedback=on_combat_feedback,
         on_action_recognized=on_action_recognized,
+        on_weapon_changed=lambda event: broadcast_to_visualizers(registry, event),
         presence=registry.relay_presence,
     )
 

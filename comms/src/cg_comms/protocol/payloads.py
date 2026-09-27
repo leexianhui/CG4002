@@ -55,6 +55,12 @@ class Field:
 
 
 PAYLOAD_TABLES: dict[PacketType, tuple[Field, ...]] = {
+    PacketType.ASSESS_WEAPON_REQ: (Field("trace_id", FieldKind.U32),),
+    PacketType.ASSESS_WEAPON_RESP: (
+        Field("trace_id", FieldKind.U32),
+        Field("device_timestamp_ms", FieldKind.U32),
+        Field("weapon_id", FieldKind.U8),
+    ),
     PacketType.HELLO: (
         Field("device_mac", FieldKind.BYTES, 6),
         Field("player_id", FieldKind.U8),

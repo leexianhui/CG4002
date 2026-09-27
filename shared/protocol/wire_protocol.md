@@ -265,7 +265,7 @@ Sample spread is logged as `timesync_seeded.sample_spread_ms`; it is not an accu
 See [PRE_DEMO_ROBUSTNESS.md](../../docs/PRE_DEMO_ROBUSTNESS.md) for clock limitations and physical tests.
 
 
-## Assessment extension (reviewed firmware revision 2)
+## Assessment extension (reviewed firmware revision 3)
 
 Base wire version remains 1. Deploy the assessment firmware and relay changes together: the earlier
 assessment prototype used different payload lengths for types 0x40..0x43 and is not compatible.
@@ -280,6 +280,8 @@ AES-GCM/header AAD, CRC and per-direction sequence allocation.
 | ASSESS_FILE_ACK | 0x43 | device -> laptop | 12 / 38 |
 | ASSESS_FILE_READ | 0x44 | laptop -> device | 6 / 32 |
 | ASSESS_FILE_DATA | 0x45 | device -> laptop | 42 / 68 |
+| ASSESS_WEAPON_REQ | 0x46 | laptop -> device | 4 / 30 |
+| ASSESS_WEAPON_RESP | 0x47 | device -> laptop | 9 / 35 |
 
 ```text
 ECHO_REQ:   trace_id u32 | keycode u8 | payload_kind u8 | SENSOR_BODY[42]
@@ -289,6 +291,8 @@ FILE_CHUNK: transfer_id u32 | chunk_index u16 | total_chunks u16 | chunk_len u8
             | reserved u8 | data[32]
 FILE_ACK:   transfer_id u32 | chunk_index u16 | running_crc u16 | received_bytes u32
 FILE_READ:  transfer_id u32 | chunk_index u16
+WEAPON_REQ: trace_id u32
+WEAPON_RESP: trace_id u32 | device_timestamp_ms u32 | weapon_id u8
 FILE_DATA:  transfer_id u32 | chunk_index u16 | total_bytes u16 | chunk_len u8
             | reserved u8 | data[32]
 ```
@@ -298,15 +302,18 @@ SENSOR_BODY has the exact 42-byte SENSOR_FRAME layout. In ECHO_REQ the timestamp
 Do not subtract these unsynchronized values to estimate RTT; relay RTT uses its local clock.
 The dominant acceleration triplet is named `value_a/value_b/value_c`; the remaining axes are
 `dominant_gyro[3]`, `offhand[6]`, `torso[6]`. Flags are zero and weapon is 1..3 for this demo.
-The device transforms only dominant acceleration, retaining the other sensor fields.
+For keyboard b/c/d, firmware revision 3 returns every raw axis unchanged (IDENTITY=0).
+The key implies the requested transform; the response carries the explicit transform ID.
+Revision 2 firmware has no identity selector and must be reflashed for this keyboard path.
 
-Transform ID is `(keycode % 3) + 1`: 1 negates the triplet, 2 adds keycode to each value,
+For other legacy low-level keys, transform ID is `(keycode % 3) + 1`:
+1 negates the triplet, 2 adds keycode to each value,
 3 returns `(2*c, trunc_toward_zero(a/2), -b)`. All outputs saturate to int16.
 Trace/transfer IDs must be nonzero. Reserved bytes and unused trailing data bytes must be zero.
 Files contain 1..4096 bytes; chunks are indexed from zero, nonfinal chunks hold 32 bytes,
 and the final chunk holds 1..32. Running CRC is CCITT-FALSE, initial value 0xFFFF.
 
-ECHO_REQ, FILE_CHUNK and FILE_READ use transport ACK plus bounded identical-ciphertext retry.
+ECHO_REQ, WEAPON_REQ, FILE_CHUNK and FILE_READ use transport ACK plus bounded identical-ciphertext retry.
 Replies themselves are not ACKed. The device caches its last assessment response and re-emits
 it under a fresh outgoing sequence when the exact request repeats, without applying it twice.
 The relay also retries the original request if its ACK arrived but its application reply did not.
@@ -319,6 +326,12 @@ accepted file in a 4096-byte RAM buffer. FILE_READ is permitted only for a compl
 FILE_DATA contains bytes copied from that buffer. Relay final success requires byte equality and
 SHA-256 equality after all readback chunks arrive, and the returned bytes are saved separately.
 Reset clears the buffer; there is no persistent storage or cross-session resume.
+
+WEAPON_REQ invokes the same board weapon-cycle routine as GPIO4 (1 SWORD, 2 SPEAR, 3 MACE).
+The response must be accepted by the BLE stack before the selection commits; an exact request
+retry returns the cached response without cycling again. Selection also uses the existing reliable
+RFID_EVENT announcement. See [deterministic keyboard demo](../../docs/DETERMINISTIC_KEYBOARD_DEMO.md)
+for fixed mappings, live input editing and the optional deterministic classifier mode.
 
 See [the reviewed operator runbook](../../docs/COMMS_ASSESSMENT_REVIEW_AND_RUNBOOK.md) for
 fault injection, throughput evidence, physical retests and limitations of the one-sample dummy AI path.

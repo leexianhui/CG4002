@@ -1,5 +1,9 @@
 # Communications assessment: reviewed implementation and operator runbook
 
+> **Keyboard update, 2026-09-28:** use [DETERMINISTIC_KEYBOARD_DEMO.md](DETERMINISTIC_KEYBOARD_DEMO.md)
+> for the current a=weapon / b,c,d=fixed IMU mappings, identity return, live edits and classifier command.
+> Earlier random-key instructions below are historical. Timing-profile and unrelated test procedures remain applicable.
+
 Reviewed 2026-09-23 against the implementation at `fd63e23` and the professor's supplied requirements.
 Use this document for the **implemented commands**. The earlier implementation plan remains a design
 record; some proposed commands there were never implemented.

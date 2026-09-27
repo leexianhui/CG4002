@@ -75,6 +75,8 @@ extern "C" {
 #define CG_PKT_ASSESS_FILE_ACK    0x43 /* device -> laptop   best-effort */
 #define CG_PKT_ASSESS_FILE_READ 0x44
 #define CG_PKT_ASSESS_FILE_DATA 0x45
+#define CG_PKT_ASSESS_WEAPON_REQ 0x46
+#define CG_PKT_ASSESS_WEAPON_RESP 0x47
 
 /* ------------------------------------------------------------------------------------------- */
 /* SENSOR_FRAME.flags bits                                                                      */
@@ -245,6 +247,15 @@ typedef struct CG_PACKED {
     uint8_t chunk_len, reserved;
     uint8_t data[32];
 } cg_payload_assess_file_data_t; /* 42 bytes */
+
+typedef struct CG_PACKED {
+    uint32_t trace_id;
+} cg_payload_assess_weapon_req_t;
+typedef struct CG_PACKED {
+    uint32_t trace_id;
+    uint32_t device_timestamp_ms;
+    uint8_t weapon_id;
+} cg_payload_assess_weapon_resp_t;
 
 /* ------------------------------------------------------------------------------------------- */
 /* CRC-16/CCITT-FALSE                                                                            */

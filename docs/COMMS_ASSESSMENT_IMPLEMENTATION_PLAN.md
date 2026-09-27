@@ -1,5 +1,9 @@
 # Communications assessment implementation, live demo and video plan
 
+> **Keyboard update, 2026-09-28:** use [DETERMINISTIC_KEYBOARD_DEMO.md](DETERMINISTIC_KEYBOARD_DEMO.md)
+> for the current a=weapon / b,c,d=fixed IMU mappings, identity return, live edits and classifier command.
+> Earlier random-key instructions below are historical. Timing-profile and unrelated test procedures remain applicable.
+
 > **Reviewed implementation available:** use
 > [COMMS_ASSESSMENT_REVIEW_AND_RUNBOOK.md](COMMS_ASSESSMENT_REVIEW_AND_RUNBOOK.md)
 > for actual supported commands, review fixes, remaining hardware checks and the live/video script.

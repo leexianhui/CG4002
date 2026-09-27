@@ -122,6 +122,8 @@ class Session:
     meter: ThroughputMeter = field(init=False)
     _ack_fault_armed: bool = field(default=False, init=False)
     _ack_fault_target: int | None = field(default=None, init=False)
+    _firmware_version: int = field(default=0, init=False)
+    _weapon_reply: tuple[int, asyncio.Future] | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         self.meter = ThroughputMeter(
@@ -139,19 +141,17 @@ class Session:
             interval_ms=self.config.heartbeat_interval_ms,
             liveness_timeout_factor=self.config.heartbeat_liveness_factor,
         )
-        # Per-session, so a reconnect cannot resolve a trace from the previous connection. The seed
-        # is drawn once and logged so "chosen at random" (per the requirement) is still a replayable
-        # run: passing the logged value back as assess_seed reproduces the exact variant sequence.
+        # Keep the legacy seed option accepted by existing commands. Keyboard selection ignores it;
+        # only a/b/c/d are dispatched, and B/C/D read the saved table on every press.
         seed = self.config.assess_seed
         if seed is None:
             seed = random.SystemRandom().getrandbits(64)
         self.echo = EchoPipeline(player_id=self.config.player_id, rng=random.Random(seed))
         if self.config.assessment_enabled:
             logger.info(
-                "assess_seed",
+                "assess_mapping_ready",
                 player_id=self.config.player_id,
-                seed=seed,
-                replay_hint="pass this as assessment.seed to repeat this variant sequence",
+                mapping="a=weapon b=B c=C d=D; saved dummy table reloaded per key; seed unused",
             )
 
     def stop(self) -> None:
@@ -234,6 +234,7 @@ class Session:
 
     async def _handshake(self) -> None:
         hello = await self._next_decoded(PacketType.HELLO, timeout_s=30.0)
+        self._firmware_version = hello.fields["firmware_version"]
         device_nonce = hello.fields["device_nonce"]
         now = time.monotonic()
         self._prune_nonces(now)
@@ -510,6 +511,59 @@ class Session:
         await resend()
         return resend
 
+    async def cycle_weapon(self) -> None:
+        """Board owns the selection. Serialize/retry exactly like other assessment operations."""
+        self._require_keyboard_firmware()
+        owner = asyncio.current_task()
+        assert owner is not None
+        self._assess_tasks.add(owner)
+        future = None
+        try:
+            async with self._assess_send_lock:
+                trace = self.echo._allocate_trace_id()
+                previous_selection = (self._last_weapon_ts, self.windower.current_weapon)
+                label = f"P{self.config.player_id}-{self.session_id:08x}-{trace}"
+                future = asyncio.get_running_loop().create_future()
+                self._weapon_reply = (trace, future)
+                logger.info("assess_weapon_sent", key="a", demo_trace_id=label,
+                            player_id=self.config.player_id)
+                try:
+                    resend = await self._assessment_send(PacketType.ASSESS_WEAPON_REQ,
+                                                         {"trace_id": trace})
+                except LinkDegraded:
+                    if not future.done():
+                        raise
+                    resend = None  # authenticated reply already proves receipt
+                for attempt in range(3):
+                    try:
+                        fields = await asyncio.wait_for(asyncio.shield(future),
+                                                       self.config.assess_echo_timeout_s / 3)
+                        break
+                    except asyncio.TimeoutError:
+                        if attempt == 2 or resend is None:
+                            raise
+                        await resend()  # identical ciphertext: must NOT cycle again
+                # Distinct commands can complete in the same device millisecond. Accept that
+                # tie only if no RFID/physical selection advanced while this request waited.
+                # A delayed cached reply must never undo a newer physical selection.
+                await self._handle_weapon_fields(
+                    fields, allow_same_timestamp=previous_selection ==
+                    (self._last_weapon_ts, self.windower.current_weapon))
+                logger.info("assess_weapon_verified", key="a", demo_trace_id=label,
+                            player_id=self.config.player_id,
+                            weapon=Weapon.from_wire(fields["weapon_id"]).value,
+                            current_weapon=self.windower.current_weapon.value
+                            if self.windower.current_weapon else None)
+        finally:
+            if self._weapon_reply is not None and self._weapon_reply[1] is future:
+                self._weapon_reply[1].cancel()
+                self._weapon_reply = None
+            self._assess_tasks.discard(owner)
+
+    def _require_keyboard_firmware(self) -> None:
+        if self._firmware_version < 3:
+            raise ValueError("keyboard a/b/c/d requires firmware version 3; flash both normal targets")
+
     async def send_file(self, data: bytes) -> FileTransferResult:
         """Upload and reconstruct actual board RAM bytes under one session/operation lock."""
         owner = asyncio.current_task()
@@ -588,6 +642,7 @@ class Session:
             self._assess_tasks.discard(owner)
 
     async def _send_echo_request_locked(self, keycode: int) -> PendingEcho:
+        self._require_keyboard_firmware()
         pending, fields = self.echo.build_request(keycode, self.windower.current_weapon or Weapon.SWORD)
         seq, ext_seq = self._tx_counter.next()
         frame = encode_echo_request(
@@ -610,7 +665,10 @@ class Session:
             key=chr(keycode) if 32 <= keycode < 127 else None,
             variant=pending.variant.name,
             values=pending.variant.values,
+            sensor_raw={"dominant": pending.variant.values + fields["dominant_gyro"],
+                        "offhand": fields["offhand"], "torso": fields["torso"]},
             transform=pending.transform_id,
+            transform_name="IDENTITY",
             expected=pending.expected,
             frame_bytes=len(frame),
         )
@@ -666,6 +724,8 @@ class Session:
             demo_trace_id=pending.demo_trace_id,
             request_id=window.request_id,
             dominant_first=window.dominant[0],
+            key=chr(pending.keycode), variant=pending.variant.name,
+            offhand_first=window.offhand[0], weapon=window.weapon.value,
         )
         await self._classify(window)
 
@@ -750,6 +810,11 @@ class Session:
                 ext_seq=ext_seq,
             )
             await self.transport.send(response)
+        elif packet_type == int(PacketType.ASSESS_WEAPON_RESP):
+            waiting = self._weapon_reply
+            if (waiting is not None and decoded.fields["trace_id"] == waiting[0]
+                    and not waiting[1].done() and decoded.fields["weapon_id"] in (1, 2, 3)):
+                waiting[1].set_result(decoded.fields)
         elif packet_type == int(PacketType.ASSESS_ECHO_RESP):
             # Best-effort inbound (the device does not expect an ACK for it); the REQ's own
             # retransmit is what recovers a lost round trip. Duplicates are tolerated: a repeated
@@ -781,11 +846,16 @@ class Session:
             logger.warning("stream_unexpected_packet", packet_type=packet_type)
 
     async def _handle_rfid_event(self, decoded: DecodedPacket) -> None:
-        engine_ts = self._time_sync.to_engine_ms(decoded.fields["device_timestamp_ms"])
-        if engine_ts <= self._last_weapon_ts:
+        await self._handle_weapon_fields(decoded.fields)
+
+    async def _handle_weapon_fields(self, fields: dict, *, allow_same_timestamp: bool = False) -> None:
+        # Both physical RFID/GPIO and authenticated keyboard replies use this one state path.
+        engine_ts = self._time_sync.to_engine_ms(fields["device_timestamp_ms"])
+        if (engine_ts < self._last_weapon_ts or
+                (engine_ts == self._last_weapon_ts and not allow_same_timestamp)):
             return  # tolerate legacy firmware retries with fresh seq, without rolling state back
         self._last_weapon_ts = engine_ts
-        weapon = Weapon.from_wire(decoded.fields["weapon_id"])
+        weapon = Weapon.from_wire(fields["weapon_id"])
         self.windower.on_weapon_confirmed(weapon if weapon is not Weapon.NONE else None)
         if weapon is Weapon.NONE:
             return

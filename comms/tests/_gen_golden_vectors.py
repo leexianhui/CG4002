@@ -447,5 +447,13 @@ vectors.append(normal_vector(
     "ASSESS_FILE_DATA", 0x45, session_id=SESSION_ID, player_id=1, direction=0, seq=16, ext_seq=16,
     plaintext=struct.pack("<IHHBB32s", 123, 0, 11, 11, 0, b"hello world"),
 ))
+vectors.append(normal_vector(
+    "ASSESS_WEAPON_REQ", 0x46, session_id=SESSION_ID, player_id=1, direction=1, seq=17, ext_seq=17,
+    plaintext=struct.pack("<I", 0x11223344),
+))
+vectors.append(normal_vector(
+    "ASSESS_WEAPON_RESP", 0x47, session_id=SESSION_ID, player_id=1, direction=0, seq=18, ext_seq=18,
+    plaintext=struct.pack("<IIB", 0x11223344, 777123, 2),
+))
 output = {"psk_hex": PSK.hex(), "vectors": vectors}
 print(json.dumps(output, indent=2))

@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import itertools
+import json
 import logging
 import random
 from pathlib import Path
@@ -132,12 +134,38 @@ def _classify_from_trigger_map(
     return result, {"matched_row": row if matched else "default"}
 
 
+class DeterministicAssessmentClassifier:
+    """Content-based communications stand-in, NOT trained inference.
+
+    Only IMU samples and weapon affect selection. Keys, player, clocks and trace metadata do not.
+    The digest is logged so equal inputs can be demonstrated independently of action collisions.
+    """
+
+    def __init__(self, rules: RulesConfig) -> None:
+        self.moves = {weapon: sorted(moves) for weapon, moves in rules.moves.items() if moves}
+
+    def classify(self, window: SensorWindow) -> tuple[ActionResult, dict]:
+        content = {"weapon": window.weapon.value, "dominant": window.dominant, "offhand": window.offhand}
+        encoded = json.dumps(content, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        choices = self.moves.get(window.weapon.value, [])
+        action = choices[int(digest, 16) % len(choices)] if choices else "IDLE"
+        result = _row_to_action_result(
+            {"action": action},
+            timestamp=window.timestamp,
+            player_id=window.player_id,
+            request_id=window.request_id,
+        )
+        return result, {"assessment_mode": "content_sha256_v1", "input_sha256": digest}
+
+
 async def _handle_client(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
     steps: list[ScenarioStep],
     trigger_map: dict[str, Any] | None,
     random_classifier: RandomClassifier | None = None,
+    assessment_classifier: DeterministicAssessmentClassifier | None = None,
 ) -> None:
     cycle = itertools.cycle(steps if steps else _default_steps())
     loop = asyncio.get_running_loop()
@@ -160,7 +188,13 @@ async def _handle_client(
                 logger.warning("ultra96_sim_unexpected_type", msg_type=type(parsed).__name__)
                 continue
 
-            if random_classifier is not None:
+            if (
+                assessment_classifier is not None
+                and parsed.demo_trace_id is not None
+                and parsed.trigger_id is None
+            ):
+                result, match_info = assessment_classifier.classify(parsed)
+            elif random_classifier is not None:
                 result, match_info = random_classifier.classify(parsed)
             elif trigger_map is not None:
                 result, match_info = _classify_from_trigger_map(trigger_map, parsed)
@@ -194,6 +228,8 @@ async def _handle_client(
                 request_id=parsed.request_id,
                 demo_trace_id=parsed.demo_trace_id,
                 dominant_first=parsed.dominant[0] if parsed.demo_trace_id else None,
+                offhand_first=parsed.offhand[0] if parsed.demo_trace_id else None,
+                weapon=parsed.weapon.value,
                 player_id=parsed.player_id,
                 trigger_id=parsed.trigger_id,
                 action=result.action.value,
@@ -241,6 +277,12 @@ def main() -> None:
         help="Seed for --random; omitted => fresh seed, logged so the run can be replayed.",
     )
     parser.add_argument("--logs-dir", type=Path, default=Path("logs"))
+    parser.add_argument(
+        "--assessment-deterministic",
+        action="store_true",
+        help="Classify traced keyboard IMU content deterministically; ordinary "
+        "GPIO windows still use --trigger-map/--random/--scenario as selected.",
+    )
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
 
@@ -249,6 +291,9 @@ def main() -> None:
     steps = load_scenario(args.scenario) if args.scenario is not None else []
     trigger_map = load_trigger_map(args.trigger_map) if args.trigger_map is not None else None
     random_classifier: RandomClassifier | None = None
+    assessment_classifier = (
+        DeterministicAssessmentClassifier(RulesConfig.load()) if args.assessment_deterministic else None
+    )
     seed: int | None = None
     if args.random:
         seed = args.seed if args.seed is not None else random.SystemRandom().getrandbits(64)
@@ -261,11 +306,14 @@ def main() -> None:
         trigger_map=str(args.trigger_map) if args.trigger_map is not None else None,
         random=args.random,
         seed=seed,
+        assessment_deterministic=args.assessment_deterministic,
     )
 
     async def _main() -> None:
         server = await asyncio.start_server(
-            lambda r, w: _handle_client(r, w, steps, trigger_map, random_classifier),
+            lambda r, w: _handle_client(
+                r, w, steps, trigger_map, random_classifier, assessment_classifier
+            ),
             args.host,
             args.port,
         )

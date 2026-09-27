@@ -1,31 +1,10 @@
-"""Relay-laptop keyboard for the comms assessment (docs/COMMS_ASSESSMENT_CHECKLIST.md).
+"""Assessment keyboard (Windows console): a=board weapon cycle; b/c/d=fixed IMU B/C/D.
+F=file roundtrip, L=one upload ACK loss, D=normal packet sample view, Q=stop keyboard.
 
-Keys (typed into the relay's own console window, which must have focus):
-
-    letters / digits / space   one ASSESS_ECHO_REQ -> FireBeetle transform -> Ultra96 -> visualizer
-    F  (Shift+f)               send the assessment file to the FireBeetle, verified chunk by chunk
-    D  (Shift+d)               show/hide the decoded `packet_sample` line on the console
-    Q  (Shift+q)               stop listening to the keyboard (the relay keeps running; Ctrl+C quits)
-
-The uppercase F/D/Q are commands so that every LOWERCASE letter stays a keystroke: the transform
-table is keyed on the keycode, and the professor should be able to type anything.
-
-One operation at a time, never queued. A key pressed while an echo or file transfer is running is
-REJECTED with a reason printed on screen rather than buffered: a hidden backlog would make the demo's
-"one keystroke -> one visualizer event" claim false, and would keep sending minutes after the
-professor stopped typing. Rejection reasons:
-
-    BUSY              an assessment packet is already in flight (echo round trip or file transfer)
-    OFFLINE           no FireBeetle session is streaming (board off, out of range, reconnecting)
-    NO_WEAPON         echo only: no weapon confirmed yet, so the engine could not emit ActionRecognized
-    UPSTREAM_OFFLINE  echo only: the relay is not connected to the Ultra96 classifier or the engine
-
-The checks are a snapshot, so a link can still drop between the check and the send. That is fine:
-every later stage reports its own failure (assess_echo_undelivered / assess_echo_timeout /
-window_dropped / assess_file_failed), so the key press is never silently lost.
-
-Windows only (msvcrt). On any other platform, or when stdin is not a console (e.g. output redirected
-under a test runner), the keyboard is disabled with one log line and the relay runs normally.
+One operation at a time, never queued. BUSY/OFFLINE/NO_WEAPON/UPSTREAM_OFFLINE
+reject the press visibly. Weapon selection needs the board and engine, but no prior
+weapon and no classifier. File operations need only the board. Uppercase D is distinct
+from lowercase d. Physical GPIO controls and continuous sensor streaming are independent.
 """
 
 from __future__ import annotations
@@ -61,6 +40,8 @@ class _AssessSession(Protocol):
     def assess_busy(self) -> bool: ...
 
     async def echo_keystroke(self, keycode: int) -> tuple[object, bool]: ...
+
+    async def cycle_weapon(self) -> None: ...
 
     async def send_file(self, data: bytes) -> FileTransferResult: ...
 
@@ -102,15 +83,22 @@ class AssessKeyboard:
     def handle_key(self, ch: str) -> None:
         """Acts on one decoded character. Never blocks: long work runs as a single task."""
         if ch == "Q":
-            logger.info("assess_keyboard_stopped", player_id=self.player_id,
-                        hint="relay still running; restart it to use the keyboard again")
+            logger.info(
+                "assess_keyboard_stopped",
+                player_id=self.player_id,
+                hint="relay still running; restart it to use the keyboard again",
+            )
             self._stopped.set()
             return
         if ch == "D":
             visible = not console_event_visible("packet_sample")
             set_console_event_visible("packet_sample", visible)
-            logger.info("assess_packet_sample_console", player_id=self.player_id,
-                        visible=visible, note="the JSONL log always records it")
+            logger.info(
+                "assess_packet_sample_console",
+                player_id=self.player_id,
+                visible=visible,
+                note="the JSONL log always records it",
+            )
             return
         if ch == "L":
             reason = self.reject_reason(for_echo=False)
@@ -128,25 +116,50 @@ class AssessKeyboard:
                 return
             self._op = asyncio.create_task(self._run_file())
             return
-        if ch == " " or (ch.isascii() and ch.isalnum()):
+        if ch == "a":
+            reason = self.reject_reason(for_echo=False)
+            if reason is None and not self.upstream_ready()[1]:
+                reason = "UPSTREAM_OFFLINE"
+            if reason is not None:
+                self._log_reject(ch, reason)
+                return
+            self._op = asyncio.create_task(self._run_weapon())
+            return
+        if ch in ("b", "c", "d"):
             reason = self.reject_reason(for_echo=True)
             if reason is not None:
                 self._log_reject(ch, reason)
                 return
             self._op = asyncio.create_task(self._run_echo(ord(ch)))
             return
-        logger.info("assess_key_ignored", player_id=self.player_id, key=repr(ch),
-                    help="letters/digits/space = echo, F = file, D = packet view, Q = stop keyboard")
+        logger.info(
+            "assess_key_ignored",
+            player_id=self.player_id,
+            key=repr(ch),
+            help="a = weapon | b/c/d = fixed IMU | F = file | L = ACK loss | D = packet view | Q = stop",
+        )
+
+    async def _run_weapon(self) -> None:
+        session = self.get_session()
+        if session is None:
+            return
+        try:
+            await session.cycle_weapon()
+        except Exception as exc:
+            logger.error(
+                "assess_weapon_failed", player_id=self.player_id, error=f"{type(exc).__name__}: {exc}"
+            )
 
     def _log_reject(self, key: str, reason: str) -> None:
         hints = {
             "BUSY": "wait for the current round trip / transfer to finish",
             "OFFLINE": "FireBeetle not streaming (power, range, or still reconnecting)",
-            "NO_WEAPON": "confirm a weapon on the board first (RFID tap / weapon button)",
+            "NO_WEAPON": "press a, or select a weapon on the board (RFID / GPIO4)",
             "UPSTREAM_OFFLINE": "relay is not connected to the Ultra96 classifier and/or engine",
         }
-        logger.warning("assess_key_rejected", player_id=self.player_id, key=key, reason=reason,
-                       hint=hints[reason])
+        logger.warning(
+            "assess_key_rejected", player_id=self.player_id, key=key, reason=reason, hint=hints[reason]
+        )
 
     async def _run_echo(self, keycode: int) -> None:
         session = self.get_session()
@@ -155,22 +168,31 @@ class AssessKeyboard:
         try:
             await session.echo_keystroke(keycode)
         except Exception as exc:  # the transport can close mid-send; report, never crash the relay
-            logger.error("assess_echo_failed", player_id=self.player_id, keycode=keycode,
-                         error=f"{type(exc).__name__}: {exc}")
+            logger.error(
+                "assess_echo_failed",
+                player_id=self.player_id,
+                keycode=keycode,
+                error=f"{type(exc).__name__}: {exc}",
+            )
 
     async def _run_file(self) -> None:
         session = self.get_session()
         if session is None:
             return
-        logger.info("assess_file_requested", player_id=self.player_id, file=self.file_label,
-                    total_bytes=len(self.file_bytes))
+        logger.info(
+            "assess_file_requested",
+            player_id=self.player_id,
+            file=self.file_label,
+            total_bytes=len(self.file_bytes),
+        )
         try:
             await session.send_file(self.file_bytes)  # logs assess_file_verified / _failed itself
         except ValueError as exc:  # empty / oversize: nothing was sent
             logger.error("assess_file_rejected", player_id=self.player_id, error=str(exc))
         except Exception as exc:
-            logger.error("assess_file_failed", player_id=self.player_id,
-                         reason=f"{type(exc).__name__}: {exc}")
+            logger.error(
+                "assess_file_failed", player_id=self.player_id, reason=f"{type(exc).__name__}: {exc}"
+            )
 
     # -- console loop ------------------------------------------------------------------------------
 
@@ -184,8 +206,12 @@ class AssessKeyboard:
             return
         import msvcrt
 
-        logger.info("assess_keyboard_ready", player_id=self.player_id, file=self.file_label,
-                    keys="letters/digits/space = echo | F = file | L = one ACK-loss test | D = packet view | Q = stop keyboard")
+        logger.info(
+            "assess_keyboard_ready",
+            player_id=self.player_id,
+            file=self.file_label,
+            keys="a = weapon | b/c/d = fixed IMU | F = file | L = ACK loss | D = packets | Q = stop",
+        )
         try:
             while not self._stopped.is_set():
                 while msvcrt.kbhit():

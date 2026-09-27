@@ -294,8 +294,11 @@ void send_ack_for(uint16_t acked_seq) {
 }
 
 bool is_assess_reliable(uint8_t packet_type) {
-    return packet_type == CG_PKT_ASSESS_ECHO_REQ || packet_type == CG_PKT_ASSESS_FILE_CHUNK || packet_type == CG_PKT_ASSESS_FILE_READ;
+    return packet_type == CG_PKT_ASSESS_ECHO_REQ || packet_type == CG_PKT_ASSESS_FILE_CHUNK || packet_type == CG_PKT_ASSESS_FILE_READ || packet_type == CG_PKT_ASSESS_WEAPON_REQ;
 }
+
+void send_rfid_event_next_weapon();  // same entry point used by the physical GPIO button
+uint8_t next_weapon_id() { return (g_weapon_id % 3) + 1; }
 
 // Handles one authenticated, length-checked ASSESS_ECHO_REQ / ASSESS_FILE_CHUNK. Returns true if the
 // request was PROCESSED -- its response was accepted by the BLE stack -- in which case the caller
@@ -310,7 +313,20 @@ bool handle_assess_reliable(uint8_t packet_type, const uint8_t *plaintext, uint1
     uint8_t resp_type;
     uint8_t resp[sizeof(g_assess_last_resp)];
     size_t resp_len;
-    if (packet_type == CG_PKT_ASSESS_ECHO_REQ) {
+    if (packet_type == CG_PKT_ASSESS_WEAPON_REQ) {
+        cg_payload_assess_weapon_req_t req;
+        memcpy(&req, plaintext, sizeof(req));
+        if (req.trace_id == 0) return false;
+        cg_payload_assess_weapon_resp_t selected = {req.trace_id, millis(), next_weapon_id()};
+        resp_type = CG_PKT_ASSESS_WEAPON_RESP;
+        resp_len = sizeof(selected);
+        memcpy(resp, &selected, resp_len);
+        if (!send_packet(resp_type, resp, resp_len, nullptr, 0)) return false;
+        // Commit only after notify accepts the reply. The exact-frame cache prevents a lost
+        // reply/ACK retry from cycling twice. RFID uses its existing reliable announcement path.
+        send_rfid_event_next_weapon();
+        Serial.printf("[assess] key=a trace=%lu weapon=%u\n", (unsigned long)req.trace_id, (unsigned)g_weapon_id);
+    } else if (packet_type == CG_PKT_ASSESS_ECHO_REQ) {
         cg_payload_assess_echo_req_t req;
         memcpy(&req, plaintext, sizeof(req));
         if (req.trace_id == 0 || req.weapon_id < 1 || req.weapon_id > 3 || req.flags != 0) return false;
@@ -440,7 +456,8 @@ void drain_incoming_non_blocking() {
             (packet_type == CG_PKT_COMBAT_FEEDBACK && len != sizeof(cg_payload_combat_feedback_t)) ||
             (packet_type == CG_PKT_ASSESS_ECHO_REQ && len != sizeof(cg_payload_assess_echo_req_t)) ||
             (packet_type == CG_PKT_ASSESS_FILE_CHUNK && len != sizeof(cg_payload_assess_file_chunk_t)) ||
-            (packet_type == CG_PKT_ASSESS_FILE_READ && len != sizeof(cg_payload_assess_file_read_t))) continue;
+            (packet_type == CG_PKT_ASSESS_FILE_READ && len != sizeof(cg_payload_assess_file_read_t)) ||
+            (packet_type == CG_PKT_ASSESS_WEAPON_REQ && len != sizeof(cg_payload_assess_weapon_req_t))) continue;
         if (is_assess_reliable(packet_type)) {
             // Replay state is committed only if the request was actually answered (see
             // handle_assess_reliable); otherwise the retransmit must look brand new.
@@ -494,8 +511,8 @@ bool do_handshake() {
     memcpy(hello, device_mac, 6);
     hello[6] = CG_DEMO_PLAYER_ID;
     hello[7] = CG_PROTOCOL_VERSION;
-    hello[8] = 2;
-    hello[9] = 0;  // firmware_version = 1 (u16 LE)
+    hello[8] = 3;
+    hello[9] = 0;  // firmware_version = 3 (u16 LE): deterministic keyboard + weapon command
     memcpy(hello + 10, &g_device_nonce, 4);
     hello[14] = 0;
     hello[15] = 0;  // reserved
@@ -634,7 +651,7 @@ void send_current_weapon() {
 }
 
 void send_rfid_event_next_weapon() {
-    g_weapon_id = (g_weapon_id % 3) + 1;
+    g_weapon_id = next_weapon_id();
     send_current_weapon();
 }
 

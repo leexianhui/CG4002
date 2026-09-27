@@ -57,7 +57,7 @@ def _device_answer(fields: dict) -> dict:
 
 def test_echo_verified_then_duplicate_is_info_not_warning():
     echo = _pipeline()
-    pending, fields = echo.build_request(ord("a"))
+    pending, fields = echo.build_request(ord("b"))
     resp = _device_answer(fields)
     with structlog.testing.capture_logs() as logs:
         assert echo.on_response(resp) is pending
@@ -105,7 +105,7 @@ async def test_echo_expire_counts_lost_and_late_response_is_info():
 
 def test_echo_expire_after_resolution_is_a_noop():
     echo = _pipeline()
-    pending, fields = echo.build_request(ord("e"))
+    pending, fields = echo.build_request(ord("b"))
     echo.on_response(_device_answer(fields))
     echo.expire(pending.trace_id, 1.0)
     assert echo.lost == 0 and echo.verified == 1
@@ -113,7 +113,7 @@ def test_echo_expire_after_resolution_is_a_noop():
 
 def test_echo_unknown_trace_still_warns():
     echo = _pipeline()
-    _pending, fields = echo.build_request(ord("f"))
+    _pending, fields = echo.build_request(ord("b"))
     resp = _device_answer(fields)
     resp["trace_id"] = 999_999
     with structlog.testing.capture_logs() as logs:
@@ -123,8 +123,8 @@ def test_echo_unknown_trace_still_warns():
 
 def test_echo_abandon_all_retires_and_counts_each_once():
     echo = _pipeline()
-    a, _ = echo.build_request(ord("g"))
-    b, _ = echo.build_request(ord("h"))
+    a, _ = echo.build_request(ord("b"))
+    b, _ = echo.build_request(ord("b"))
     echo.abandon_all("test")
     echo.abandon_all("again")
     assert echo.lost == 2 and a.event.is_set() and b.event.is_set()
@@ -135,7 +135,7 @@ def test_echo_resolved_memory_is_bounded():
 
     echo = _pipeline()
     for _ in range(assess_echo._RESOLVED_MEMORY + 50):
-        _p, fields = echo.build_request(ord("i"))
+        _p, fields = echo.build_request(ord("b"))
         echo.on_response(_device_answer(fields))
     assert len(echo._resolved) == assess_echo._RESOLVED_MEMORY
 
@@ -419,7 +419,7 @@ class _LiveRig(_Rig):
 async def test_loopback_echo_keystroke_verifies_through_device_mirror():
     async with _LiveRig() as rig:
         with structlog.testing.capture_logs() as logs:
-            pending, verified = await rig.session.echo_keystroke(ord("k"))
+            pending, verified = await rig.session.echo_keystroke(ord("b"))
         assert verified and pending.matched
         assert rig.session.echo.stats()["verified"] == 1
         # No weapon yet => the pipeline says so explicitly instead of silently stopping.
@@ -430,7 +430,7 @@ async def test_loopback_echo_survives_lost_device_ack():
     async with _LiveRig() as rig:
         rig.sim.drop_assess_acks = 2
         with structlog.testing.capture_logs() as logs:
-            pending, verified = await rig.session.echo_keystroke(ord("z"))
+            pending, verified = await rig.session.echo_keystroke(ord("b"))
         assert verified
         assert [e for e in logs if e["event"] == "retransmit"]
         # Each retransmit made the device re-send its response; those are recognised, not warned.
@@ -629,9 +629,9 @@ def _keyboard(session, *, weapon=Weapon.SWORD, upstream=(True, True)) -> AssessK
 async def test_keyboard_rejects_with_reason_and_never_queues():
     s = _FakeSession()
     kb = _keyboard(s)
-    kb.handle_key("a")
+    kb.handle_key("b")
     await asyncio.sleep(0)
-    assert s.echoes == [ord("a")]
+    assert s.echoes == [ord("b")]
     with structlog.testing.capture_logs() as logs:
         kb.handle_key("b")  # first echo still in flight
         kb.handle_key("F")
@@ -639,14 +639,14 @@ async def test_keyboard_rejects_with_reason_and_never_queues():
     s.gate.set()
     await asyncio.sleep(0)
     await asyncio.sleep(0)
-    assert s.echoes == [ord("a")]  # nothing was queued
+    assert s.echoes == [ord("b")]  # nothing was queued
     await kb.cancel_op()
 
 
 @pytest.mark.parametrize("setup, key, reason", [
     (lambda s: setattr(s, "streaming", False), "a", "OFFLINE"),
     (lambda s: setattr(s, "busy", True), "a", "BUSY"),
-    (lambda s: None, "a", "NO_WEAPON"),
+    (lambda s: None, "b", "NO_WEAPON"),
     (lambda s: None, "a", "UPSTREAM_OFFLINE"),
 ])
 async def test_keyboard_reject_reasons(setup, key, reason):

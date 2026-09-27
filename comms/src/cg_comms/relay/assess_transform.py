@@ -1,25 +1,9 @@
-"""The device-side modification, mirrored on the laptop so the round trip can be VERIFIED.
+"""Assessment transform contract mirrored by cg_assess_transform.h.
 
-Assessment requirement: "The FireBeetle will modify the data and send it back to the Ultra96 via the
-laptop." A demo that only shows a packet coming back proves the link echoes; it does not prove the
-firmware ran. So the device applies a deterministic transform, and the laptop recomputes the expected
-result independently and compares. A mismatch is reported loudly rather than counted as success.
-
-This file is the Python half of a two-sided contract. The C half is
-`firmware_demo/lib/cg_protocol/cg_assess_transform.h`, and the two must stay identical: if you change
-a formula here, change it there in the same commit. `tests/test_assess_transform.py` pins the values
-both sides must produce, so a one-sided edit fails the suite instead of failing silently in a demo.
-
-Two arithmetic differences between Python and C are handled explicitly, because both would produce
-a demo that reports a mismatch on a link that is actually working correctly:
-
-- **Overflow.** `value_*` are int16 on the wire and the "extremes" dummy variant deliberately sends
-  INT16_MAX/INT16_MIN. C signed overflow is undefined behaviour; Python ints just grow. Both sides
-  clamp via `saturate_i16`.
-- **Division rounding.** Python's `//` floors (`-1001 // 2 == -501`) while C's `/` truncates toward
-  zero (`-1001 / 2 == -500`). They differ for every negative odd numerator -- which TRANSFORM_NEGATE
-  readily produces from small positive inputs like the "primes" variant. `div2_trunc` below uses C
-  semantics on the Python side; do NOT "simplify" it back to `// 2`.
+The deliberate b/c/d keyboard paths use IDENTITY=0 and verify all returned raw IMU axes.
+Identity did not exist in revision 2; updated firmware is required. Legacy arithmetic
+IDs 1..3 remain supported by the low-level protocol for existing fixtures only.
+The request key selects the transform; there is no separate transform request field.
 """
 
 from __future__ import annotations
@@ -45,6 +29,7 @@ def div2_trunc(value: int) -> int:
 
 # Transform ids travel on the wire as ASSESS_ECHO_RESP.transform_id, so the laptop knows which rule
 # the device claims to have applied instead of assuming.
+TRANSFORM_IDENTITY = 0
 TRANSFORM_NEGATE = 1
 TRANSFORM_ADD_SEQ = 2
 TRANSFORM_SWAP_SCALE = 3
@@ -55,13 +40,15 @@ def apply_transform(
 ) -> tuple[int, int, int]:
     """Recomputes what the device should have produced. Mirrors cg_assess_apply_transform()."""
     a, b, c = values
+    if transform_id == TRANSFORM_IDENTITY:
+        return values
     if transform_id == TRANSFORM_NEGATE:
         # Negation, not a bit-flip: -INT16_MIN is not representable, so saturation is load-bearing
         # here and this is the case the "extremes" variant exercises.
         return (saturate_i16(-a), saturate_i16(-b), saturate_i16(-c))
     if transform_id == TRANSFORM_ADD_SEQ:
-        # Mixes the keystroke in, so two presses of different keys cannot produce identical
-        # responses -- that would let a stale/duplicated frame pass as a fresh round trip.
+        # Legacy arithmetic demonstration. Trace/session authentication, not this arithmetic,
+        # protects correlation against stale replies.
         return (saturate_i16(a + keycode), saturate_i16(b + keycode), saturate_i16(c + keycode))
     if transform_id == TRANSFORM_SWAP_SCALE:
         # Reorders as well as scales, so a byte-order mistake on either side shows up as a
@@ -74,4 +61,6 @@ def transform_for(keycode: int) -> int:
     """Which transform the device will apply for this keystroke. Derived from the keycode so the
     demo can show different transforms by pressing different keys, with no reflash. Must match
     cg_assess_transform_for() in the firmware header."""
-    return (keycode % 3) + 1
+    if keycode in (ord("b"), ord("c"), ord("d")):
+        return TRANSFORM_IDENTITY
+    return (keycode % 3) + 1  # legacy low-level protocol requests only

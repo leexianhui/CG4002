@@ -1,5 +1,9 @@
 # Missing assessment keyboard actions: hardware-log investigation
 
+> **Keyboard update, 2026-09-28:** use [DETERMINISTIC_KEYBOARD_DEMO.md](DETERMINISTIC_KEYBOARD_DEMO.md)
+> for the current a=weapon / b,c,d=fixed IMU mappings, identity return, live edits and classifier command.
+> Earlier random-key instructions below are historical. Timing-profile and unrelated test procedures remain applicable.
+
 2026-09-24. Based on the supplied two-run attachment (relay P1/P2, classifier, engine and throughput
 records). The user tested keyboard input on P1 only. This follow-up changes Python timing-profile
 selection and diagnostics; no firmware, wire payload, secret, tunnel or phone code changes.

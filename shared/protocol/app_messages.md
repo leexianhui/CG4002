@@ -62,6 +62,11 @@ update (`last_action` changes, no `COMBAT_EVENT` is emitted).
 
 ### 2.2 `WEAPON_CHANGED` — relay → engine
 
+The engine now broadcasts an accepted, ordered weapon selection to both visualizers using this
+same message. Selection may originate from physical GPIO/RFID or the board-confirmed assessment
+weapon-cycle command; it is not an ACTION and does not invoke the classifier.
+
+
 ```jsonc
 { "type": "WEAPON_CHANGED", "version": 1, "timestamp": 0, "playerId": 1, "weapon": "SPEAR" }
 ```

@@ -72,6 +72,7 @@ class GameStateTask:
     on_combat_feedback: Callable[[int, CombatFeedback], Awaitable[None]]
     on_action_recognized: Callable[[ActionRecognized], Awaitable[None]]
     presence: Callable[[], dict[str, bool]]
+    on_weapon_changed: Callable[[WeaponChanged], Awaitable[None]] | None = None
 
     state: EngineMatchState = field(default_factory=EngineMatchState, init=False)
     _reorder: ReorderBuffer = field(init=False)
@@ -210,6 +211,9 @@ class GameStateTask:
                 continue
             if isinstance(event, InboundWeaponChanged):
                 player.weapon = event.weapon_changed.weapon
+                logger.info("weapon_selected", player_id=event.player_id, weapon=player.weapon.value)
+                if self.on_weapon_changed is not None:
+                    await self.on_weapon_changed(event.weapon_changed)
             elif isinstance(event, InboundPosition):
                 player.position = Vec2(event.position.x, event.position.y)
                 player.heading_deg = event.position.heading

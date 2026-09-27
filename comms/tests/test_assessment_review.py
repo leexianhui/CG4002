@@ -17,10 +17,10 @@ from cg_comms.clock import monotonic_ms
 from cg_comms.config import EngineSettings, RelaySettings, RulesConfig
 from cg_comms.engine.app import run_engine
 from cg_comms.messages.enums import Weapon
-from cg_comms.messages.models import Position, SensorWindow, WeaponChanged
+from cg_comms.messages.models import Position, SensorWindow
 from cg_comms.messages.validate import dump_app_message
 from cg_comms.mock.assess_device import build_echo_response
-from cg_comms.mock.ultra96_sim import RandomClassifier, _handle_client
+from cg_comms.mock.ultra96_sim import DeterministicAssessmentClassifier, RandomClassifier, _handle_client
 from cg_comms.protocol.codec import pack_payload
 from cg_comms.protocol.constants import PacketType
 from cg_comms.relay.assess_echo import EchoPipeline
@@ -66,7 +66,7 @@ async def test_echo_recovers_lost_response_when_ack_arrived():
 
         rig.sim._send = send
         with structlog.testing.capture_logs() as events:
-            pending, verified = await rig.session.echo_keystroke(ord("a"))
+            pending, verified = await rig.session.echo_keystroke(ord("b"))
         assert verified and pending.matched and lost == 1
         assert any(e["event"] == "assess_echo_response_retry" for e in events)
         assert rig.session.echo.verified == 1
@@ -85,7 +85,7 @@ async def test_echo_timeout_late_response_does_not_forward():
             await original(kind, fields, direction)
 
         rig.sim._send = send
-        _, verified = await rig.session.echo_keystroke(ord("a"))
+        _, verified = await rig.session.echo_keystroke(ord("b"))
         assert not verified
         await original(*delayed[0])
         await asyncio.sleep(0.03)
@@ -192,7 +192,10 @@ def test_environment_player_id_parses_without_yaml(monkeypatch):
 
 
 @pytest.mark.parametrize("profile,reply_delay", [("configured", 0), ("assessment", 0.30)])
-async def test_entire_keyboard_board_classifier_engine_visualizer_pipeline(profile, reply_delay):
+@pytest.mark.parametrize("deterministic", [False, True])
+async def test_entire_keyboard_board_classifier_engine_visualizer_pipeline(
+    profile, reply_delay, deterministic
+):
     """Actual TCP classifier + engine WebSocket; only the physical BLE board/phone are simulated."""
     token = "assessment-test-token"
     with socket.socket() as listener:
@@ -211,7 +214,16 @@ async def test_entire_keyboard_board_classifier_engine_visualizer_pipeline(profi
             self.reader = reader
 
     server = await asyncio.start_server(
-        lambda r, w: _handle_client(DelayedReader(r), w, [], None, classifier), "127.0.0.1", 0
+        lambda r, w: _handle_client(
+            DelayedReader(r),
+            w,
+            [],
+            None,
+            classifier,
+            DeterministicAssessmentClassifier(RulesConfig.load()) if deterministic else None,
+        ),
+        "127.0.0.1",
+        0,
     )
     classifier_port = server.sockets[0].getsockname()[1]
     engine = asyncio.create_task(
@@ -242,11 +254,10 @@ async def test_entire_keyboard_board_classifier_engine_visualizer_pipeline(profi
                 await rig.ultra96.connect()
                 rig.windower.on_weapon_confirmed(Weapon.SWORD)
                 rig.session.on_action_result = link.send_action
+                rig.session.on_weapon_changed = link.send_weapon_changed
                 # Seed the action clock before classification. Ongoing phone positions must not
                 # advance the release watermark past a delayed action in the paired profile.
-                await link.send_weapon_changed(
-                    WeaponChanged(timestamp=monotonic_ms(), player_id=1, weapon=Weapon.SWORD)
-                )
+                await rig.session.cycle_weapon()  # real encrypted command -> simulated board -> engine
 
                 async def positions():
                     while True:
@@ -260,7 +271,16 @@ async def test_entire_keyboard_board_classifier_engine_visualizer_pipeline(profi
                 position_task = asyncio.create_task(positions())
                 await asyncio.sleep(0.04)
                 try:
-                    pending, verified = await rig.session.echo_keystroke(ord("a"))
+
+                    async def weapon_selected():
+                        async for raw in phone:
+                            event = json.loads(raw)
+                            if event["type"] == "WEAPON_CHANGED":
+                                return event
+
+                    selected = await asyncio.wait_for(weapon_selected(), 3)
+                    assert selected["weapon"] == "SWORD"
+                    pending, verified = await rig.session.echo_keystroke(ord("b"))
                     assert verified
 
                     async def recognized():

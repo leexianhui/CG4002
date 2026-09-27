@@ -69,7 +69,7 @@ def test_c_transform_selector_formula_matches_python():
         "update transform_for() in assess_transform.py and this test together"
     )
     for keycode in range(256):
-        assert transform_for(keycode) == (keycode % 3) + 1
+        assert transform_for(keycode) == (0 if keycode in (98, 99, 100) else (keycode % 3) + 1)
 
 
 def test_c_saturation_bounds_are_int16():

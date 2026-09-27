@@ -1,25 +1,11 @@
-"""The keyboard-driven single-pipeline demo: keystroke -> FireBeetle -> Ultra96 -> visualizer.
+"""Deterministic keyboard IMU round trip through the physical board and common action path.
 
-Assessment requirement (the one that exempts demoing each channel separately):
+b/c/d -> fixed editable B/C/D -> ASSESS_ECHO_REQ -> board IDENTITY response
+-> verified returned sample -> normal SENSOR_WINDOW -> classifier -> ACTION -> Unity.
+The full 42-byte sensor body is authenticated; only a verified returned sample is forwarded.
 
-    "Demonstrate a single complete pipeline. Use keyboard input at the relay laptop. For each
-    keystroke, send a random dummy packet to the FireBeetle. The FireBeetle will modify the data and
-    send it back to the Ultra96 via the laptop. The Ultra96 will then generate a random AI action
-    event and pass it to the Visualizer."
-
-Four hops, correlated by `demo_trace_id` (with a numeric BLE `trace_id`; see `assess_dummy`,
-`assess_transform`, and the `assess_*` log events below):
-
-    key -> ASSESS_ECHO_REQ (laptop->device, reliable)
-        -> device transform -> ASSESS_ECHO_RESP (device->laptop)
-        -> SENSOR_WINDOW to Ultra96 -> random ACTION_RESULT
-        -> Action -> engine -> ActionRecognized -> visualizer
-
-The assessment simulator accepts a one-sample SENSOR_WINDOW. This is a synthetic protocol demo,
-not the production model's 40-sample capture. The 120 ms classifier deadline starts only AFTER a
-window is built; it does not limit capture duration. The normal windower remains unchanged.
-The request and reply carry the full sensor layout; the board transforms dominant accel axes,
-and the relay scales the actual validated returned readings using the normal IMU units.
+The simulator accepts a one-sample window. This is a communications fixture, not the
+normal GPIO 40-sample capture or trained-model inference. GPIO windowing is unchanged.
 """
 
 from __future__ import annotations
@@ -35,7 +21,7 @@ from cg_comms.messages.enums import Weapon
 from cg_comms.messages.models import SensorWindow
 from cg_comms.protocol import codec
 from cg_comms.protocol.constants import Direction, PacketType
-from cg_comms.relay.assess_dummy import DummyVariant, choose
+from cg_comms.relay.assess_dummy import DummyVariant, for_key
 from cg_comms.relay.assess_transform import apply_transform, transform_for
 from cg_comms.relay.windowing import _scale_sample
 
@@ -101,12 +87,12 @@ class EchoPipeline:
         return trace_id
 
     def build_request(self, keycode: int, weapon: Weapon = Weapon.SWORD) -> tuple[PendingEcho, dict]:
-        """Chooses a random dummy variant and returns the pending record plus ASSESS_ECHO_REQ fields.
+        """Load the saved variant and return its pending record and ASSESS_ECHO_REQ fields.
 
         The expected response is computed HERE, at send time, from the same transform table the
         firmware compiles in. Recomputing it from the response later would make the check circular.
         """
-        variant = choose(self.rng)
+        variant = for_key(keycode)
         trace_id = self._allocate_trace_id()
         transform_id = transform_for(keycode)
         sent_ms = monotonic_ms()
@@ -216,6 +202,11 @@ class EchoPipeline:
                 sent=pending.variant.values,
                 received=got,
                 transform=pending.transform_id,
+                sensor_raw={
+                    "dominant": got + fields["dominant_gyro"],
+                    "offhand": fields["offhand"],
+                    "torso": fields["torso"],
+                },
                 keycode=pending.keycode,
                 key=chr(pending.keycode) if 32 <= pending.keycode < 127 else None,
                 device_timestamp_ms=fields["device_timestamp_ms"],

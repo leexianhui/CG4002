@@ -247,8 +247,7 @@ def main() -> None:
     parser.add_argument("--assess-file", type=Path, default=None,
                         help="File the F key sends (<= 4096 B). Default: the built-in 1037 B fixture.")
     parser.add_argument("--assess-seed", type=int, default=None,
-                        help="Replay a run's dummy-variant sequence "
-                             "(the seed its assess_seed line logged)")
+                        help="Legacy compatibility option; fixed keyboard mappings ignore the seed.")
     args = parser.parse_args()
 
     settings = RelaySettings.from_yaml(args.config)

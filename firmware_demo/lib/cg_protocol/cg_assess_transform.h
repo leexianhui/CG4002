@@ -1,21 +1,8 @@
-/*
- * Device-side modification applied to ASSESS_ECHO_REQ, echoed back in ASSESS_ECHO_RESP.
- *
- * Assessment requirement: "The FireBeetle will modify the data and send it back to the Ultra96 via
- * the laptop." The laptop recomputes the same transform and compares, so the demo proves the
- * firmware actually ran rather than that the link echoes bytes.
- *
- * This is one half of a two-sided contract. The Python half is
- * comms/src/cg_comms/relay/assess_transform.py; the two must stay identical, and a change to one
- * without the other must be made in the same commit. comms/tests/test_assess_transform_c.py
- * compiles THIS header and diffs it against the Python across the whole int16 range, so a one-sided
- * edit fails the test suite rather than showing up as a mismatch during the demo.
- *
- * Two portability traps are handled deliberately -- do not "simplify" either away:
- *   1. Signed overflow is undefined behaviour in C, and -INT16_MIN is not representable. All
- *      arithmetic is done in int32_t and then saturated.
- *   2. C's `/` truncates toward zero while Python's `//` floors; they differ for every negative odd
- *      numerator. The Python side matches C here (div2_trunc), so plain `/` is correct below.
+/* Assessment transform contract mirrored by relay/assess_transform.py.
+ * Revision 3: b/c/d select explicit IDENTITY=0; all raw axes remain unchanged.
+ * Legacy IDs 1..3 remain available only to low-level protocol fixtures. Arithmetic
+ * uses int32 intermediates, saturation and C division truncating toward zero.
+ * Python tests mirror/check the formulas; firmware builds compile this header.
  */
 
 #ifndef CG_ASSESS_TRANSFORM_H
@@ -27,6 +14,7 @@
 extern "C" {
 #endif
 
+#define CG_ASSESS_TRANSFORM_IDENTITY    0
 #define CG_ASSESS_TRANSFORM_NEGATE      1
 #define CG_ASSESS_TRANSFORM_ADD_SEQ     2
 #define CG_ASSESS_TRANSFORM_SWAP_SCALE  3
@@ -41,6 +29,7 @@ static inline int16_t cg_assess_saturate_i16(int32_t value) {
 /* Which transform this keystroke selects. Mirrors transform_for(). Lets the demo show different
  * transforms by pressing different keys, with no reflash. */
 static inline uint8_t cg_assess_transform_for(uint8_t keycode) {
+    if (keycode == 'b' || keycode == 'c' || keycode == 'd') return CG_ASSESS_TRANSFORM_IDENTITY;
     return (uint8_t)((keycode % 3) + 1);
 }
 
@@ -52,6 +41,8 @@ static inline int cg_assess_apply_transform(uint8_t transform_id, uint8_t keycod
     const int32_t b = (int32_t)*value_b;
     const int32_t c = (int32_t)*value_c;
     switch (transform_id) {
+        case CG_ASSESS_TRANSFORM_IDENTITY:
+            return 1;  // retain every raw axis exactly; metadata still correlates the exchange
         case CG_ASSESS_TRANSFORM_NEGATE:
             *value_a = cg_assess_saturate_i16(-a);
             *value_b = cg_assess_saturate_i16(-b);

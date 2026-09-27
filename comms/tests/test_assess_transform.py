@@ -45,7 +45,7 @@ def test_swap_scale_reorders_and_scales():
 
 def test_transform_for_covers_every_transform_and_stays_in_range():
     seen = {transform_for(k) for k in range(32, 127)}  # printable ASCII
-    assert seen == {TRANSFORM_NEGATE, TRANSFORM_ADD_SEQ, TRANSFORM_SWAP_SCALE}
+    assert seen == {0, TRANSFORM_NEGATE, TRANSFORM_ADD_SEQ, TRANSFORM_SWAP_SCALE}
 
 
 def test_unknown_transform_is_rejected():
