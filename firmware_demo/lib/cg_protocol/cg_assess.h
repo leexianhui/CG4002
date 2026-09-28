@@ -1,5 +1,5 @@
-// Device-side handling of the two laptop -> device assessment packets (ASSESS_ECHO_REQ,
-// ASSESS_FILE_CHUNK). Kept free of BLE/Arduino so the decision logic can be compiled and reasoned
+// Device-side handling of the laptop -> device assessment requests (ASSESS_ECHO_REQ,
+// ASSESS_FILE_CHUNK; FILE_READ and WEAPON_REQ are handled inline in main.cpp). Kept free of BLE/Arduino so the decision logic can be compiled and reasoned
 // about on its own; main.cpp owns the sending, ACKing and replay-state commits.
 //
 // The Python mirror of this file is comms/src/cg_comms/mock/assess_device.py (used by

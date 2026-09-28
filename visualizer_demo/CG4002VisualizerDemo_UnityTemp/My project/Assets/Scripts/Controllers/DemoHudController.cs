@@ -145,6 +145,10 @@ namespace Cg4002.VisualizerDemo.Controllers
                 _lastWeapon[msg.PlayerId] = msg.Weapon;
                 AppendFeedLine($"> P{msg.PlayerId} weapon = {msg.Weapon}");
             }
+            // The board does not re-announce its weapon after a match reset, so this is the label's
+            // fallback source too (the engine recovers the weapon from ACTION the same way).
+            var weaponLabel = msg.PlayerId == 1 ? Player1WeaponLabel : Player2WeaponLabel;
+            if (weaponLabel != null && !string.IsNullOrEmpty(msg.Weapon)) weaponLabel.text = msg.Weapon;
 
             string trace = string.IsNullOrEmpty(msg.DemoTraceId) ? "" : $" [{msg.DemoTraceId}]";
             bool isGuard = msg.Action == "IDLE" && msg.GuardState == "GUARDING";

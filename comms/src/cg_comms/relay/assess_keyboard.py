@@ -137,6 +137,9 @@ class AssessKeyboard:
             player_id=self.player_id,
             key=repr(ch),
             help="a = weapon | b/c/d = fixed IMU | F = file | L = ACK loss | D = packet view | Q = stop",
+            # a/b/c/d are lowercase and D/F/L/Q uppercase on purpose, so Caps Lock silently remaps
+            # the demo (d would toggle the packet view). Say so instead of just ignoring the key.
+            **({"hint": "Caps Lock is probably on -- turn it off"} if ch in ("A", "B", "C") else {}),
         )
 
     async def _run_weapon(self) -> None:

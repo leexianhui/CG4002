@@ -17,15 +17,14 @@ dependencies = [
   # imports it, so a board install can skip it: pip install -e . --no-deps plus the rest by hand, or
   # just accept the unused wheel. Kept a hard dep because the relay always needs it.
   "bleak>=0.22",
-  "websockets>=12.0",
+  # >=14: engine/relay use the new asyncio API (websocket.request, connect(additional_headers=)),
+  # which only became the default implementation in 14.0; 12/13 fail on the first connection.
+  "websockets>=14.0",
   "cryptography>=42.0",
   "pydantic>=2.6",
   "pydantic-settings>=2.2",
   "pyyaml>=6.0",
   "structlog>=24.1",
-  # numpy 1.26 is the last line with cp310 aarch64 wheels readily available; without an upper bound
-  # pip on the board may try to build 2.x from source, which is a long, failure-prone compile there.
-  "numpy>=1.26,<3",
 ]
 
 [project.optional-dependencies]

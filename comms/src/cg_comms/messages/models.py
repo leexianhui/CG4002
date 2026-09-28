@@ -165,7 +165,13 @@ class SensorWindow(_Envelope):
 
 
 class ActionResult(_Envelope):
-    """Ultra96 -> relay. app_messages.md §3.2. requestId echoes the triggering SensorWindow's."""
+    """Ultra96 -> relay. app_messages.md §3.2. requestId echoes the triggering SensorWindow's.
+
+    The one inbound model that ignores unknown keys: §3.2 requires the relay to tolerate extra AI
+    output (probabilities, model version, latency) rather than drop every reply from a newer model.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     type: Literal["ACTION_RESULT"] = "ACTION_RESULT"
     demo_trace_id: str | None = Field(alias="demoTraceId", default=None, max_length=96)

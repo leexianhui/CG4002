@@ -124,7 +124,13 @@ namespace Cg4002.VisualizerDemo.Net
 
         // Existing POSITION is canonical: metres, +x Unity right, +y Unity forward,
         // heading zero +x, positive toward +y. Unity yaw is zero +z and turns toward +x.
-        public static float HeadingFromUnityYaw(float yaw) => Mathf.Repeat(90f - yaw, 360f);
+        // Repeat can return exactly 360 for a tiny negative input (yaw a hair above 90), which the
+        // engine rejects (heading is [0, 360)) and then drops every POSITION from this player.
+        public static float HeadingFromUnityYaw(float yaw)
+        {
+            float heading = Mathf.Repeat(90f - yaw, 360f);
+            return heading >= 360f ? 0f : heading;
+        }
 
         public void SendUnityPosition(float x, float z, float yaw)
         {
@@ -209,6 +215,19 @@ namespace Cg4002.VisualizerDemo.Net
                 return;
             }
 
+            try
+            {
+                Dispatch(type, json);
+            }
+            catch (JsonException e)
+            {
+                // One bad payload must not abort the rest of this frame's inbox drain.
+                Debug.LogWarning($"EngineClient: dropped malformed {type}: {e.Message}");
+            }
+        }
+
+        private void Dispatch(string type, string json)
+        {
             switch (type)
             {
                 case "COMBAT_EVENT":

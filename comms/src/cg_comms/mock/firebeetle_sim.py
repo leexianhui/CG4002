@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import itertools
 import logging
 import random
@@ -165,12 +166,15 @@ class FireBeetleSim:
     async def _drain_incoming(self) -> None:
         async for raw in self.transport.frames():
             for frame in self._framer.feed(raw):
+                # Match firmware: semantic rejection must not enter the replay cache.
+                # Otherwise the retry of a rejected request gets a successful duplicate ACK.
+                candidate = copy.deepcopy(self._rx_tracker)
                 decoded = codec.decode_packet(
                     frame,
                     psk=self.psk,
                     session_id=self.session_id,
                     direction=Direction.LAPTOP_TO_DEVICE,
-                    sequence_tracker=self._rx_tracker,
+                    sequence_tracker=candidate,
                     reliable_duplicates=True,
                     expected_player_id=self.player_id,
                 )
@@ -196,9 +200,11 @@ class FireBeetleSim:
                     int(PacketType.ASSESS_FILE_READ),
                     int(PacketType.ASSESS_WEAPON_REQ),
                 ):
-                    await self._handle_assess(decoded)
+                    if not await self._handle_assess(decoded):
+                        continue
+                self._rx_tracker = candidate
 
-    async def _handle_assess(self, decoded: DecodedPacket) -> None:
+    async def _handle_assess(self, decoded: DecodedPacket) -> bool:
         """Mirror of main.cpp handle_assess_reliable + its duplicate branch."""
         seq = decoded.header.seq
         if decoded.duplicate:
@@ -207,10 +213,10 @@ class FireBeetleSim:
             if seq == self._assess_last_req_seq and self._assess_last_resp is not None:
                 await self._send(*self._assess_last_resp, Direction.DEVICE_TO_LAPTOP)
             await self._send_assess_ack(seq)
-            return
+            return True
         if decoded.header.packet_type == int(PacketType.ASSESS_WEAPON_REQ):
             if not decoded.fields["trace_id"]:
-                return
+                return False
             self._weapon_id = self._weapon_id % 3 + 1
             resp = (PacketType.ASSESS_WEAPON_RESP, {
                 "trace_id": decoded.fields["trace_id"],
@@ -218,6 +224,11 @@ class FireBeetleSim:
                 "weapon_id": self._weapon_id,
             })
         elif decoded.header.packet_type == int(PacketType.ASSESS_ECHO_REQ):
+            f = decoded.fields
+            # main.cpp refuses these with no reply and no ACK; mirror it so loopback tests fail the
+            # same way the board would instead of passing on a request the firmware drops.
+            if not f["trace_id"] or not 1 <= f["weapon_id"] <= 3 or f["flags"] != 0:
+                return False
             resp = (PacketType.ASSESS_ECHO_RESP, build_echo_response(decoded.fields, monotonic_ms()))
             logger.info(
                 "sim_assess_echo",
@@ -232,7 +243,7 @@ class FireBeetleSim:
                 or f["transfer_id"] != self.file_rx.transfer_id
                 or not 0 <= index < self.file_rx.total_chunks
             ):
-                return
+                return False
             piece = self.file_rx.data[index * 32 : (index + 1) * 32]
             resp = (
                 PacketType.ASSESS_FILE_DATA,
@@ -251,7 +262,7 @@ class FireBeetleSim:
                 logger.warning(
                     "sim_file_chunk_malformed", reason=reason, chunk_index=decoded.fields["chunk_index"]
                 )
-                return
+                return False
             self.file_rx = nxt
             resp = (
                 PacketType.ASSESS_FILE_ACK,
@@ -265,11 +276,14 @@ class FireBeetleSim:
         await self._send(*resp, Direction.DEVICE_TO_LAPTOP)
         if decoded.header.packet_type == int(PacketType.ASSESS_WEAPON_REQ):
             # Real firmware also announces the held selection through its existing RFID path.
-            await self._play_step(ScenarioStep(delay_ms=0, kind="rfid_event",
-                                               payload={"weapon": Weapon.from_wire(self._weapon_id).value}))
+            await self._play_step(ScenarioStep(
+                delay_ms=0, kind="rfid_event",
+                payload={"weapon": Weapon.from_wire(self._weapon_id).value},
+            ))
         self._assess_last_req_seq = seq
         self._assess_last_resp = resp
         await self._send_assess_ack(seq)
+        return True
 
     async def _send_assess_ack(self, seq: int) -> None:
         if self.drop_assess_acks > 0:

@@ -686,8 +686,7 @@ No fake P2 is required, or created, for any of it.
 ### 9.1 Verified current state (do not restart this work)
 
 `visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/` is the live Unity **6000.6.2f1** project.
-`visualizer_demo/CG4002VisualizerDemo/` is the older hand-assembled tree, kept only until migration is
-confirmed. Evidence that the project is real and already compiling:
+The older hand-assembled `visualizer_demo/CG4002VisualizerDemo/` tree has since been removed. Evidence that the project is real and already compiling:
 
 - `unity_batch_createscene7.log`: `CreateDemoScene: saved 'Assets/Scenes/Demo.unity' via Unity's own
   scene serializer.`, **no `error CS` lines**, `Exiting batchmode successfully now!`, return code 0.
@@ -1466,7 +1465,7 @@ Stated explicitly so none of these is silently carried forward.
 | **This plan's own first draft** | "a trigger reaches the relay with zero wire changes" | **Imprecise — corrected.** Reusing reserved `flags` bits 5–7 is a backward-compatible **wire-semantics extension**: no new packet type, no size/layout change, no crypto change, no golden-vector churn — but the meaning of those bits is new (§1.5) |
 | **This plan's own first draft** | A `P1 ACTION: … -> IGNORED / no target` status-panel HUD | Replaced by the terminal feed (`> P1 used HORIZONTAL_SWING`). Unity is a terminal/debug visualizer: no animations, no gameplay graphics, no AR, no visual action representation (§9.4) |
 | Candidate button list in the brief | RELOAD / GRENADE / SHIELD buttons | No such `ActionClass` members or `weapons.yaml` moves exist (§4.2). Not added — that is a game-design change, not a comms demo |
-| `shared/protocol/app_messages.md` §3.2 | "the relay parses ACTION_RESULT behind an adapter that tolerates both a single class and a probability vector, and ignores unknown keys" | Not true today: `ActionResult` is pydantic with `extra="forbid"`, so unknown keys are rejected. Left as-is (nothing needs it yet), but recorded as a known doc/code divergence rather than relied upon |
+| `shared/protocol/app_messages.md` §3.2 | "the relay parses ACTION_RESULT behind an adapter that tolerates both a single class and a probability vector, and ignores unknown keys" | Was untrue when written (`extra="forbid"`). **Since fixed:** `ActionResult` now uses `extra="ignore"`, and `action_result.schema.json` allows additional properties |
 
 ---
 

@@ -69,9 +69,17 @@ class Ultra96Client:
                     raise ConnectionError("classifier EOF")
                 if not line.endswith(b"\n"):
                     raise ConnectionError("classifier unterminated line")
-                parsed = parse_app_message(line.decode("utf-8").strip())
+                # Bytes, not str: parse_app_message reports invalid UTF-8 as MALFORMED_JSON instead
+                # of a UnicodeDecodeError escaping here and tearing down the connection.
+                parsed = parse_app_message(line.strip())
                 if isinstance(parsed, MessageDropped) or not isinstance(parsed, ActionResult):
-                    logger.warning("ultra96_bad_message")
+                    logger.warning(
+                        "ultra96_bad_message",
+                        reason=parsed.reason.value if isinstance(parsed, MessageDropped)
+                        else f"unexpected type {type(parsed).__name__}",
+                        detail=parsed.detail[:300] if isinstance(parsed, MessageDropped) else "",
+                        line=line[:200].decode("utf-8", errors="replace"),
+                    )
                     continue
                 future = self._pending.get(parsed.request_id)
                 if future is not None and not future.done():
@@ -145,9 +153,18 @@ class Ultra96Client:
             # and cross-machine wall-clock offsets are not part of this RTT measurement.
             started = loop.time()
             result = await asyncio.wait_for(exchange(), self.request_timeout_ms / 1000)
-            if (result.player_id != window.player_id or result.timestamp != window.timestamp
-                    or result.demo_trace_id != window.demo_trace_id):
-                raise Ultra96Unavailable("classifier correlation mismatch")
+            # Contract (COMMS_ASSESSMENT_IMPLEMENTATION_PLAN.md §6): the classifier echoes playerId,
+            # timestamp and demoTraceId unchanged. Name the offending field so a real-AI
+            # integration that re-stamps its own timestamp is diagnosable from one log line.
+            mismatched = [name for name, got, sent in (
+                ("playerId", result.player_id, window.player_id),
+                ("timestamp", result.timestamp, window.timestamp),
+                ("demoTraceId", result.demo_trace_id, window.demo_trace_id),
+            ) if got != sent]
+            if mismatched:
+                raise Ultra96Unavailable(
+                    "classifier correlation mismatch: "
+                    + ", ".join(f"{n} not echoed unchanged" for n in mismatched))
             logger.info("classifier_response", **timing())
             return result
         except asyncio.TimeoutError:

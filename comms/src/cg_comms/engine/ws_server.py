@@ -15,7 +15,7 @@ from typing import Awaitable, Callable
 
 import structlog
 import websockets
-from websockets.server import WebSocketServerProtocol
+from websockets.asyncio.server import ServerConnection
 
 from cg_comms.relay.backpressure import DropOldestQueue
 
@@ -39,7 +39,7 @@ def check_bearer_token(headers: "websockets.Headers", expected: str) -> bool:
 @dataclass
 class Connection:
     path: str
-    websocket: WebSocketServerProtocol
+    websocket: ServerConnection
     send_queue: "DropOldestQueue[str]"
     writer_task: "asyncio.Task[None] | None" = field(default=None, init=False)
 
@@ -53,11 +53,11 @@ class ConnectionRegistry:
     _connections: dict[str, Connection] = field(default_factory=dict, init=False)
     _register_locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False)
 
-    async def register(self, path: str, websocket: WebSocketServerProtocol) -> Connection:
+    async def register(self, path: str, websocket: ServerConnection) -> Connection:
         async with self._register_locks.setdefault(path, asyncio.Lock()):
             return await self._register(path, websocket)
 
-    async def _register(self, path: str, websocket: WebSocketServerProtocol) -> Connection:
+    async def _register(self, path: str, websocket: ServerConnection) -> Connection:
         existing = self._connections.get(path)
         if existing is not None:
             logger.warning("ws_duplicate_path_replaced", path=path)
@@ -128,13 +128,17 @@ async def run_ws_server(
     `register`/`unregister` respectively, with the path — used by engine/app.py to keep
     `MATCH_STATE.connected` and visualizer snapshots live (docs/DEMO_TRIGGERED_ACTION_PLAN.md §7.4)."""
 
-    async def handler(websocket: WebSocketServerProtocol) -> None:
-        path = websocket.request.path
+    async def handler(websocket: ServerConnection) -> None:
+        request = websocket.request
+        if request is None:
+            await websocket.close(code=1002, reason="missing handshake request")
+            return
+        path = request.path
         if path not in RELAY_PATHS and path not in VISUALIZER_PATHS and path != CONTROL_PATH:
             logger.warning("ws_unknown_path", path=path)
             await websocket.close(code=1008, reason="unknown path")
             return
-        if not check_bearer_token(websocket.request.headers, config.bearer_token):
+        if not check_bearer_token(request.headers, config.bearer_token):
             logger.warning("ws_auth_rejected", path=path)
             await websocket.close(code=1008, reason="unauthorized")
             return
@@ -158,6 +162,9 @@ async def run_ws_server(
             if on_disconnect is not None:
                 await on_disconnect(path)
 
-    async with websockets.serve(handler, config.host, config.port, ssl=config.ssl_context):
+    # Shorten the old socket's close-handshake budget during replacement. This is not an
+    # end-to-end reconnect deadline: detection, writer cancellation and retry backoff also matter.
+    async with websockets.serve(handler, config.host, config.port, ssl=config.ssl_context,
+                                close_timeout=2):
         logger.info("ws_server_listening", host=config.host, port=config.port, tls=config.ssl_context is not None)
         await stop_event.wait()

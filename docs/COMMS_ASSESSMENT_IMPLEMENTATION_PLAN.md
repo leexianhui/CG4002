@@ -774,7 +774,7 @@ where doing so keeps ownership clear. Update documentation and tests alongside i
 | Tests | Existing `comms/tests/`, `firmware_demo/test/` plus assessment-focused files | Cross-language payload checks, state machines, failure/correlation/throughput/hash tests |
 | Docs | This plan, checklist, runbook and firmware README | Replace proposed CLI markers with implemented/help-verified commands only after delivery |
 
-Do not edit the older `visualizer_demo/CG4002VisualizerDemo` scaffold by mistake. Preserve the user's
+(The older `visualizer_demo/CG4002VisualizerDemo` scaffold has since been removed.) Preserve the user's
 existing active scene/render changes; no scene regeneration is required for this work.
 
 ## 12. Implementation milestones and dependencies

@@ -45,7 +45,7 @@ uint8_t g_capture_trigger_id = 0;
 CgReliableSend g_pending_rfid;
 CgReliableReceiveCache g_feedback_cache;
 
-// Assessment reliable packets (ASSESS_ECHO_REQ / ASSESS_FILE_CHUNK) get their OWN cache and replay
+// Assessment reliable packets (ECHO_REQ, FILE_CHUNK, FILE_READ, WEAPON_REQ) get their OWN cache and replay
 // watermark, separate from COMBAT_FEEDBACK's: the relay can have one feedback AND one assessment
 // packet in flight at once, and a shared watermark would let a newer packet of one kind make the
 // retransmit of the other look like a replay. Within the assessment kind the relay keeps at most
@@ -64,7 +64,7 @@ uint8_t g_file_data[4096]; // retained only for this BLE session; no flash write
 uint8_t g_assess_last_req[CG_MAX_FRAME_SIZE];
 size_t g_assess_last_req_len = 0;
 uint8_t g_assess_last_resp_type = 0;  // 0 = none
-uint8_t g_assess_last_resp[sizeof(cg_payload_assess_echo_resp_t)];  // the larger of the two
+uint8_t g_assess_last_resp[sizeof(cg_payload_assess_echo_resp_t)];  // the largest assessment response
 size_t g_assess_last_resp_len = 0;
 uint32_t g_assess_echoes = 0;
 
@@ -104,6 +104,9 @@ BLE2902 *g_notify_cccd = nullptr;  // read to tell whether the relay has subscri
 volatile bool g_connected = false;
 volatile bool g_handshake_done = false;
 volatile uint32_t g_connection_generation = 0;
+// BLE callbacks and loop() run on different FreeRTOS tasks/cores. Protect the
+// generation check AND handshake-state store; volatile alone cannot make them atomic.
+portMUX_TYPE g_connection_mux = portMUX_INITIALIZER_UNLOCKED;
 
 // BLECharacteristic::notify() returns void: on a controller-level failure it logs
 // "esp_ble_gatts_send_notify: rc=-1" and returns, so a caller that just calls notify() cannot tell
@@ -120,8 +123,8 @@ class NotifyStatusCallback : public BLECharacteristicCallbacks {
     }
 };
 
-// FreeRTOS queue copies writes atomically between the BLE callback and Arduino loop.
-// A single mutable slot used to overwrite unread ACK/feedback during bursts.
+// FreeRTOS queue copies writes atomically between the BLE callback and Arduino loop (it replaced a
+// single mutable slot that overwrote unread ACK/feedback during bursts).
 struct IncomingFrame {
     uint8_t data[CG_MAX_FRAME_SIZE];
     size_t len = 0;
@@ -159,8 +162,11 @@ class WriteCallback : public BLECharacteristicCallbacks {
 
 class ServerCallbacks : public BLEServerCallbacks {
     void onConnect(BLEServer *server) override {
+        portENTER_CRITICAL(&g_connection_mux);
         g_connection_generation++;
         g_connected = true;
+        g_handshake_done = false;
+        portEXIT_CRITICAL(&g_connection_mux);
         Serial.println("[ble] connected");
     }
     // Windows picks the connection interval when we don't ask, and its default (~30-45ms) cannot
@@ -175,9 +181,11 @@ class ServerCallbacks : public BLEServerCallbacks {
         server->updateConnParams(param->connect.remote_bda, 0x06, 0x0C, 0, 400);
     }
     void onDisconnect(BLEServer *server) override {
+        portENTER_CRITICAL(&g_connection_mux);
         g_connection_generation++;
         g_connected = false;
         g_handshake_done = false;
+        portEXIT_CRITICAL(&g_connection_mux);
         // Bluedroid does not clear the CCCD itself for a non-bonded central, so a stale "subscribed"
         // value would survive into the next connection and re-open the race this gate closes.
         if (g_notify_cccd != nullptr) {
@@ -426,8 +434,9 @@ void drain_incoming_non_blocking() {
             // if it is the latest request, re-send its response -- never re-APPLY it (a file chunk
             // would be appended twice, an echo counted twice).
             if (g_assess_last_resp_type != 0 && incoming.len == g_assess_last_req_len &&
-                memcmp(incoming.data, g_assess_last_req, incoming.len) == 0) {
-                send_packet(g_assess_last_resp_type, g_assess_last_resp, g_assess_last_resp_len, nullptr, 0);
+                memcmp(incoming.data, g_assess_last_req, incoming.len) == 0 &&
+                !send_packet(g_assess_last_resp_type, g_assess_last_resp, g_assess_last_resp_len, nullptr, 0)) {
+                continue; // resent response refused on-chip: withhold the ACK so the relay retries again
             }
             send_ack_for(wire_seq);
             continue;
@@ -706,7 +715,9 @@ void loop() {
         }
         uint32_t generation = g_connection_generation;
         bool completed = do_handshake();
+        portENTER_CRITICAL(&g_connection_mux);
         g_handshake_done = completed && g_connected && generation == g_connection_generation;
+        portEXIT_CRITICAL(&g_connection_mux);
         if (g_handshake_done) send_current_weapon(); // reannounce held selection after BLE/relay restart
         if (!g_handshake_done) {
             announced = false;

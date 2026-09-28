@@ -50,7 +50,6 @@ ai/data/processed/
 ai/hls/projects/
 ai/vivado/build/
 *.jou
-*.log
 .Xil/
 
 # --- Unity (visualizer) ---
@@ -64,17 +63,6 @@ visualizer/CG4002Visualizer/MemoryCaptures/
 visualizer/CG4002Visualizer/obj/
 
 # --- visualizer_demo: solo Comms-subsystem demo, not the team's real visualizer/ ---
-visualizer_demo/CG4002VisualizerDemo/Library/
-visualizer_demo/CG4002VisualizerDemo/Temp/
-visualizer_demo/CG4002VisualizerDemo/Logs/
-visualizer_demo/CG4002VisualizerDemo/Build/
-visualizer_demo/CG4002VisualizerDemo/Builds/
-visualizer_demo/CG4002VisualizerDemo/UserSettings/
-visualizer_demo/CG4002VisualizerDemo/MemoryCaptures/
-visualizer_demo/CG4002VisualizerDemo/obj/
-
-# --- visualizer_demo: Unity Hub-generated replacement project (superseding CG4002VisualizerDemo/
-# --- above once the scene migration is verified) ---
 visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/Library/
 visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/Temp/
 visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/Logs/
@@ -83,6 +71,10 @@ visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/Builds/
 visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/UserSettings/
 visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/MemoryCaptures/
 visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/obj/
+# Android build intermediates (CMake/ninja) written by Unity 6 alongside the project
+visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/.utmp/
+# Machine-specific proxy CA exports (this work laptop's Zscaler) -- not project material
+*.cer
 
 *.csproj
 *.sln
@@ -93,6 +85,9 @@ visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/obj/
 # --- Course material: third-party copyright, and 5 MB of PDFs that belong in no repo. Keep them on
 # --- disk locally; they are not part of the deliverable.
 lecture_slides/
+
+# --- Personal scratch notes at the repo root (command cheat sheets etc.) ---
+/log.txt
 
 # --- OS / editor cruft ---
 .DS_Store

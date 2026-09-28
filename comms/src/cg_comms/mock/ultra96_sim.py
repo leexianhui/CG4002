@@ -2,7 +2,7 @@
 Ultra96 (COMMS_IMPLEMENTATION_PLAN.md §13.2, §8).
 
 Speaks the exact same wire protocol as the real service (relay/ultra96.py's docstring: relay code
-never knows which one it's talking to). Classification is entirely canned, in one of two ways:
+never knows which one it's talking to). Classification is entirely canned, in one of these ways:
 
 - `--scenario` (default when neither flag is given): each incoming SENSOR_WINDOW is answered from a
   cyclic scenario of ACTION_RESULT payloads, unconditionally — used by the no-hardware mock rig and
@@ -16,6 +16,9 @@ never knows which one it's talking to). Classification is entirely canned, in on
   ActionClass) is deliberate: a (weapon, action) pair the weapon lacks is resolved by the engine as
   IGNORED, which would look like a random event that never reached the visualizer. Confidence is
   drawn above every confidence gate for the same reason (checked at startup, not assumed).
+- `--assessment-deterministic` (docs/DETERMINISTIC_KEYBOARD_DEMO.md): traced keyboard windows
+  (demoTraceId set, no triggerId) pick a move from a SHA-256 of weapon + IMU content, so equal
+  input always gives the equal action; every other window falls through to the modes above.
 """
 
 from __future__ import annotations
@@ -178,7 +181,8 @@ async def _handle_client(
                 logger.warning("ultra96_sim_bad_message", reason="unterminated_line")
                 return
             received_at = loop.time()
-            parsed = parse_app_message(line.decode("utf-8").strip())
+            # Bytes: invalid UTF-8 is one MALFORMED_JSON drop, not a torn-down relay connection.
+            parsed = parse_app_message(line.strip())
             if isinstance(parsed, MessageDropped):
                 logger.warning(
                     "ultra96_sim_bad_message", reason=parsed.reason.value, detail=parsed.detail

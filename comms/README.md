@@ -11,15 +11,18 @@ available yet. See `docs/COMMS_IMPLEMENTATION_PLAN.md` for the full design; this
 ```
 src/cg_comms/
   clock.py, logging_setup.py, config.py   # cross-cutting: time, structured logs, settings
+  assessment_timing.py, timer_resolution.py  # assessment latency profile; Windows 1 ms timer
   protocol/        # binary wire format: header, crypto, framing, CRC, payload tables (strict-typed)
   messages/        # pydantic app-layer JSON models + schema-version gate
-  transport/        # ITransport + ble/tcp/loopback implementations
-  relay/            # per-device session, windowing, reliability, heartbeat, Ultra96/engine clients
-  engine/           # authoritative game state, resolver, reorder buffer, WSS server (strict-typed)
-  mock/             # firebeetle_sim / ultra96_sim / visualizer_sim / scenario playback
-  tools/            # latency_report.py (offline log summary)
-configs/            # relay.p1.yaml, relay.p2.yaml, engine.yaml
-scripts/            # gen_psk.py, gen_certs.sh, tunnel.sh
+  transport/       # ITransport + ble/tcp/loopback implementations
+  relay/           # per-device session, windowing, reliability, heartbeat, Ultra96/engine clients
+                   # assess_*.py + throughput.py: assessment keyboard, echo, file transfer, rate stats
+  engine/          # authoritative game state, resolver, reorder buffer, WSS server (strict-typed)
+  mock/            # firebeetle_sim / ultra96_sim / visualizer_sim / assess_device / scenario playback
+  tools/           # latency_report, reset_match, classifier_probe, assessment_fixture
+configs/           # relay.p1.yaml, relay.p2.yaml, relay.p1.mock.yaml, engine.yaml, scenarios/
+scripts/           # gen_psk.py, gen_certs.sh, tunnel.sh, run_demo.{sh,ps1}, kill_stale.ps1, ...
+tests/             # pytest suite (golden vectors in shared/protocol/golden_vectors.json)
 ```
 
 `shared/config/weapons.yaml` and `shared/config/match.yaml` (sibling `shared/` directory, not under
@@ -30,7 +33,7 @@ scripts/            # gen_psk.py, gen_certs.sh, tunnel.sh
 ```bash
 cd comms
 python -m venv .venv && source .venv/bin/activate   # or .venv\Scripts\activate on Windows
-pip install -e ".[dev]"
+pip install -e ".[dev]"   # re-run after pulling if pyproject.toml [project.scripts] changed
 cp .env.example .env   # then fill in CG_RELAY_PSK_HEX / bearer tokens — never commit .env
 python scripts/gen_psk.py                              # prints a PSK hex; paste into .env
 scripts/gen_certs.sh                                    # self-signed TLS cert for the engine's WSS listener
@@ -59,6 +62,20 @@ cg-visualizer-sim --url wss://127.0.0.1:8443/visualizer/1 --bearer-token <token>
 A scenario file is a flat YAML list under `steps:`, each `{delay_ms, kind, payload}` — see
 `mock/scenario.py` for the loader and each sim's module docstring for the `kind`s it understands.
 
+## Tests
+
+```bash
+pytest            # full suite; soak tests are opt-in: pytest -m soak
+ruff check src tests
+```
+
+## Assessment demo
+
+The assessment/keyboard procedure (`a` weapon, `b/c/d` editable IMU, `D`, `F`, `L`) is documented in
+[`docs/DETERMINISTIC_KEYBOARD_DEMO.md`](../docs/DETERMINISTIC_KEYBOARD_DEMO.md) and
+[`docs/COMMS_LIVE_AND_VIDEO_GUIDE.md`](../docs/COMMS_LIVE_AND_VIDEO_GUIDE.md). The combined P1+P2
+throughput view is `cg-throughput-total` (equivalently `python -m cg_comms.relay.throughput`).
+
 ## Security
 
 Never commit `.env`, `comms/certs/*.key`, or any PSK/bearer token — `scripts/gen_psk.py` generates
@@ -69,8 +86,7 @@ excludes `.env`, `*.key`, and `comms/certs/`.
 
 `tools/inspect.py` and `tools/replay.py` are deferred (not implemented). Fragment reassembly
 (`MORE_FRAGMENTS`) is intentionally not implemented — a set fragmentation bit is a hard, logged
-drop (`protocol/codec.py`, `DropReason.FRAGMENTED`). No `tests/` or golden vectors are included in
-this pass; that's a separate effort.
+drop (`protocol/codec.py`, `DropReason.FRAGMENTED`).
 
 ## Pre-demo robustness behavior
 

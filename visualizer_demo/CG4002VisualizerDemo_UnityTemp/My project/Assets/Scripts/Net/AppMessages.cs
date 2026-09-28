@@ -1,5 +1,6 @@
 // C# mirrors of shared/protocol/app_messages.md's JSON messages — only the subset a visualizer
-// receives/sends (COMBAT_EVENT, MATCH_STATE, COOLDOWN_STATE, WEAPON_CHANGED, POSITION). Field
+// receives/sends (COMBAT_EVENT, MATCH_STATE, COOLDOWN_STATE, WEAPON_CHANGED, POSITION,
+// ACTION_RECOGNIZED). Field
 // names use JsonProperty to match the wire's camelCase exactly; do not rename without updating
 // both this file and app_messages.md in the same change.
 

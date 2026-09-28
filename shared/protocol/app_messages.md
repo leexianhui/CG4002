@@ -249,6 +249,11 @@ behind an adapter that tolerates both a single class and a probability vector, a
 keys (§16.3 rule 3) — the AI side's real output shape is expected to change this message the most of
 anything in `shared/` (§16.2).
 
+**Echo rule.** The classifier must copy `requestId`, `playerId`, `timestamp` and (when the request
+carried one) `demoTraceId` from the SENSOR_WINDOW unchanged. The relay treats any difference as a
+correlation failure and logs `classifier correlation mismatch: <field> not echoed unchanged`, so a
+server that re-stamps its own `timestamp` produces no actions at all.
+
 The relay discards any `ACTION_RESULT` whose `actionConfidence < min_confidence` (`shared/config/
 match.yaml`) before it reaches the engine, **except** `action: "IDLE"`, which always passes through
 since it is what clears the avatar's animation state (comms plan §8).

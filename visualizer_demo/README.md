@@ -17,18 +17,17 @@ All under `CG4002VisualizerDemo_UnityTemp/My project/`:
 
 - `Assets/Scripts/Net/AppMessages.cs` — C# models mirroring `shared/protocol/app_messages.md`
   (`COMBAT_EVENT`, `MATCH_STATE`, `COOLDOWN_STATE`, `WEAPON_CHANGED`, `POSITION`).
-- `Assets/Scripts/Net/EngineClient.cs` — WSS client to `wss://<host>:8443/visualizer/<playerId>`,
-  matching `comms/src/cg_comms/engine/ws_server.py`'s auth/path contract and
-  `visualizer_sim.py`'s connection behavior (bearer token header, periodic `POSITION` send).
+- `Assets/Scripts/Net/EngineClient.cs` — WebSocket client to `<ws|wss>://<host>:<port>/visualizer/<playerId>`
+  (`UseTls` picks the scheme), matching `comms/src/cg_comms/engine/ws_server.py`'s auth/path
+  contract and `visualizer_sim.py`'s connection behavior (bearer token header, periodic `POSITION`
+  send, bounded reconnect loop).
 - `Assets/Scripts/Controllers/DemoHudController.cs` — wires `EngineClient`'s events to HP bars,
   weapon labels, and a combat-event text feed.
 - `Packages/manifest.json` — Unity Hub's default URP-template dependencies plus
   `com.unity.nuget.newtonsoft-json`, added for `EngineClient`/`AppMessages`.
 
-These three scripts are ported verbatim from `CG4002VisualizerDemo/` (the old hand-assembled
-tree) — no logic changes, just relocated into a real Unity-generated project so `Library/`,
-`.meta` GUIDs, and package resolution all come from the Editor instead of being reconstructed by
-hand.
+This is the only Unity project in `visualizer_demo/`; the earlier hand-assembled scaffold was
+removed once this one was verified on the phones.
 
 ## One-time setup
 
@@ -37,13 +36,13 @@ hand.
 2. Open Unity Hub → **Add** → select `visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/`
    as an existing project (the actual Unity project root is the `My project` subfolder). This is a
    normal Unity Hub-generated project (URP template) with the demo's C# scripts copied into
-   `Assets/Scripts/`; `visualizer_demo/CG4002VisualizerDemo/` is the old hand-assembled tree the
-   scripts were ported from and is kept only until this project's scene is built and verified.
+   `Assets/Scripts/`.
    Unity will resolve `Packages/manifest.json` (pulls in Newtonsoft Json) on first open.
-3. Get the engine's bearer token and TLS cert fingerprint from whoever is running `cg-engine`:
-   - Bearer token: `configs/engine.yaml`'s `bearer_token` (or `CG_ENGINE_BEARER_TOKEN` env var).
-   - Cert fingerprint: `openssl x509 -noout -fingerprint -sha256 -in comms/certs/engine.crt`
-     on the machine running the engine.
+3. Get the engine's bearer token from whoever is running `cg-engine` (`CG_ENGINE_BEARER_TOKEN` in
+   the engine host's `comms/.env.engine`). It is serialized into `Demo.unity` when you paste it
+   into the Inspector. That is acceptable for this demo-only project (the token only gates the demo
+   engine), but the real `visualizer/` must load it at runtime instead of baking it into a scene, and
+   the token must be rotated in `.env.engine` and re-pasted if this repo is ever shared publicly.
 
 ## Building the scene (once)
 
@@ -59,11 +58,12 @@ hand.
    - One **Text** box (`CombatFeedText`) large enough for ~8 lines, for the scrolling combat feed.
    - One **Text** label (`ConnectionStatusText`) showing connection state.
 4. **GameObject → Create Empty**, name it `EngineClient`. Add Component → `EngineClient` (script).
-   Set `Host` to `127.0.0.1` (the phone reaches the engine through its own SSH `-J` tunnel via the
-   jump host — see project memory `project_cg4002_phone_direct_ssh_tunnel` — NOT the Ultra96's raw
-   IP, which times out from a phone even on the NUS VPN), `Port` 8443, `PlayerId` to `1` or `2`
-   depending on which phone this build is for, `BearerToken` and `PinnedCertSha256` from the setup
-   step above. Keep a Termux SSH tunnel session alive on the phone before/while launching this app.
+   Set `Host` to `127.0.0.1`, `Port` `8080`, `UseTls` off, `PlayerId` to `1` or `2` depending on
+   which phone this build is for, and `BearerToken` from the setup step above. The phone reaches the
+   engine through two Termux sessions: an SSH `-J` forward of the engine's 8443, and
+   `socat TCP-LISTEN:8080,reuseaddr,fork OPENSSL:127.0.0.1:8443,verify=0`, so Unity speaks
+   plaintext to local socat and socat carries TLS through SSH (NOT the Ultra96's raw IP, which times
+   out from a phone even on the NUS VPN). See `docs/COMMS_LIVE_AND_VIDEO_GUIDE.md` for both commands.
 5. **GameObject → Create Empty**, name it `HudController`. Add Component → `DemoHudController`.
    Drag the `EngineClient` object into its `Client` field, and drag each avatar/slider/label/text
    object created above into the matching field in the Inspector.
@@ -76,12 +76,10 @@ No AR packages, no camera permission needed — this is a plain 3D + UI scene.
 
 ## Known snag: self-signed TLS cert
 
-`cg-engine`'s cert is self-signed (`comms/scripts/gen_certs.sh`). `EngineClient`'s
-`PinnedCertSha256` field pins that exact cert via `ServicePointManager.ServerCertificateValidationCallback`,
-which `System.Net.WebSockets.ClientWebSocket` honors under Mono. If a build targets IL2CPP and the
-callback is not honored there, the fallback is to leave `PinnedCertSha256` blank (accepts any cert) —
-acceptable for a closed demo network, but call this out explicitly if it comes up live; it is not
-a fix, just a scoped-down risk for a one-off presentation.
+`cg-engine`'s cert is self-signed (`comms/scripts/gen_certs.sh`). In the deployed socat route,
+`verify=0` means socat does not verify it — say so accurately in the security walkthrough. The
+`UseTls` + `PinnedCertSha256` direct-WSS mode still exists in `EngineClient` for a phone that can
+reach 8443 itself; under IL2CPP the pinning callback may not be honored.
 
 ## Verification
 
@@ -93,7 +91,7 @@ same `COMBAT_EVENT`/`MATCH_STATE` traffic `cg-visualizer-sim`'s logs show.
 
 The active project is `CG4002VisualizerDemo_UnityTemp/My project`; its existing Demo.unity and
 serialized phone SSH/socat/network values are authoritative. The generator now refuses to overwrite
-an existing scene. The older scaffold is retained and has not been upgraded in this pass.
+an existing scene.
 
 Rebuild the active APK for the bounded reconnect loop and Unity-yaw-to-canonical-heading adapter.
 No scene regeneration is needed. Reset is an authenticated operator command on the engine host;

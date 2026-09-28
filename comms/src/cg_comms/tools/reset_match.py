@@ -29,7 +29,15 @@ def main() -> None:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--host", default="localhost", help="Engine hostname matching its certificate")
     args = parser.parse_args()
-    asyncio.run(reset(EngineSettings.from_yaml(args.config), args.host))
+    try:
+        settings = EngineSettings.from_yaml(args.config)
+    except FileNotFoundError:
+        parser.error(f"config file not found: {args.config}; run from comms/ "
+                     "or pass an existing --config path")
+    if not settings.bearer_token:
+        parser.error("no bearer token: run from comms/ (reads .env.engine) "
+                     "or set CG_ENGINE_BEARER_TOKEN")
+    asyncio.run(reset(settings, args.host))
 
 
 if __name__ == "__main__":

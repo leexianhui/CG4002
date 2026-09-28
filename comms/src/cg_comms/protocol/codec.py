@@ -32,7 +32,7 @@ from cg_comms.protocol.constants import (
     PacketType,
 )
 from cg_comms.protocol.crypto import SequenceTracker, derive_nonce, open_sealed, seal
-from cg_comms.protocol.payloads import PAYLOAD_TABLES, Field, FieldKind
+from cg_comms.protocol.payloads import PAYLOAD_TABLES, FieldKind
 
 _HEADER_STRUCT = struct.Struct("<BBBHBH")  # magic, version, type, seq, player_id, len
 _DEVICE_NONCE_STRUCT = struct.Struct("<I")
@@ -161,10 +161,16 @@ def reliable_kind(packet_type: PacketType) -> str:
     """Groups ACK-retransmit types that share one replay watermark (SequenceTracker.reliable_high).
 
     Types in one group must never have more than one packet in flight at a time, so that a retransmit
-    is always the newest packet of its group. Both assessment types share a group because the relay
-    serializes them behind one lock (Session._assess_send_lock); every other type is its own group.
+    is always the newest packet of its group. All four laptop->device assessment types share a group
+    because the relay serializes them behind one lock (Session._assess_send_lock), and the firmware's
+    is_assess_reliable() uses one watermark for exactly these four; every other type is its own group.
     """
-    if packet_type in (PacketType.ASSESS_ECHO_REQ, PacketType.ASSESS_FILE_CHUNK, PacketType.ASSESS_FILE_READ):
+    if packet_type in (
+        PacketType.ASSESS_ECHO_REQ,
+        PacketType.ASSESS_FILE_CHUNK,
+        PacketType.ASSESS_FILE_READ,
+        PacketType.ASSESS_WEAPON_REQ,
+    ):
         return "assess"
     return str(packet_type.name)
 

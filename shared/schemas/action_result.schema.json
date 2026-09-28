@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://cg4002.internal/schemas/action_result.schema.json",
   "title": "ACTION_RESULT",
-  "description": "Ultra96 -> relay (laptop). See shared/protocol/app_messages.md §3.2. requestId echoes the triggering SENSOR_WINDOW's requestId.",
+  "description": "Ultra96 -> relay (laptop). See shared/protocol/app_messages.md §3.2. requestId echoes the triggering SENSOR_WINDOW's requestId. Unknown keys are allowed and ignored by the relay (§3.2, COMMS_IMPLEMENTATION_PLAN.md §16.3 rule 3).",
   "type": "object",
   "properties": {
     "demoTraceId": {"type": ["string", "null"], "maxLength": 96},
@@ -26,5 +26,5 @@
     "type", "version", "timestamp", "playerId", "requestId",
     "action", "actionConfidence", "guardState", "guardConfidence"
   ],
-  "additionalProperties": false
+  "additionalProperties": true
 }
