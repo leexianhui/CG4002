@@ -1,5 +1,8 @@
 # Deterministic keyboard assessment and the existing GPIO demo
 
+For transmission-speed trials and the complete professor-facing live/video script, use
+[COMMS_LIVE_AND_VIDEO_GUIDE.md](COMMS_LIVE_AND_VIDEO_GUIDE.md).
+
 2026-09-28. This revision follows your updated instruction: random dummy selection, a modifying
 board transform, and random AI events are no longer required for the keyboard demonstration.
 The earlier implementation followed the original assessment brief's explicit requirements for
