@@ -22,7 +22,7 @@ Every message in this document carries:
 - `version` — `shared/protocol/VERSION` at the time the sender was built. A receiver that sees a
   version it does not know **logs and drops** the message rather than guessing at compatibility.
 - `timestamp` - nonnegative integer milliseconds. Incoming relay events use the relay laptop's
-  monotonic clock after device conversion; Unity POSITION currently uses Unix milliseconds.
+  monotonic clock after device conversion; Unity POSITION uses monotonic Stopwatch milliseconds.
   The engine anchors each (player, relay/position channel) into its own monotonic clock on first
   arrival, and reanchors when that connection is replaced. Engine outputs use engine monotonic time.
   First-arrival anchoring includes transport delay; it is not a measured clock synchronization.

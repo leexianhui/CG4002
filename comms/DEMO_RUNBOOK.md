@@ -138,6 +138,24 @@ read its `outcome`:
 - `STATE_ONLY` -- an IDLE classification. Expected; most windows are IDLE.
 - `ON_COOLDOWN` -- fired inside the weapon's cooldown. Expected during rapid swings.
 
+**Repeated `event_dropped` for `POSITION`, while Unity shows attacks without damage.**
+Read `player_id`, `event_age_ms`, and `reason`. With the assessment profile the release hold is
+650 ms; the absolute age limit is 1150 ms (650 + `late_drop_ms` 500). Events can also be rejected
+earlier if another event has already advanced the release watermark. Rejected positions stop
+refreshing geometry, so attacks become `IGNORED`. `action_not_resolved.reason` now distinguishes
+`missing_position` / `stale_position` from other causes, and `position_age_ms` gives both players'
+ages at attack time (`null` means no accepted position). Unity can still show ACTION_RECOGNIZED.
+
+The old Unity sender used UTC milliseconds with a fixed first-arrival engine offset. A phone
+clock adjustment could therefore cause persistent drops until reconnect. Rebuild both Unity
+clients with the monotonic Stopwatch sender and keep both visualizers connected and foregrounded.
+To recover an existing session, reconnect the affected visualizer to reseed its position offset;
+a match reset alone deliberately preserves clock offsets. If drops return with the updated
+clients, investigate sustained Wi-Fi/tunnel delay or clock drift. Sporadic drops can be jitter;
+a sustained offset produces a warning on every 0.5-second position send in older engines.
+Updated engines log position drops at most once per player per five seconds, with suppressed and
+total drop counts. Timing rejection and geometry freshness limits remain enforced.
+
 **Relay reconnect loop with `WinError 1225`.** Something it dials isn't up: engine (8443) or Ultra96
 (8888). Check start order.
 

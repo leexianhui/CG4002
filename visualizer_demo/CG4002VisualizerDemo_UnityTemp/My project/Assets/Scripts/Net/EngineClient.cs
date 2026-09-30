@@ -48,6 +48,10 @@ namespace Cg4002.VisualizerDemo.Net
         private readonly SemaphoreSlim _sendLock = new SemaphoreSlim(1, 1);
         private readonly ConcurrentQueue<string> _inbox = new ConcurrentQueue<string>();
         private bool _resumeOnForeground;
+        // The engine anchors this sender clock once per connection. Wall-clock corrections
+        // must not make every subsequent position appear late (or far in the future).
+        private static readonly System.Diagnostics.Stopwatch PositionClock =
+            System.Diagnostics.Stopwatch.StartNew();
 
         public bool IsConnected => _ws != null && _ws.State == WebSocketState.Open;
 
@@ -148,7 +152,7 @@ namespace Cg4002.VisualizerDemo.Net
             {
                 var position = new Position {
                     Type = "POSITION", Version = 1,
-                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    Timestamp = PositionClock.ElapsedMilliseconds,
                     PlayerId = PlayerId, X = x, Y = y, Heading = heading,
                 };
                 byte[] bytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(position));

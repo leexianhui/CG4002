@@ -39,6 +39,7 @@ class Decision:
     defender_id: int | None = None
     damage: int = 0
     range_m: float = 0.0
+    reason: str | None = None
 
 
 def _range_between(a: Vec2, b: Vec2) -> float:
@@ -63,23 +64,23 @@ def resolve(state: MatchState, ev: ActionEvent, rules: Rules) -> Decision:
     """12-step branch per §10.3/§15: IGNORED / STATE_ONLY / ON_COOLDOWN / MISS / HIT / PARRY / BLOCK."""
     attacker = state.players.get(ev.player_id)
     if attacker is None:
-        return Decision(outcome=CombatOutcome.IGNORED, attacker_id=ev.player_id)
+        return Decision(outcome=CombatOutcome.IGNORED, attacker_id=ev.player_id, reason="missing_attacker")
 
     if state.phase != MatchPhase.IN_PROGRESS:
-        return Decision(outcome=CombatOutcome.IGNORED, attacker_id=ev.player_id)
+        return Decision(outcome=CombatOutcome.IGNORED, attacker_id=ev.player_id, reason="match_not_in_progress")
 
     if ev.action == ActionClass.IDLE:
         return Decision(outcome=CombatOutcome.STATE_ONLY, attacker_id=ev.player_id)
 
     weapon = ev.weapon if ev.weapon is not None else attacker.weapon
     if weapon is None:
-        return Decision(outcome=CombatOutcome.IGNORED, attacker_id=ev.player_id)
+        return Decision(outcome=CombatOutcome.IGNORED, attacker_id=ev.player_id, reason="missing_weapon")
 
     if not rules.is_valid_move(weapon, ev.action):
-        return Decision(outcome=CombatOutcome.IGNORED, attacker_id=ev.player_id)
+        return Decision(outcome=CombatOutcome.IGNORED, attacker_id=ev.player_id, reason="invalid_move")
 
     if ev.confidence < rules.min_confidence:
-        return Decision(outcome=CombatOutcome.IGNORED, attacker_id=ev.player_id)
+        return Decision(outcome=CombatOutcome.IGNORED, attacker_id=ev.player_id, reason="low_confidence")
 
     expiry = attacker.cooldowns.get(ev.action)
     if expiry is not None and expiry > ev.timestamp:
@@ -88,14 +89,16 @@ def resolve(state: MatchState, ev: ActionEvent, rules: Rules) -> Decision:
     defender_id = _other_player_id(state, ev.player_id)
     defender = state.players.get(defender_id) if defender_id is not None else None
 
+    if defender is None or attacker.position is None or defender.position is None:
+        return Decision(outcome=CombatOutcome.IGNORED, attacker_id=ev.player_id,
+                        defender_id=defender_id, reason="missing_position")
+
     if (
-        defender is None
-        or attacker.position is None
-        or defender.position is None
-        or ev.timestamp - attacker.position_ts > rules.position_max_age_ms
+        ev.timestamp - attacker.position_ts > rules.position_max_age_ms
         or ev.timestamp - defender.position_ts > rules.position_max_age_ms
     ):
-        return Decision(outcome=CombatOutcome.IGNORED, attacker_id=ev.player_id, defender_id=defender_id)
+        return Decision(outcome=CombatOutcome.IGNORED, attacker_id=ev.player_id,
+                        defender_id=defender_id, reason="stale_position")
 
     move = rules.move_for(weapon, ev.action)
     assert move is not None  # guaranteed by the is_valid_move check above

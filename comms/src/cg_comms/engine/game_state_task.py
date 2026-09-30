@@ -94,6 +94,8 @@ class GameStateTask:
     _logged_post_match: bool = field(default=False, init=False)
 
     _reset_floor: int = field(default=-1, init=False)
+    # Per-player position warning window: (last warning time, suppressed count).
+    _position_drop_logs: dict[int, tuple[int, int]] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         self._reorder = ReorderBuffer(
@@ -129,6 +131,8 @@ class GameStateTask:
                     await self.reset_match()
                 elif isinstance(event, LinkReset):
                     self._clock_anchors.pop((event.player_id, event.channel), None)
+                    if event.channel == _CHANNEL_POSITION:
+                        self._position_drop_logs.pop(event.player_id, None)
                     # Already normalized events and gameplay state belong to the match, not the
                     # replacement socket. Clearing guard here would let a later reconnect alter
                     # an earlier queued attack. New input updates state in event-time order.
@@ -182,9 +186,19 @@ class GameStateTask:
         reason = self._reorder.push(timestamp, TimedInput(timestamp, event), now,
                                     priority=1 if isinstance(event, InboundAction) else 0)
         if reason is not None:
+            suppressed = 0
+            if isinstance(event, InboundPosition):
+                previous = self._position_drop_logs.get(event.player_id)
+                if previous is not None:
+                    last_log, suppressed = previous
+                    if now - last_log < 5000:
+                        self._position_drop_logs[event.player_id] = (last_log, suppressed + 1)
+                        return
+                self._position_drop_logs[event.player_id] = (now, 0)
             logger.warning(
                 "action_dropped_late" if isinstance(event, InboundAction) else "event_dropped",
                 **timing, reason=reason, queue_depth=len(self._reorder),
+                suppressed_since_last_warning=suppressed,
                 total_dropped_late=self._reorder.dropped_late)
 
     async def reset_match(self) -> None:
@@ -301,6 +315,12 @@ class GameStateTask:
                 action=ev.action.value,
                 confidence=round(ev.confidence, 3),
                 weapon=weapon.value if weapon else None,
+                reason=decision.reason,
+                position_max_age_ms=self.rules.position_max_age_ms,
+                position_age_ms={
+                    str(pid): ev.timestamp - p.position_ts if p.position is not None else None
+                    for pid, p in resolution_state.players.items()
+                },
             )
             return
 

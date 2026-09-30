@@ -73,7 +73,7 @@ namespace Cg4002.VisualizerDemo.Controllers
         private void Update()
         {
             if (!SendSyntheticPosition || !Client.IsConnected) return;
-            _positionTimer += Time.deltaTime;
+            _positionTimer += Time.unscaledDeltaTime;
             if (_positionTimer < PositionSendIntervalSeconds) return;
             _positionTimer = 0f;
             // Demo stand-in for real device tracking - just echoes wherever this player's avatar
