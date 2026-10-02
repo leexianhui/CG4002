@@ -174,9 +174,15 @@ The instantaneous total combines recent intervals; the bounded report is better 
 
 | Trial | Requested Hz each | P1 actual Hz/goodput | P2 actual Hz/goodput | Common seconds | Gaps/drops/reconnects | Conclusion |
 |---|---|---|---|---|---|---|
-| 50 | 50 | Fill from report | Fill from report | Fill | Fill | Baseline |
-| 100 | 100 | Fill from report | Fill from report | Fill | Fill | Compare |
-| 200 | 200 | Fill from report | Fill from report | Fill | Fill | Compare |
+| 50 | 50 | 50.0 Hz / 16.8 kbps | 50.0 Hz / 16.8 kbps | 72.827 | 0 gaps, no drops, no reconnects | Both complete: **selected rate** |
+| 100 | 100 | 43.6 Hz / 14.64 kbps | 100.0 Hz / 33.6 kbps | 74.864 | P1 55-58% gaps per interval; no drops, no reconnects | P1 starved |
+| 200 | 200 | 200.0 Hz / 67.2 kbps | 130.1 Hz / 43.7 kbps | 75.003 | P2 34-36% gaps per interval; no drops, no reconnects | P2 starved |
+
+Results recorded 2026-09-30, one trial per rate. The starved board changed between the 100 Hz and
+200 Hz trials, and each board's generated sequence span was about 101 and 201 per second. That
+points at the shared central (one laptop adapter scheduling two links) rather than at one board's
+firmware. It is a working hypothesis and has not been proven. The rates between 50 and 100 Hz
+were not tested.
 
 Repeat promising rates under the same conditions (for example three trials per candidate), then
 choose the highest repeatable receiver goodput with reliable simultaneous operation. This is an
