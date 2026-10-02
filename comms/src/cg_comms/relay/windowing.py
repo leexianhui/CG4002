@@ -109,13 +109,6 @@ class PlayerWindower:
     def current_weapon(self) -> Weapon | None:
         return self._current_weapon
 
-    def next_request_id(self) -> int:
-        """Allocates the next classifier request id. Exposed so the assessment echo path
-        (relay/assess_echo.py) draws from the SAME counter as real windows -- two independent
-        counters would eventually emit the same id, and Ultra96Client.request() rejects a duplicate
-        request_id, which would look like a dead pipeline."""
-        return self._request_ids.next()
-
     def ingest_frame(
         self,
         engine_ts_ms: int,

@@ -116,7 +116,7 @@ class Ultra96Client:
             nonlocal sent_at, phase, encode_ms, write_drain_ms, request_bytes
             phase = "encoding"
             began = loop.time()
-            payload = (window.model_dump_json(by_alias=True, exclude={"demo_trace_id"} if window.demo_trace_id is None else set()) + "\n").encode()
+            payload = (window.model_dump_json(by_alias=True) + "\n").encode()
             request_bytes = len(payload)
             encode_ms = (loop.time() - began) * 1000
             phase = "write_drain"
@@ -133,7 +133,6 @@ class Ultra96Client:
         def timing() -> dict[str, Any]:
             now = loop.time()
             return dict(player_id=window.player_id, request_id=window.request_id,
-                        demo_trace_id=window.demo_trace_id,
                         window_timestamp_ms=window.timestamp,
                         elapsed_ms=round((now - started) * 1000, 3),
                         encode_ms=round(encode_ms, 3), write_drain_ms=round(write_drain_ms, 3),
@@ -144,7 +143,6 @@ class Ultra96Client:
 
         try:
             logger.info("classifier_request", player_id=window.player_id,
-                        demo_trace_id=window.demo_trace_id,
                         request_id=window.request_id, trigger_id=window.trigger_id,
                         window_timestamp_ms=window.timestamp,
                         window_age_ms=monotonic_ms() - window.timestamp,
@@ -153,13 +151,12 @@ class Ultra96Client:
             # and cross-machine wall-clock offsets are not part of this RTT measurement.
             started = loop.time()
             result = await asyncio.wait_for(exchange(), self.request_timeout_ms / 1000)
-            # Contract (COMMS_ASSESSMENT_IMPLEMENTATION_PLAN.md §6): the classifier echoes playerId,
-            # timestamp and demoTraceId unchanged. Name the offending field so a real-AI
-            # integration that re-stamps its own timestamp is diagnosable from one log line.
+            # Contract (app_messages.md §3.2): the classifier echoes playerId and timestamp
+            # unchanged. Name the offending field so a real-AI integration that re-stamps its own
+            # timestamp is diagnosable from one log line.
             mismatched = [name for name, got, sent in (
                 ("playerId", result.player_id, window.player_id),
                 ("timestamp", result.timestamp, window.timestamp),
-                ("demoTraceId", result.demo_trace_id, window.demo_trace_id),
             ) if got != sent]
             if mismatched:
                 raise Ultra96Unavailable(

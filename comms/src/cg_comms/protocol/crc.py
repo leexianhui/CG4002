@@ -30,9 +30,8 @@ _TABLE: tuple[int, ...] = _build_table()
 def crc16_update(crc: int, data: bytes) -> int:
     """Continues a CRC-16/CCITT-FALSE computation: crc16_update(crc16(a), b) == crc16(a + b).
 
-    Used for the assessment file transfer's running CRC, which the device reports per chunk (mirror:
-    cg_crc16_update() in firmware_demo/lib/cg_protocol/cg_assess.h). Valid only because this CRC
-    variant has no final XOR and no output reflection -- the register IS the published value.
+    Valid only because this CRC variant has no final XOR and no output reflection -- the register
+    IS the published value.
     """
     for byte in data:
         crc = ((crc << 8) & 0xFFFF) ^ _TABLE[((crc >> 8) ^ byte) & 0xFF]

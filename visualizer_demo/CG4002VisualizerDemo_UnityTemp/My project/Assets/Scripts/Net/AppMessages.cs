@@ -58,7 +58,6 @@ namespace Cg4002.VisualizerDemo.Net
     // §7.2). Guard is action=IDLE + guardState=GUARDING, not a member of ActionClass.
     public class ActionRecognized : Envelope
     {
-        [JsonProperty("demoTraceId")] public string DemoTraceId;
         [JsonProperty("playerId")] public int PlayerId;
         [JsonProperty("weapon")] public string Weapon;
         [JsonProperty("action")] public string Action;

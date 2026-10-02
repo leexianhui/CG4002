@@ -237,10 +237,6 @@ PACKET_TYPES = {
     "HEARTBEAT": 0x20,
     "ACK": 0x21,
     "COMBAT_FEEDBACK": 0x30,
-    "ASSESS_ECHO_REQ": 0x40,
-    "ASSESS_ECHO_RESP": 0x41,
-    "ASSESS_FILE_CHUNK": 0x42,
-    "ASSESS_FILE_ACK": 0x43,
 }
 
 PSK = bytes.fromhex("000102030405060708090a0b0c0d0e0f")
@@ -393,67 +389,5 @@ vectors.append(normal_vector(
     plaintext=combat_feedback_plaintext,
 ))
 
-# --- Assessment/demo extension types (0x40-0x4F) -------------------------------------------------
-# Directions matter here and are easy to get backwards: _REQ/_CHUNK are laptop -> device
-# (direction 1), _RESP/_ACK are device -> laptop (direction 0). Getting one wrong still produces a
-# self-consistent vector, so it would pass a round-trip test while disagreeing with the firmware.
-
-# trace_id, sent_ms, keycode ('a'), payload_kind, value_a..c
-assess_echo_req_plaintext = struct.pack("<IBBIBB18h", 0x11223344, 0x61, 2, 777000, 0, 1,
-    1000, -2000, 3000, 164, 0, -82, 0, 0, 2048, 0, 0, 0, 0, 0, 2048, 0, 0, 0)
-vectors.append(normal_vector(
-    "ASSESS_ECHO_REQ", PACKET_TYPES["ASSESS_ECHO_REQ"],
-    session_id=SESSION_ID, player_id=1, direction=1, seq=11, ext_seq=11,
-    plaintext=assess_echo_req_plaintext,
-))
-
-# trace_id echoed, device_timestamp_ms, keycode echoed, payload_kind echoed, transform_id, reserved,
-# transformed value_a..c (here: negate, transform_id 1)
-assess_echo_resp_plaintext = struct.pack(
-    "<IBBBBIBB18h", 0x11223344, 0x61, 2, 1, 0, 777123, 0, 1,
-    -1000, 2000, -3000, 164, 0, -82, 0, 0, 2048, 0, 0, 0, 0, 0, 2048, 0, 0, 0,
-)
-vectors.append(normal_vector(
-    "ASSESS_ECHO_RESP", PACKET_TYPES["ASSESS_ECHO_RESP"],
-    session_id=SESSION_ID, player_id=1, direction=0, seq=12, ext_seq=12,
-    plaintext=assess_echo_resp_plaintext,
-))
-
-# chunk_index, total_chunks, chunk_len, reserved, data[32] (11 valid bytes, zero-padded -- exercises
-# the padding path, which is the part a fixed-length BYTES field makes easy to get wrong)
-assess_file_chunk_plaintext = struct.pack(
-    "<IHHBB32s", 123, 3, 7, 11, 0, b"hello world",
-)
-assert len(assess_file_chunk_plaintext) == 42
-vectors.append(normal_vector(
-    "ASSESS_FILE_CHUNK", PACKET_TYPES["ASSESS_FILE_CHUNK"],
-    session_id=SESSION_ID, player_id=1, direction=1, seq=13, ext_seq=13,
-    plaintext=assess_file_chunk_plaintext,
-))
-
-# chunk_index, running_crc, received_bytes
-assess_file_ack_plaintext = struct.pack("<IHHI", 123, 3, 0x29B1, 107)
-vectors.append(normal_vector(
-    "ASSESS_FILE_ACK", PACKET_TYPES["ASSESS_FILE_ACK"],
-    session_id=SESSION_ID, player_id=1, direction=0, seq=14, ext_seq=14,
-    plaintext=assess_file_ack_plaintext,
-))
-
-vectors.append(normal_vector(
-    "ASSESS_FILE_READ", 0x44, session_id=SESSION_ID, player_id=1, direction=1, seq=15, ext_seq=15,
-    plaintext=struct.pack("<IH", 123, 0),
-))
-vectors.append(normal_vector(
-    "ASSESS_FILE_DATA", 0x45, session_id=SESSION_ID, player_id=1, direction=0, seq=16, ext_seq=16,
-    plaintext=struct.pack("<IHHBB32s", 123, 0, 11, 11, 0, b"hello world"),
-))
-vectors.append(normal_vector(
-    "ASSESS_WEAPON_REQ", 0x46, session_id=SESSION_ID, player_id=1, direction=1, seq=17, ext_seq=17,
-    plaintext=struct.pack("<I", 0x11223344),
-))
-vectors.append(normal_vector(
-    "ASSESS_WEAPON_RESP", 0x47, session_id=SESSION_ID, player_id=1, direction=0, seq=18, ext_seq=18,
-    plaintext=struct.pack("<IIB", 0x11223344, 777123, 2),
-))
 output = {"psk_hex": PSK.hex(), "vectors": vectors}
 print(json.dumps(output, indent=2))

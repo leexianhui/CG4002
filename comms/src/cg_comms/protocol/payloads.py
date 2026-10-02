@@ -55,12 +55,6 @@ class Field:
 
 
 PAYLOAD_TABLES: dict[PacketType, tuple[Field, ...]] = {
-    PacketType.ASSESS_WEAPON_REQ: (Field("trace_id", FieldKind.U32),),
-    PacketType.ASSESS_WEAPON_RESP: (
-        Field("trace_id", FieldKind.U32),
-        Field("device_timestamp_ms", FieldKind.U32),
-        Field("weapon_id", FieldKind.U8),
-    ),
     PacketType.HELLO: (
         Field("device_mac", FieldKind.BYTES, 6),
         Field("player_id", FieldKind.U8),
@@ -109,66 +103,4 @@ PAYLOAD_TABLES: dict[PacketType, tuple[Field, ...]] = {
         Field("duration_ms", FieldKind.U16),
         Field("repeat_count", FieldKind.U16),
     ),
-    # Assessment revision 2: a real 42-byte SENSOR_FRAME body follows correlation metadata.
-    # value_a/b/c are the first three dominant IMU axes, followed by its three gyro axes.
-    PacketType.ASSESS_ECHO_REQ: (
-        Field("trace_id", FieldKind.U32),
-        Field("keycode", FieldKind.U8),
-        Field("payload_kind", FieldKind.U8),
-        Field("sent_ms", FieldKind.U32),
-        Field("flags", FieldKind.U8),
-        Field("weapon_id", FieldKind.U8),
-        Field("value_a", FieldKind.I16),
-        Field("value_b", FieldKind.I16),
-        Field("value_c", FieldKind.I16),
-        Field("dominant_gyro", FieldKind.I16_ARRAY, 3),
-        Field("offhand", FieldKind.I16_ARRAY, 6),
-        Field("torso", FieldKind.I16_ARRAY, 6),
-    ),
-    PacketType.ASSESS_ECHO_RESP: (
-        Field("trace_id", FieldKind.U32),
-        Field("keycode", FieldKind.U8),
-        Field("payload_kind", FieldKind.U8),
-        Field("transform_id", FieldKind.U8),
-        Field("reserved", FieldKind.U8),
-        Field("device_timestamp_ms", FieldKind.U32),
-        Field("flags", FieldKind.U8),
-        Field("weapon_id", FieldKind.U8),
-        Field("value_a", FieldKind.I16),
-        Field("value_b", FieldKind.I16),
-        Field("value_c", FieldKind.I16),
-        Field("dominant_gyro", FieldKind.I16_ARRAY, 3),
-        Field("offhand", FieldKind.I16_ARRAY, 6),
-        Field("torso", FieldKind.I16_ARRAY, 6),
-    ),
-    PacketType.ASSESS_FILE_CHUNK: (
-        Field("transfer_id", FieldKind.U32),
-        Field("chunk_index", FieldKind.U16),
-        Field("total_chunks", FieldKind.U16),
-        Field("chunk_len", FieldKind.U8),
-        Field("reserved", FieldKind.U8),
-        Field("data", FieldKind.BYTES, 32),
-    ),
-    PacketType.ASSESS_FILE_ACK: (
-        Field("transfer_id", FieldKind.U32),
-        Field("chunk_index", FieldKind.U16),
-        Field("running_crc", FieldKind.U16),
-        Field("received_bytes", FieldKind.U32),
-    ),
-    PacketType.ASSESS_FILE_READ: (
-        Field("transfer_id", FieldKind.U32),
-        Field("chunk_index", FieldKind.U16),
-    ),
-    PacketType.ASSESS_FILE_DATA: (
-        Field("transfer_id", FieldKind.U32),
-        Field("chunk_index", FieldKind.U16),
-        Field("total_bytes", FieldKind.U16),
-        Field("chunk_len", FieldKind.U8),
-        Field("reserved", FieldKind.U8),
-        Field("data", FieldKind.BYTES, 32),
-    ),
 }
-
-# Longest valid `data` field in an ASSESS_FILE_CHUNK. Kept next to the table it constrains so the
-# sender, the firmware and the tests all quote one number.
-ASSESS_FILE_CHUNK_DATA_LEN: int = 32

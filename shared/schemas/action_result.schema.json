@@ -5,7 +5,6 @@
   "description": "Ultra96 -> relay (laptop). See shared/protocol/app_messages.md §3.2. requestId echoes the triggering SENSOR_WINDOW's requestId. Unknown keys are allowed and ignored by the relay (§3.2, COMMS_IMPLEMENTATION_PLAN.md §16.3 rule 3).",
   "type": "object",
   "properties": {
-    "demoTraceId": {"type": ["string", "null"], "maxLength": 96},
     "type": { "const": "ACTION_RESULT" },
     "version": { "type": "integer", "const": 1 },
     "timestamp": { "type": "integer", "minimum": 0 },

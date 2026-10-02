@@ -139,8 +139,9 @@ read its `outcome`:
 - `ON_COOLDOWN` -- fired inside the weapon's cooldown. Expected during rapid swings.
 
 **Repeated `event_dropped` for `POSITION`, while Unity shows attacks without damage.**
-Read `player_id`, `event_age_ms`, and `reason`. With the assessment profile the release hold is
-650 ms; the absolute age limit is 1150 ms (650 + `late_drop_ms` 500). Events can also be rejected
+Read `player_id`, `event_age_ms`, and `reason`. With the default `shared/config/match.yaml` the release hold is
+110 ms (`reorder_delay_ms` 60 + `guard_grace_ms` 50); the absolute age limit is 610 ms (110 +
+`late_drop_ms` 500). Events can also be rejected
 earlier if another event has already advanced the release watermark. Rejected positions stop
 refreshing geometry, so attacks become `IGNORED`. `action_not_resolved.reason` now distinguishes
 `missing_position` / `stale_position` from other causes, and `position_age_ms` gives both players'

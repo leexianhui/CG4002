@@ -109,31 +109,12 @@ class TimeSyncConfig(_Model):
     hello_nonce_replay_window_s: int = 60
 
 
-class AssessmentConfig(_Model):
-    """Comms-assessment demo features (docs/COMMS_ASSESSMENT_CHECKLIST.md). Off by default: with
-    `enabled=False` the relay behaves exactly as it does for the normal game/triggered-action demo,
-    so turning the assessment on cannot regress a working demo."""
-
-    enabled: bool = False
-    # None => fresh random seed per session. Set to the seed logged as `assess_seed` to replay a
-    # run's dummy-variant sequence exactly.
-    seed: int | None = None
-    # How long one keystroke's trace waits for its ASSESS_ECHO_RESP, counted from the moment the
-    # device's transport ACK for the request arrives (the retransmit budget is spent before that,
-    # inside send_reliable). The device sends the RESP before the ACK, so this is only a backstop.
-    echo_timeout_s: float = Field(default=6.0, gt=0)
-    # Period of the throughput/kbps report (`throughput` log event, throughput-p<N>-latest.json).
-    # The sensor-frame RATE is a firmware build flag (CG_DEMO_SENSOR_FRAME_INTERVAL_MS), not config.
-    stats_interval_s: float = Field(default=5.0, gt=0)
-
-
 class RelaySettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="CG_RELAY_", env_nested_delimiter="__", env_file=".env.relay", extra="forbid"
     )
 
     player_id: Literal[1, 2] = 1
-    latency_profile: Literal["configured", "assessment"] = "configured"
     psk_hex: str = ""
     logs_dir: Path = Path("logs")
 
@@ -145,7 +126,6 @@ class RelaySettings(BaseSettings):
     timesync: TimeSyncConfig = Field(default_factory=TimeSyncConfig)
     ultra96: Ultra96Config = Field(default_factory=Ultra96Config)
     engine_link: EngineLinkConfig = Field(default_factory=EngineLinkConfig)
-    assessment: AssessmentConfig = Field(default_factory=AssessmentConfig)
 
     @field_validator("player_id", mode="before")
     @classmethod
@@ -168,7 +148,6 @@ class EngineSettings(BaseSettings):
     )
 
     host: str = "0.0.0.0"
-    latency_profile: Literal["configured", "assessment"] = "configured"
     port: int = 8443
     use_tls: bool = True
     cert_path: str = "certs/engine.crt"

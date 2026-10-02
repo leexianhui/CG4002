@@ -161,17 +161,8 @@ def reliable_kind(packet_type: PacketType) -> str:
     """Groups ACK-retransmit types that share one replay watermark (SequenceTracker.reliable_high).
 
     Types in one group must never have more than one packet in flight at a time, so that a retransmit
-    is always the newest packet of its group. All four laptop->device assessment types share a group
-    because the relay serializes them behind one lock (Session._assess_send_lock), and the firmware's
-    is_assess_reliable() uses one watermark for exactly these four; every other type is its own group.
+    is always the newest packet of its group. Every ACK-retransmit type is currently its own group.
     """
-    if packet_type in (
-        PacketType.ASSESS_ECHO_REQ,
-        PacketType.ASSESS_FILE_CHUNK,
-        PacketType.ASSESS_FILE_READ,
-        PacketType.ASSESS_WEAPON_REQ,
-    ):
-        return "assess"
     return str(packet_type.name)
 
 

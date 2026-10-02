@@ -11,15 +11,14 @@ available yet. See `docs/COMMS_IMPLEMENTATION_PLAN.md` for the full design; this
 ```
 src/cg_comms/
   clock.py, logging_setup.py, config.py   # cross-cutting: time, structured logs, settings
-  assessment_timing.py, timer_resolution.py  # assessment latency profile; Windows 1 ms timer
+  timer_resolution.py                    # Windows 1 ms timer for paced mocks
   protocol/        # binary wire format: header, crypto, framing, CRC, payload tables (strict-typed)
   messages/        # pydantic app-layer JSON models + schema-version gate
   transport/       # ITransport + ble/tcp/loopback implementations
   relay/           # per-device session, windowing, reliability, heartbeat, Ultra96/engine clients
-                   # assess_*.py + throughput.py: assessment keyboard, echo, file transfer, rate stats
   engine/          # authoritative game state, resolver, reorder buffer, WSS server (strict-typed)
-  mock/            # firebeetle_sim / ultra96_sim / visualizer_sim / assess_device / scenario playback
-  tools/           # latency_report, reset_match, classifier_probe, assessment_fixture
+  mock/            # firebeetle_sim / ultra96_sim / visualizer_sim / scenario playback
+  tools/           # latency_report, reset_match, classifier_probe
 configs/           # relay.p1.yaml, relay.p2.yaml, relay.p1.mock.yaml, engine.yaml, scenarios/
 scripts/           # gen_psk.py, gen_certs.sh, tunnel.sh, run_demo.{sh,ps1}, kill_stale.ps1, ...
 tests/             # pytest suite (golden vectors in shared/protocol/golden_vectors.json)
@@ -68,13 +67,6 @@ A scenario file is a flat YAML list under `steps:`, each `{delay_ms, kind, paylo
 pytest            # full suite; soak tests are opt-in: pytest -m soak
 ruff check src tests
 ```
-
-## Assessment demo
-
-The assessment/keyboard procedure (`a` weapon, `b/c/d` editable IMU, `D`, `F`, `L`) is documented in
-[`docs/DETERMINISTIC_KEYBOARD_DEMO.md`](../docs/DETERMINISTIC_KEYBOARD_DEMO.md) and
-[`docs/COMMS_LIVE_AND_VIDEO_GUIDE.md`](../docs/COMMS_LIVE_AND_VIDEO_GUIDE.md). The combined P1+P2
-throughput view is `cg-throughput-total` (equivalently `python -m cg_comms.relay.throughput`).
 
 ## Security
 

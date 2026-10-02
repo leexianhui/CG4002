@@ -63,7 +63,7 @@ removed once this one was verified on the phones.
    engine through two Termux sessions: an SSH `-J` forward of the engine's 8443, and
    `socat TCP-LISTEN:8080,reuseaddr,fork OPENSSL:127.0.0.1:8443,verify=0`, so Unity speaks
    plaintext to local socat and socat carries TLS through SSH (NOT the Ultra96's raw IP, which times
-   out from a phone even on the NUS VPN). See `docs/COMMS_LIVE_AND_VIDEO_GUIDE.md` for both commands.
+   out from a phone even on the NUS VPN). See `comms/DEMO_RUNBOOK.md` §8 for both commands.
 5. **GameObject → Create Empty**, name it `HudController`. Add Component → `DemoHudController`.
    Drag the `EngineClient` object into its `Client` field, and drag each avatar/slider/label/text
    object created above into the matching field in the Inspector.

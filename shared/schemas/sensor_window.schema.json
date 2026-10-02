@@ -14,7 +14,6 @@
     }
   },
   "properties": {
-    "demoTraceId": {"type": ["string", "null"], "maxLength": 96},
     "type": { "const": "SENSOR_WINDOW" },
     "version": { "type": "integer", "const": 1 },
     "timestamp": { "type": "integer", "minimum": 0 },

@@ -62,21 +62,8 @@ extern "C" {
 #define CG_PKT_ACK             0x21 /* both               never acked itself */
 #define CG_PKT_COMBAT_FEEDBACK 0x30 /* laptop -> device   reliable    */
 
-/* Assessment/demo extension range 0x40-0x4F. Used only by the comms-assessment demo features
- * (keyboard-driven echo pipeline, file transfer); the real game never sends these.
- *
- * Only the laptop -> device directions are reliable (ACK + retransmit). That is deliberate: the
- * firmware's CgReliableSend (lib/cg_protocol/cg_reliable.h) is a SINGLE SLOT already shared with
- * RFID_EVENT, so a reliable device -> laptop assessment type would contend with the working RFID
- * path. The device only has to ACK these; the _RESP direction is re-driven by the _REQ retransmit. */
-#define CG_PKT_ASSESS_ECHO_REQ    0x40 /* laptop -> device   reliable    */
-#define CG_PKT_ASSESS_ECHO_RESP   0x41 /* device -> laptop   best-effort */
-#define CG_PKT_ASSESS_FILE_CHUNK  0x42 /* laptop -> device   reliable    */
-#define CG_PKT_ASSESS_FILE_ACK    0x43 /* device -> laptop   best-effort */
-#define CG_PKT_ASSESS_FILE_READ 0x44
-#define CG_PKT_ASSESS_FILE_DATA 0x45
-#define CG_PKT_ASSESS_WEAPON_REQ 0x46
-#define CG_PKT_ASSESS_WEAPON_RESP 0x47
+/* 0x40-0x4F: RESERVED. Used by the retired comms-assessment extension (see git history);
+ * never reassign these values, so an old firmware build can never be misread. */
 
 /* ------------------------------------------------------------------------------------------- */
 /* SENSOR_FRAME.flags bits                                                                      */
@@ -204,58 +191,6 @@ typedef struct CG_PACKED {
     uint16_t duration_ms;
     uint16_t repeat_count;
 } cg_payload_combat_feedback_t;
-
-/* --- Assessment/demo payloads (0x40-0x4F) ---------------------------------------------------- */
-
-/* Assessment revision 2. Paired firmware/relay deployment required.
- * Echo bodies contain the exact 42-byte sensor layout after 6/8 bytes of metadata.
- * The split dominant fields preserve the transform's simple three-axis interface. */
-typedef struct CG_PACKED {
-    uint32_t trace_id;
-    uint8_t keycode, payload_kind;
-    uint32_t sent_ms;
-    uint8_t flags, weapon_id;
-    int16_t value_a, value_b, value_c;
-    int16_t dominant_gyro[3], offhand[6], torso[6];
-} cg_payload_assess_echo_req_t; /* 48 bytes, wire 74 */
-typedef struct CG_PACKED {
-    uint32_t trace_id;
-    uint8_t keycode, payload_kind, transform_id, reserved;
-    uint32_t device_timestamp_ms;
-    uint8_t flags, weapon_id;
-    int16_t value_a, value_b, value_c;
-    int16_t dominant_gyro[3], offhand[6], torso[6];
-} cg_payload_assess_echo_resp_t; /* 50 bytes, wire 76 */
-typedef struct CG_PACKED {
-    uint32_t transfer_id;
-    uint16_t chunk_index, total_chunks;
-    uint8_t chunk_len, reserved;
-    uint8_t data[32];
-} cg_payload_assess_file_chunk_t; /* 42 bytes */
-typedef struct CG_PACKED {
-    uint32_t transfer_id;
-    uint16_t chunk_index, running_crc;
-    uint32_t received_bytes;
-} cg_payload_assess_file_ack_t; /* 12 bytes */
-typedef struct CG_PACKED {
-    uint32_t transfer_id;
-    uint16_t chunk_index;
-} cg_payload_assess_file_read_t;
-typedef struct CG_PACKED {
-    uint32_t transfer_id;
-    uint16_t chunk_index, total_bytes;
-    uint8_t chunk_len, reserved;
-    uint8_t data[32];
-} cg_payload_assess_file_data_t; /* 42 bytes */
-
-typedef struct CG_PACKED {
-    uint32_t trace_id;
-} cg_payload_assess_weapon_req_t;
-typedef struct CG_PACKED {
-    uint32_t trace_id;
-    uint32_t device_timestamp_ms;
-    uint8_t weapon_id;
-} cg_payload_assess_weapon_resp_t;
 
 /* ------------------------------------------------------------------------------------------- */
 /* CRC-16/CCITT-FALSE                                                                            */

@@ -6,9 +6,7 @@
 //
 // Flow: advertise BLE -> laptop connects & subscribes -> HELLO/HELLO_ACK -> 8x TIME_SYNC burst ->
 // stream SENSOR_FRAME @50Hz + HEARTBEAT @1Hz, fire RFID_EVENT on button press, ACK incoming
-// COMBAT_FEEDBACK, answer the assessment packets (ASSESS_ECHO_REQ -> modified ASSESS_ECHO_RESP,
-// ASSESS_FILE_CHUNK -> ASSESS_FILE_ACK with a running CRC). Mirrors
-// comms/src/cg_comms/mock/firebeetle_sim.py's device-side behavior.
+// COMBAT_FEEDBACK. Mirrors comms/src/cg_comms/mock/firebeetle_sim.py's device-side behavior.
 
 #include <Arduino.h>
 #include <BLE2902.h>
@@ -16,7 +14,6 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 
-#include "cg_assess.h"
 #include "cg_config.h"
 #include "cg_frame.h"
 #include "cg_protocol.h"
@@ -44,29 +41,6 @@ uint8_t g_capture_trigger_id = 0;
 // A duplicate is ACKed again but never applied twice on either side.
 CgReliableSend g_pending_rfid;
 CgReliableReceiveCache g_feedback_cache;
-
-// Assessment reliable packets (ECHO_REQ, FILE_CHUNK, FILE_READ, WEAPON_REQ) get their OWN cache and replay
-// watermark, separate from COMBAT_FEEDBACK's: the relay can have one feedback AND one assessment
-// packet in flight at once, and a shared watermark would let a newer packet of one kind make the
-// retransmit of the other look like a replay. Within the assessment kind the relay keeps at most
-// one packet in flight (Session._assess_send_lock), so "a retransmit is always the newest
-// assessment frame" holds and one monotonic watermark per kind is sufficient.
-CgReliableReceiveCache g_assess_cache;
-CgAssessFileRx g_file_rx;
-uint8_t g_file_data[4096]; // retained only for this BLE session; no flash writes
-// The last request frame we answered and the response PLAINTEXT we sent for it. A retransmit of that
-// request means our ACK was lost -- and possibly our response too -- so the response is re-sent with
-// the re-ACK. It is re-encoded under a FRESH sequence number rather than replayed byte-for-byte: a
-// retransmit can arrive seconds later, after >64 sensor frames, when the old response's seq would sit
-// outside the relay's 64-wide replay window and be dropped as a replay. The relay tolerates the
-// duplicate by design (an ECHO_RESP for an already-resolved trace is ignored; a repeated FILE_ACK
-// is matched by chunk_index), so re-sending is harmless when the original did arrive.
-uint8_t g_assess_last_req[CG_MAX_FRAME_SIZE];
-size_t g_assess_last_req_len = 0;
-uint8_t g_assess_last_resp_type = 0;  // 0 = none
-uint8_t g_assess_last_resp[sizeof(cg_payload_assess_echo_resp_t)];  // the largest assessment response
-size_t g_assess_last_resp_len = 0;
-uint32_t g_assess_echoes = 0;
 
 const uint8_t kActionButtonPins[CG_DEMO_ACTION_BUTTON_COUNT] = CG_DEMO_ACTION_BUTTON_PINS;
 const uint8_t kActionButtonTriggerIds[CG_DEMO_ACTION_BUTTON_COUNT] = CG_DEMO_ACTION_BUTTON_TRIGGER_IDS;
@@ -301,123 +275,7 @@ void send_ack_for(uint16_t acked_seq) {
     send_packet(CG_PKT_ACK, payload, sizeof(payload), nullptr, 0);
 }
 
-bool is_assess_reliable(uint8_t packet_type) {
-    return packet_type == CG_PKT_ASSESS_ECHO_REQ || packet_type == CG_PKT_ASSESS_FILE_CHUNK || packet_type == CG_PKT_ASSESS_FILE_READ || packet_type == CG_PKT_ASSESS_WEAPON_REQ;
-}
-
-void send_rfid_event_next_weapon();  // same entry point used by the physical GPIO button
 uint8_t next_weapon_id() { return (g_weapon_id % 3) + 1; }
-
-// Handles one authenticated, length-checked ASSESS_ECHO_REQ / ASSESS_FILE_CHUNK. Returns true if the
-// request was PROCESSED -- its response was accepted by the BLE stack -- in which case the caller
-// commits replay state. Returns false to leave everything (replay window, watermark, cache, file
-// progress) untouched and send no ACK, so the relay's identical retransmit is processed afresh.
-//
-// Why the response gates the ACK: notify() can be refused on-chip (rc=-1) under load. If we ACKed
-// anyway, the relay would stop retransmitting and the response would be silently gone -- for the
-// echo a lost keystroke, for a file a stall. Not ACKing turns an on-chip drop into an ordinary
-// retransmit, which the reliability layer already handles.
-bool handle_assess_reliable(uint8_t packet_type, const uint8_t *plaintext, uint16_t seq) {
-    uint8_t resp_type;
-    uint8_t resp[sizeof(g_assess_last_resp)];
-    size_t resp_len;
-    if (packet_type == CG_PKT_ASSESS_WEAPON_REQ) {
-        cg_payload_assess_weapon_req_t req;
-        memcpy(&req, plaintext, sizeof(req));
-        if (req.trace_id == 0) return false;
-        cg_payload_assess_weapon_resp_t selected = {req.trace_id, millis(), next_weapon_id()};
-        resp_type = CG_PKT_ASSESS_WEAPON_RESP;
-        resp_len = sizeof(selected);
-        memcpy(resp, &selected, resp_len);
-        if (!send_packet(resp_type, resp, resp_len, nullptr, 0)) return false;
-        // Commit only after notify accepts the reply. The exact-frame cache prevents a lost
-        // reply/ACK retry from cycling twice. RFID uses its existing reliable announcement path.
-        send_rfid_event_next_weapon();
-        Serial.printf("[assess] key=a trace=%lu weapon=%u\n", (unsigned long)req.trace_id, (unsigned)g_weapon_id);
-    } else if (packet_type == CG_PKT_ASSESS_ECHO_REQ) {
-        cg_payload_assess_echo_req_t req;
-        memcpy(&req, plaintext, sizeof(req));
-        if (req.trace_id == 0 || req.weapon_id < 1 || req.weapon_id > 3 || req.flags != 0) return false;
-        cg_payload_assess_echo_resp_t echo;
-        cg_assess_build_echo_resp(&req, millis(), &echo);
-        resp_type = CG_PKT_ASSESS_ECHO_RESP;
-        resp_len = sizeof(echo);
-        memcpy(resp, &echo, resp_len);
-        if (!send_packet(resp_type, resp, resp_len, nullptr, 0)) {
-            Serial.printf("[assess] echo resp refused by BLE stack, not ACKing trace=%lu (relay retransmits)\n",
-                          (unsigned long)req.trace_id);
-            return false;
-        }
-        g_assess_echoes++;
-        // Printed per keystroke on purpose: keystrokes are human-rate, and this line is the
-        // on-device evidence that the FireBeetle itself modified the data.
-        Serial.printf("[assess] echo #%lu trace=%lu key=0x%02X kind=%u transform=%u in=(%d,%d,%d) out=(%d,%d,%d)\n",
-                      (unsigned long)g_assess_echoes, (unsigned long)req.trace_id, (unsigned)req.keycode,
-                      (unsigned)req.payload_kind, (unsigned)echo.transform_id,
-                      (int)req.value_a, (int)req.value_b, (int)req.value_c,
-                      (int)echo.value_a, (int)echo.value_b, (int)echo.value_c);
-    } else if (packet_type == CG_PKT_ASSESS_FILE_READ) {
-        cg_payload_assess_file_read_t req;
-        memcpy(&req, plaintext, sizeof(req));
-        if (!g_file_rx.complete() || req.transfer_id != g_file_rx.transfer_id ||
-            req.chunk_index >= g_file_rx.total_chunks) return false;
-        cg_payload_assess_file_data_t data = {};
-        data.transfer_id = req.transfer_id;
-        data.chunk_index = req.chunk_index;
-        data.total_bytes = (uint16_t)g_file_rx.received_bytes;
-        const uint32_t offset = (uint32_t)req.chunk_index * 32;
-        const uint32_t remaining = g_file_rx.received_bytes - offset;
-        data.chunk_len = (uint8_t)(remaining < 32 ? remaining : 32);
-        memcpy(data.data, g_file_data + offset, data.chunk_len);
-        resp_type = CG_PKT_ASSESS_FILE_DATA;
-        resp_len = sizeof(data);
-        memcpy(resp, &data, resp_len);
-        if (!send_packet(resp_type, resp, resp_len, nullptr, 0)) return false;
-    } else {
-        cg_payload_assess_file_chunk_t chunk;
-        memcpy(&chunk, plaintext, sizeof(chunk));
-        CgAssessFileRx next;
-        const char *reason = "";
-        CgFileVerdict verdict = g_file_rx.evaluate(&chunk, &next, &reason);
-        if (verdict == CG_FILE_MALFORMED) {
-            Serial.printf("[file] malformed chunk %u/%u dropped (%s)\n",
-                          (unsigned)chunk.chunk_index, (unsigned)chunk.total_chunks, reason);
-            return false;  // never ACK a malformed chunk; the relay gives up with LinkDegraded
-        }
-        cg_payload_assess_file_ack_t ack;
-        ack.transfer_id = chunk.transfer_id;
-        ack.chunk_index = chunk.chunk_index;
-        ack.running_crc = next.running_crc;
-        ack.received_bytes = next.received_bytes;
-        resp_type = CG_PKT_ASSESS_FILE_ACK;
-        resp_len = sizeof(ack);
-        memcpy(resp, &ack, resp_len);
-        if (!send_packet(resp_type, resp, resp_len, nullptr, 0)) {
-            return false;  // `next` discarded: the retransmit must not append the bytes twice
-        }
-        if (verdict == CG_FILE_APPENDED) {
-            memcpy(g_file_data + (uint32_t)chunk.chunk_index * 32, chunk.data, chunk.chunk_len);
-        }
-        g_file_rx = next;
-        // Per-chunk printing would add a few ms of blocking serial per chunk; print only the edges
-        // (first, last, out-of-sequence) unless link debugging is on.
-        if (verdict == CG_FILE_OUT_OF_SEQUENCE) {
-            Serial.printf("[file] out-of-sequence chunk %u/%u (expected %u), state unchanged\n",
-                          (unsigned)chunk.chunk_index, (unsigned)chunk.total_chunks,
-                          (unsigned)g_file_rx.next_index);
-        } else if (chunk.chunk_index == 0 || g_file_rx.complete() || CG_DEMO_DEBUG_SERIAL) {
-            Serial.printf("[file] chunk %u/%u len=%u bytes=%lu crc=0x%04X%s\n",
-                          (unsigned)chunk.chunk_index + 1u, (unsigned)chunk.total_chunks,
-                          (unsigned)chunk.chunk_len, (unsigned long)g_file_rx.received_bytes,
-                          (unsigned)g_file_rx.running_crc, g_file_rx.complete() ? " COMPLETE" : "");
-        }
-    }
-    g_assess_last_resp_type = resp_type;
-    memcpy(g_assess_last_resp, resp, resp_len);
-    g_assess_last_resp_len = resp_len;
-    send_ack_for(seq);
-    return true;
-}
 
 void drain_incoming_non_blocking() {
     IncomingFrame incoming;
@@ -429,31 +287,17 @@ void drain_incoming_non_blocking() {
             send_ack_for(wire_seq); // exact previously authenticated COMBAT_FEEDBACK only
             continue;
         }
-        if (g_assess_cache.contains(incoming.data, incoming.len, millis())) {
-            // Exact copy of an assessment request already processed: our ACK was lost. Re-ACK and,
-            // if it is the latest request, re-send its response -- never re-APPLY it (a file chunk
-            // would be appended twice, an echo counted twice).
-            if (g_assess_last_resp_type != 0 && incoming.len == g_assess_last_req_len &&
-                memcmp(incoming.data, g_assess_last_req, incoming.len) == 0 &&
-                !send_packet(g_assess_last_resp_type, g_assess_last_resp, g_assess_last_resp_len, nullptr, 0)) {
-                continue; // resent response refused on-chip: withhold the ACK so the relay retries again
-            }
-            send_ack_for(wire_seq);
-            continue;
-        }
         CgSequenceTracker candidate = g_rx_seq;
         uint32_t ext_seq;
         bool accepted = candidate.accept(wire_seq, &ext_seq);
         const uint8_t wire_type = incoming.data[2];
-        if (wire_type == CG_PKT_COMBAT_FEEDBACK || is_assess_reliable(wire_type)) {
-            // Reliable types use a per-kind monotonic watermark instead of the 64-wide window, so a
-            // first arrival after several lost sends is not mistaken for a replay (mirrors codec.py).
-            // wire_type is still unauthenticated here; a forged byte only picks which watermark is
-            // consulted, and the GCM check below (header is AAD) rejects the frame either way.
+        if (wire_type == CG_PKT_COMBAT_FEEDBACK) {
+            // Reliable types use a monotonic watermark instead of the 64-wide window, so a first
+            // arrival after several lost sends is not mistaken for a replay (mirrors codec.py).
+            // wire_type is still unauthenticated here; a forged byte only picks which check is
+            // applied, and the GCM check below (header is AAD) rejects the frame either way.
             int64_t inferred = g_rx_seq.infer(wire_seq);
-            int64_t highest = (wire_type == CG_PKT_COMBAT_FEEDBACK) ? g_feedback_cache.highest
-                                                                    : g_assess_cache.highest;
-            if (inferred <= highest) continue;
+            if (inferred <= g_feedback_cache.highest) continue;
             ext_seq = (uint32_t)inferred;
         } else if (!accepted) continue;
         uint8_t plaintext[CG_MAX_FRAME_SIZE], packet_type, player_id;
@@ -462,22 +306,7 @@ void drain_incoming_non_blocking() {
             CG_DIR_LAPTOP_TO_DEVICE, ext_seq, &packet_type, &seq, &player_id, plaintext, sizeof(plaintext));
         if (!len || player_id != CG_DEMO_PLAYER_ID) continue;
         if ((packet_type == CG_PKT_ACK && len != 2) ||
-            (packet_type == CG_PKT_COMBAT_FEEDBACK && len != sizeof(cg_payload_combat_feedback_t)) ||
-            (packet_type == CG_PKT_ASSESS_ECHO_REQ && len != sizeof(cg_payload_assess_echo_req_t)) ||
-            (packet_type == CG_PKT_ASSESS_FILE_CHUNK && len != sizeof(cg_payload_assess_file_chunk_t)) ||
-            (packet_type == CG_PKT_ASSESS_FILE_READ && len != sizeof(cg_payload_assess_file_read_t)) ||
-            (packet_type == CG_PKT_ASSESS_WEAPON_REQ && len != sizeof(cg_payload_assess_weapon_req_t))) continue;
-        if (is_assess_reliable(packet_type)) {
-            // Replay state is committed only if the request was actually answered (see
-            // handle_assess_reliable); otherwise the retransmit must look brand new.
-            if (!handle_assess_reliable(packet_type, plaintext, seq)) continue;
-            g_rx_seq = candidate;
-            g_assess_cache.highest = ext_seq;
-            g_assess_cache.remember(incoming.data, incoming.len, millis());
-            memcpy(g_assess_last_req, incoming.data, incoming.len);
-            g_assess_last_req_len = incoming.len;
-            continue;
-        }
+            (packet_type == CG_PKT_COMBAT_FEEDBACK && len != sizeof(cg_payload_combat_feedback_t))) continue;
         g_rx_seq = candidate; // commit replay state only after GCM authentication
         if (packet_type == CG_PKT_COMBAT_FEEDBACK) {
             g_feedback_cache.highest = ext_seq;
@@ -500,14 +329,6 @@ bool do_handshake() {
     g_rx_seq.reset();
     g_pending_rfid.reset();
     g_feedback_cache.reset();
-    // Assessment state is per-session like the replay window it is keyed to: a new session restarts
-    // sequence numbers, so a stale cache entry or half-finished file transfer must not survive it.
-    g_assess_cache.reset();
-    g_file_rx.reset();
-    memset(g_file_data, 0, sizeof(g_file_data));
-    g_assess_last_req_len = 0;
-    g_assess_last_resp_type = 0;
-    g_assess_last_resp_len = 0;
     g_capture_remaining = 0;
     g_session_id = 0;
     xQueueReset(g_incoming_queue);
@@ -520,8 +341,8 @@ bool do_handshake() {
     memcpy(hello, device_mac, 6);
     hello[6] = CG_DEMO_PLAYER_ID;
     hello[7] = CG_PROTOCOL_VERSION;
-    hello[8] = 3;
-    hello[9] = 0;  // firmware_version = 3 (u16 LE): deterministic keyboard + weapon command
+    hello[8] = 4;
+    hello[9] = 0;  // firmware_version = 4 (u16 LE): gameplay only, assessment extension removed
     memcpy(hello + 10, &g_device_nonce, 4);
     hello[14] = 0;
     hello[15] = 0;  // reserved
@@ -730,7 +551,7 @@ void loop() {
     if (now - last_sensor_ms >= CG_DEMO_SENSOR_FRAME_INTERVAL_MS) {
         // Absolute-deadline pacing: advance by exactly one interval rather than snapping to `now`,
         // so loop jitter (BLE notify, Serial) does not accumulate into a lower average rate -- the
-        // throughput demo quotes frames/s, and "last = now" silently loses ~1 ms per frame. If we
+        // relay's span gate assumes 50 Hz, and "last = now" silently loses ~1 ms per frame. If we
         // fell more than one interval behind (reconnect, long notify stall), resync instead of
         // bursting the backlog: a burst would overrun the notify queue and show up as loss.
         last_sensor_ms += CG_DEMO_SENSOR_FRAME_INTERVAL_MS;

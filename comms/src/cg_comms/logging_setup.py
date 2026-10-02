@@ -33,32 +33,10 @@ _FOREIGN_PRE_CHAIN = [
     structlog.stdlib.ExtraAdder(),
 ]
 
-# Per-player console colour (comms assessment: "a different colour per connection"). Keyed by the
+# Per-player console colour, so two relays sharing a screen stay distinguishable. Keyed by the
 # `component` name so each relay process tags its own lines; the JSONL file never sees these codes.
 _PLAYER_TAGS = {"relay-p1": ("\x1b[1;36m", "P1"), "relay-p2": ("\x1b[1;35m", "P2")}
 _RESET = "\x1b[0m"
-
-# Console-only event filter. `packet_sample` (one decoded frame per stats interval) is wide, so it
-# starts hidden on screen and the assessment keyboard's D key flips it. The file always keeps it.
-_console_hidden_events: set[str] = {"packet_sample"}
-
-
-def set_console_event_visible(event: str, visible: bool) -> None:
-    if visible:
-        _console_hidden_events.discard(event)
-    else:
-        _console_hidden_events.add(event)
-
-
-def console_event_visible(event: str) -> bool:
-    return event not in _console_hidden_events
-
-
-class _ConsoleEventFilter(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> bool:
-        msg = record.msg
-        return not (isinstance(msg, dict) and msg.get("event") in _console_hidden_events)
-
 
 def enable_ansi_on_windows() -> bool:
     """Makes raw ANSI colour codes render on a Windows console. Returns False if that is not
@@ -85,46 +63,6 @@ def _player_tagger(colors: bool):
         return event_dict
 
     return tag
-
-
-def _assessment_console(_logger: object, _name: str, event_dict: dict) -> dict:
-    """Short live-demo views; the JSONL formatter retains every original diagnostic field."""
-    views = {
-        "assess_echo_sent": ("key", "variant", "values", "transform_name"),
-        "assess_echo_verified": ("key", "variant", "received", "transform", "rtt_ms"),
-        "assess_pipeline_forward": (
-            "key",
-            "variant",
-            "weapon",
-            "request_id",
-            "dominant_first",
-            "offhand_first",
-        ),
-        "classifier_request": ("request_id", "timeout_ms"),
-        "classifier_response": ("request_id", "elapsed_ms"),
-        "action_classified": ("request_id", "action", "confidence"),
-        "ultra96_sim_classified": (
-            "request_id",
-            "weapon",
-            "dominant_first",
-            "action",
-            "assessment_mode",
-            "input_sha256",
-            "service_ms",
-        ),
-    }
-    keys = views.get(event_dict.get("event"))
-    if keys is None or not event_dict.get("demo_trace_id"):
-        return event_dict
-    common = ("event", "level", "timestamp", "component", "player_id", "demo_trace_id")
-    short = {key: value for key, value in event_dict.items() if key in common or key in keys}
-    short["trace"] = short.pop("demo_trace_id")
-    for old, new in (("dominant_first", "imu_g_dps"), ("offhand_first", "offhand_g_dps")):
-        if short.get(old) is not None:
-            short[new] = [round(value, 6) for value in short.pop(old)]
-    if "input_sha256" in short:
-        short["input_id"] = short.pop("input_sha256")[:16]
-    return short
 
 
 def configure_logging(
@@ -159,7 +97,6 @@ def configure_logging(
         structlog.stdlib.ProcessorFormatter(
             processors=[
                 structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-                _assessment_console,
                 # Runs on the formatter's own copy of the event dict, so the tag never reaches the
                 # file handler's JSON.
                 _player_tagger(colors),
@@ -168,7 +105,6 @@ def configure_logging(
             foreign_pre_chain=_FOREIGN_PRE_CHAIN,
         )
     )
-    console_handler.addFilter(_ConsoleEventFilter())
 
     root = logging.getLogger()
     root.setLevel(min(level, console_handler.level))

@@ -150,16 +150,15 @@ namespace Cg4002.VisualizerDemo.Controllers
             var weaponLabel = msg.PlayerId == 1 ? Player1WeaponLabel : Player2WeaponLabel;
             if (weaponLabel != null && !string.IsNullOrEmpty(msg.Weapon)) weaponLabel.text = msg.Weapon;
 
-            string trace = string.IsNullOrEmpty(msg.DemoTraceId) ? "" : $" [{msg.DemoTraceId}]";
             bool isGuard = msg.Action == "IDLE" && msg.GuardState == "GUARDING";
             if (isGuard)
             {
-                AppendFeedLine($"> P{msg.PlayerId} used GUARD{trace}");
+                AppendFeedLine($"> P{msg.PlayerId} used GUARD");
                 return;
             }
             if (msg.Action == "IDLE") return;
 
-            AppendFeedLine($"> P{msg.PlayerId} used {msg.Action}{trace}");
+            AppendFeedLine($"> P{msg.PlayerId} used {msg.Action}");
         }
 
         private void HandleCombatEvent(CombatEvent msg)

@@ -56,7 +56,6 @@ class Action(_Envelope):
     """relay -> engine. app_messages.md §2.1."""
 
     type: Literal["ACTION"] = "ACTION"
-    demo_trace_id: str | None = Field(alias="demoTraceId", default=None, max_length=96)
     player_id: PlayerId = Field(alias="playerId")
     weapon: RealWeapon
     action: ActionClass
@@ -151,7 +150,6 @@ class SensorWindow(_Envelope):
     unconstrained here — it is dictated by the trained model's input shape."""
 
     type: Literal["SENSOR_WINDOW"] = "SENSOR_WINDOW"
-    demo_trace_id: str | None = Field(alias="demoTraceId", default=None, max_length=96)
     player_id: PlayerId = Field(alias="playerId")
     request_id: int = Field(alias="requestId", ge=0, le=0xFFFFFFFF)
     weapon: RealWeapon
@@ -174,7 +172,6 @@ class ActionResult(_Envelope):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     type: Literal["ACTION_RESULT"] = "ACTION_RESULT"
-    demo_trace_id: str | None = Field(alias="demoTraceId", default=None, max_length=96)
     player_id: PlayerId = Field(alias="playerId")
     request_id: int = Field(alias="requestId", ge=0, le=0xFFFFFFFF)
     action: ActionClass
@@ -190,7 +187,6 @@ class ActionRecognized(_Envelope):
     """
 
     type: Literal["ACTION_RECOGNIZED"] = "ACTION_RECOGNIZED"
-    demo_trace_id: str | None = Field(alias="demoTraceId", default=None, max_length=96)
     player_id: PlayerId = Field(alias="playerId")
     weapon: RealWeapon
     action: ActionClass

@@ -7,8 +7,6 @@ from test_pre_demo_recovery import free_port, window
 
 from cg_comms.messages.models import ActionResult
 from cg_comms.messages.validate import parse_app_message
-from cg_comms.protocol.codec import reliable_kind
-from cg_comms.protocol.constants import ACK_RETRANSMIT_PACKET_TYPES, PacketType
 from cg_comms.relay.ultra96 import Ultra96Client
 
 _RESULT = {"type": "ACTION_RESULT", "version": 1, "timestamp": 100, "playerId": 1, "requestId": 1,
@@ -20,15 +18,6 @@ def test_action_result_ignores_unknown_ai_keys():
     # app_messages.md §3.2: a newer model's extra output must not make every reply unparseable.
     parsed = parse_app_message(json.dumps({**_RESULT, "probs": [0.1, 0.9], "modelVer": "v2"}))
     assert isinstance(parsed, ActionResult) and parsed.action.value == "THRUST"
-
-
-def test_assessment_requests_share_the_firmware_watermark_group():
-    # firmware_demo/src/main.cpp is_assess_reliable(): one g_assess_cache.highest for all four.
-    assess = (PacketType.ASSESS_ECHO_REQ, PacketType.ASSESS_FILE_CHUNK,
-              PacketType.ASSESS_FILE_READ, PacketType.ASSESS_WEAPON_REQ)
-    assert {reliable_kind(kind) for kind in assess} == {"assess"}
-    others = ACK_RETRANSMIT_PACKET_TYPES - set(assess)
-    assert all(reliable_kind(kind) != "assess" for kind in others)
 
 
 async def test_invalid_utf8_line_is_dropped_without_losing_the_connection():

@@ -5,10 +5,6 @@ Runs as a TCP server (TcpServerTransport) so an unmodified relay (configured wit
 transport.kind="tcp") connects to it exactly as it would connect to a real device in test rigs.
 Does not implement periodic re-sync (§5.4) — only the initial handshake burst; a documented
 simplification since nothing in the mock layer needs steady-state clock correction.
-
-Answers the assessment packets the same way firmware_demo/src/main.cpp does (logic shared with
-mock/assess_device.py): ASSESS_ECHO_REQ -> modified ASSESS_ECHO_RESP + ACK, ASSESS_FILE_CHUNK ->
-ASSESS_FILE_ACK + ACK, an exact retransmit -> re-ACK plus a fresh copy of the latest response.
 """
 
 from __future__ import annotations
@@ -27,7 +23,6 @@ import structlog
 from cg_comms.clock import monotonic_ms
 from cg_comms.logging_setup import configure_logging
 from cg_comms.messages.enums import Weapon
-from cg_comms.mock.assess_device import FileRxState, FileVerdict, build_echo_response
 from cg_comms.mock.scenario import ScenarioStep, load_scenario
 from cg_comms.protocol import codec
 from cg_comms.protocol.codec import DecodedPacket, DecodeError
@@ -53,13 +48,6 @@ class FireBeetleSim:
     _tx_counter: OutgoingSequenceCounter = field(default_factory=OutgoingSequenceCounter, init=False)
     _rx_tracker: SequenceTracker = field(default_factory=SequenceTracker, init=False)
     _framer: Framer = field(default_factory=Framer, init=False)
-    # Assessment responder state (main.cpp g_file_rx / g_assess_last_*), reset per handshake.
-    file_rx: FileRxState = field(default_factory=FileRxState, init=False)
-    _assess_last_req_seq: int | None = field(default=None, init=False)
-    _assess_last_resp: tuple[PacketType, dict] | None = field(default=None, init=False)
-    # Fault injection for tests: silently drop this many upcoming assessment ACKs (the response is
-    # still sent), forcing the relay down its retransmit -> duplicate -> re-ACK path.
-    drop_assess_acks: int = field(default=0, init=False)
 
     async def _next_decoded(self, expect: PacketType, direction: Direction) -> DecodedPacket:
         async for raw in self.transport.frames():
@@ -93,9 +81,6 @@ class FireBeetleSim:
         await self.transport.send(frame)
 
     async def _handshake(self) -> None:
-        self.file_rx = FileRxState()
-        self._assess_last_req_seq = None
-        self._assess_last_resp = None
         device_nonce = random.randint(0, 0xFFFFFFFF)
         await self._send(
             PacketType.HELLO,
@@ -104,7 +89,7 @@ class FireBeetleSim:
                 "device_mac": bytes([0x02, 0x00, 0x00, 0x00, 0x00, self.player_id]),
                 "player_id": self.player_id,
                 "protocol_version": PROTOCOL_VERSION,
-                "firmware_version": 3,
+                "firmware_version": 4,
                 "device_nonce": device_nonce,
                 "reserved": 0,
             },
@@ -194,103 +179,7 @@ class FireBeetleSim:
                         {"acked_seq": decoded.header.seq},
                         Direction.DEVICE_TO_LAPTOP,
                     )
-                elif decoded.header.packet_type in (
-                    int(PacketType.ASSESS_ECHO_REQ),
-                    int(PacketType.ASSESS_FILE_CHUNK),
-                    int(PacketType.ASSESS_FILE_READ),
-                    int(PacketType.ASSESS_WEAPON_REQ),
-                ):
-                    if not await self._handle_assess(decoded):
-                        continue
                 self._rx_tracker = candidate
-
-    async def _handle_assess(self, decoded: DecodedPacket) -> bool:
-        """Mirror of main.cpp handle_assess_reliable + its duplicate branch."""
-        seq = decoded.header.seq
-        if decoded.duplicate:
-            # Our ACK was lost. Re-ACK; if it is the latest request, re-send its response too, under
-            # a fresh seq (never re-apply: a chunk would be appended twice).
-            if seq == self._assess_last_req_seq and self._assess_last_resp is not None:
-                await self._send(*self._assess_last_resp, Direction.DEVICE_TO_LAPTOP)
-            await self._send_assess_ack(seq)
-            return True
-        if decoded.header.packet_type == int(PacketType.ASSESS_WEAPON_REQ):
-            if not decoded.fields["trace_id"]:
-                return False
-            self._weapon_id = self._weapon_id % 3 + 1
-            resp = (PacketType.ASSESS_WEAPON_RESP, {
-                "trace_id": decoded.fields["trace_id"],
-                "device_timestamp_ms": monotonic_ms() & 0xFFFFFFFF,
-                "weapon_id": self._weapon_id,
-            })
-        elif decoded.header.packet_type == int(PacketType.ASSESS_ECHO_REQ):
-            f = decoded.fields
-            # main.cpp refuses these with no reply and no ACK; mirror it so loopback tests fail the
-            # same way the board would instead of passing on a request the firmware drops.
-            if not f["trace_id"] or not 1 <= f["weapon_id"] <= 3 or f["flags"] != 0:
-                return False
-            resp = (PacketType.ASSESS_ECHO_RESP, build_echo_response(decoded.fields, monotonic_ms()))
-            logger.info(
-                "sim_assess_echo",
-                trace_id=decoded.fields["trace_id"],
-                transform_id=resp[1]["transform_id"],
-            )
-        elif decoded.header.packet_type == int(PacketType.ASSESS_FILE_READ):
-            f = decoded.fields
-            index = f["chunk_index"]
-            if (
-                not self.file_rx.complete
-                or f["transfer_id"] != self.file_rx.transfer_id
-                or not 0 <= index < self.file_rx.total_chunks
-            ):
-                return False
-            piece = self.file_rx.data[index * 32 : (index + 1) * 32]
-            resp = (
-                PacketType.ASSESS_FILE_DATA,
-                {
-                    "transfer_id": f["transfer_id"],
-                    "chunk_index": index,
-                    "total_bytes": self.file_rx.received_bytes,
-                    "chunk_len": len(piece),
-                    "reserved": 0,
-                    "data": piece.ljust(32, b"\0"),
-                },
-            )
-        else:
-            verdict, nxt, reason = self.file_rx.evaluate(decoded.fields)
-            if verdict is FileVerdict.MALFORMED:
-                logger.warning(
-                    "sim_file_chunk_malformed", reason=reason, chunk_index=decoded.fields["chunk_index"]
-                )
-                return False
-            self.file_rx = nxt
-            resp = (
-                PacketType.ASSESS_FILE_ACK,
-                {
-                    "transfer_id": decoded.fields["transfer_id"],
-                    "chunk_index": decoded.fields["chunk_index"],
-                    "running_crc": nxt.running_crc,
-                    "received_bytes": nxt.received_bytes,
-                },
-            )
-        await self._send(*resp, Direction.DEVICE_TO_LAPTOP)
-        if decoded.header.packet_type == int(PacketType.ASSESS_WEAPON_REQ):
-            # Real firmware also announces the held selection through its existing RFID path.
-            await self._play_step(ScenarioStep(
-                delay_ms=0, kind="rfid_event",
-                payload={"weapon": Weapon.from_wire(self._weapon_id).value},
-            ))
-        self._assess_last_req_seq = seq
-        self._assess_last_resp = resp
-        await self._send_assess_ack(seq)
-        return True
-
-    async def _send_assess_ack(self, seq: int) -> None:
-        if self.drop_assess_acks > 0:
-            self.drop_assess_acks -= 1
-            logger.info("sim_assess_ack_dropped_for_test", acked_seq=seq)
-            return
-        await self._send(PacketType.ACK, {"acked_seq": seq}, Direction.DEVICE_TO_LAPTOP)
 
     async def run(self, scenario: list[ScenarioStep], loop_scenario: bool = False) -> None:
         await self.transport.connect()
