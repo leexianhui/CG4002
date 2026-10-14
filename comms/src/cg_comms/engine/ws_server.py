@@ -157,9 +157,11 @@ async def run_ws_server(
         except (websockets.ConnectionClosed, UnicodeDecodeError):
             pass
         finally:
+            was_current = registry.connection_for_path(path) is conn
             await registry.unregister(conn)
             logger.info("ws_client_disconnected", path=path)
-            if on_disconnect is not None:
+            if (on_disconnect is not None and was_current
+                    and registry.connection_for_path(path) is None):
                 await on_disconnect(path)
 
     # Shorten the old socket's close-handshake budget during replacement. This is not an

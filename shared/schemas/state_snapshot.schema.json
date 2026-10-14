@@ -1,0 +1,253 @@
+{
+  "$defs": {
+    "CooldownEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "HORIZONTAL_SWING",
+            "VERTICAL_SWING",
+            "DIAGONAL_SWING",
+            "THRUST",
+            "CHARGED_ATTACK",
+            "CHARGED_THRUST",
+            "SWING"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "remainingMs": {
+          "minimum": 0,
+          "title": "Remainingms",
+          "type": "integer"
+        },
+        "totalMs": {
+          "minimum": 0,
+          "title": "Totalms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "action",
+        "remainingMs",
+        "totalMs"
+      ],
+      "title": "CooldownEntry",
+      "type": "object"
+    },
+    "GuardState": {
+      "enum": [
+        "IDLE",
+        "GUARDING"
+      ],
+      "title": "GuardState",
+      "type": "string"
+    },
+    "MatchPhase": {
+      "enum": [
+        "WAITING",
+        "ALIGNING",
+        "IN_PROGRESS",
+        "PAUSED",
+        "ENDED"
+      ],
+      "title": "MatchPhase",
+      "type": "string"
+    },
+    "SnapshotPlayer": {
+      "additionalProperties": false,
+      "properties": {
+        "playerId": {
+          "enum": [
+            1,
+            2
+          ],
+          "title": "Playerid",
+          "type": "integer"
+        },
+        "hp": {
+          "minimum": 0,
+          "title": "Hp",
+          "type": "integer"
+        },
+        "maxHp": {
+          "exclusiveMinimum": 0,
+          "title": "Maxhp",
+          "type": "integer"
+        },
+        "weapon": {
+          "anyOf": [
+            {
+              "enum": [
+                "SWORD",
+                "SPEAR",
+                "MACE"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Weapon"
+        },
+        "guardState": {
+          "$ref": "#/$defs/GuardState"
+        },
+        "connected": {
+          "title": "Connected",
+          "type": "boolean"
+        },
+        "ready": {
+          "title": "Ready",
+          "type": "boolean"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SnapshotPosition"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cooldownAction": {
+          "anyOf": [
+            {
+              "enum": [
+                "HORIZONTAL_SWING",
+                "VERTICAL_SWING",
+                "DIAGONAL_SWING",
+                "THRUST",
+                "CHARGED_ATTACK",
+                "CHARGED_THRUST",
+                "SWING"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cooldownaction"
+        },
+        "cooldowns": {
+          "items": {
+            "$ref": "#/$defs/CooldownEntry"
+          },
+          "title": "Cooldowns",
+          "type": "array"
+        }
+      },
+      "required": [
+        "playerId",
+        "hp",
+        "maxHp",
+        "weapon",
+        "guardState",
+        "connected",
+        "ready",
+        "position",
+        "cooldownAction",
+        "cooldowns"
+      ],
+      "title": "SnapshotPlayer",
+      "type": "object"
+    },
+    "SnapshotPosition": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "title": "Y",
+          "type": "number"
+        },
+        "heading": {
+          "exclusiveMaximum": 360.0,
+          "minimum": 0.0,
+          "title": "Heading",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "heading"
+      ],
+      "title": "SnapshotPosition",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Complete presentation state; no attack events are replayed in a snapshot.",
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "timestamp": {
+      "minimum": 0,
+      "title": "Timestamp",
+      "type": "integer"
+    },
+    "type": {
+      "const": "STATE_SNAPSHOT",
+      "default": "STATE_SNAPSHOT",
+      "title": "Type",
+      "type": "string"
+    },
+    "phase": {
+      "$ref": "#/$defs/MatchPhase"
+    },
+    "winnerId": {
+      "anyOf": [
+        {
+          "enum": [
+            1,
+            2
+          ],
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Winnerid"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reason"
+    },
+    "players": {
+      "items": {
+        "$ref": "#/$defs/SnapshotPlayer"
+      },
+      "maxItems": 2,
+      "minItems": 2,
+      "title": "Players",
+      "type": "array"
+    }
+  },
+  "required": [
+    "type",
+    "version",
+    "timestamp",
+    "phase",
+    "players"
+  ],
+  "title": "StateSnapshot",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

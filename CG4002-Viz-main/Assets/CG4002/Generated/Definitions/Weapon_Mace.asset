@@ -1,0 +1,33 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bd5181fc8ffa94d90b6c918ad085fa59, type: 3}
+  m_Name: Weapon_Mace
+  m_EditorClassIdentifier: CG4002.Runtime::CG4002.Models.WeaponDefinition
+  type: 2
+  displayName: Mace
+  mainHandPrefab: {fileID: 3717421943421523819, guid: e1c288669f9864fad8634ef8e0280273, type: 3}
+  offHandPrefab: {fileID: 0}
+  animations: {fileID: 22100000, guid: cff2fe3684c8443c49f205da208060f9, type: 2}
+  accentColor: {r: 1.125, g: 0.525, b: 1.5, a: 1.5}
+  moves:
+  - action: 2
+    slot: 0
+  - action: 3
+    slot: 0
+  - action: 5
+    slot: 1
+  - action: 1
+    slot: 0
+  - action: 6
+    slot: 0
+  - action: 11
+    slot: 0

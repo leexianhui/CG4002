@@ -19,6 +19,8 @@ def is_on_cooldown(player: PlayerState, action: ActionClass, at_ts: int) -> bool
 
 def start_cooldown(player: PlayerState, action: ActionClass, at_ts: int, cooldown_ms: int) -> None:
     player.cooldowns[action] = at_ts + cooldown_ms
+    player.cooldown_totals[action] = cooldown_ms
+    player.cooldown_action = action
 
 
 def add_stagger(player: PlayerState, stagger_ms: int, at_ts: int) -> None:
@@ -27,3 +29,5 @@ def add_stagger(player: PlayerState, stagger_ms: int, at_ts: int) -> None:
     for action, expiry in list(player.cooldowns.items()):
         if expiry > at_ts:
             player.cooldowns[action] = expiry + stagger_ms
+            previous_total = player.cooldown_totals.get(action, expiry - at_ts)
+            player.cooldown_totals[action] = previous_total + stagger_ms

@@ -1,0 +1,18 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4886bb6a2dc1443d7b8682a6dd72f6fc, type: 3}
+  m_Name: WeaponCatalog
+  m_EditorClassIdentifier: CG4002.Runtime::CG4002.Models.WeaponCatalog
+  weapons:
+  - {fileID: 11400000, guid: 58d29b17781ff4ca39e716e5c9c654e4, type: 2}
+  - {fileID: 11400000, guid: c627e6d05a08449f5afd6e58dbbd6b7e, type: 2}
+  - {fileID: 11400000, guid: ebbb4fea9e4aa4e7e867ba9f5f512638, type: 2}

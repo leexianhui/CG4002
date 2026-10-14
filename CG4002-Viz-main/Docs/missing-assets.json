@@ -1,0 +1,31 @@
+{
+  "source_repository": "https://github.com/Oshen27/CG4002-Viz.git",
+  "reason": "Imported archive contained LFS pointers without the asset contents. Runtime assets are available.",
+  "assets": [
+    {
+      "path": "Docs/PropMarkers.pdf",
+      "sha256": "bc777e4732efdf1069c7d745be75118e47ea9c86736f63d9ae098340a9441604",
+      "size": 1766110
+    },
+    {
+      "path": "Docs/Previews/Preview_Mace.png",
+      "sha256": "ca356aee13aa8cf35a17b566c0d4beb8eae8e2e831d343bc9a61a4a010ea6308",
+      "size": 536951
+    },
+    {
+      "path": "Docs/Previews/Preview_Models.png",
+      "sha256": "5afbd6b3122feb94900136e67cc4589099bef89e9092219fba745c131d1eb072",
+      "size": 122774
+    },
+    {
+      "path": "Docs/Previews/Preview_Spear.png",
+      "sha256": "1b824f2751027178d7d81b282dc69121015fb28739e30cb6085a7ed352ec1e04",
+      "size": 494045
+    },
+    {
+      "path": "Docs/Previews/Preview_SwordAndShield.png",
+      "sha256": "804671a5f7caa0746e15f073250d6e183ce49167b36aac2348150f89346332c0",
+      "size": 626591
+    }
+  ]
+}

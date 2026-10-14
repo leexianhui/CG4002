@@ -18,7 +18,7 @@ import structlog
 from cg_comms.config import EngineSettings
 from cg_comms.engine.broadcaster import broadcast_to_visualizers, send_to_relay
 from cg_comms.engine.game_state_task import GameStateTask
-from cg_comms.engine.inbound import LinkReset, ResetMatch, route_inbound
+from cg_comms.engine.inbound import LinkReset, ResetMatch, SnapshotRequest, route_inbound
 from cg_comms.engine.rules import Rules
 from cg_comms.engine.ws_server import (
     CONTROL_PATH,
@@ -30,7 +30,7 @@ from cg_comms.engine.ws_server import (
     run_ws_server,
 )
 from cg_comms.logging_setup import configure_logging
-from cg_comms.messages.models import ActionRecognized, CombatEvent, CombatFeedback
+from cg_comms.messages.models import ActionRecognized, CombatEvent, CombatFeedback, StateSnapshot
 from cg_comms.messages.models import MatchState as WireMatchState
 from cg_comms.messages.validate import dump_app_message
 
@@ -71,6 +71,9 @@ async def run_engine(settings: EngineSettings) -> None:
         on_action_recognized=on_action_recognized,
         on_weapon_changed=lambda event: broadcast_to_visualizers(registry, event),
         presence=registry.relay_presence,
+        require_visualizer_ready=settings.require_visualizer_ready,
+        on_state_snapshot=(lambda snapshot: broadcast_to_visualizers(registry, snapshot))
+        if settings.publish_state_snapshots or settings.require_visualizer_ready else None,
     )
 
     async def on_message(path: str, raw: str) -> None:
@@ -99,12 +102,19 @@ async def run_engine(settings: EngineSettings) -> None:
             conn = registry.connection_for_path(path)
             if conn is not None:
                 await conn.enqueue(dump_app_message(task.current_match_state()))
+                if settings.publish_state_snapshots or settings.require_visualizer_ready:
+                    async def send_snapshot(snapshot: StateSnapshot) -> None:
+                        # Capture this connection, never route an old request to a replacement.
+                        await conn.enqueue(dump_app_message(snapshot))
+                    await task.submit(SnapshotRequest(send_snapshot))
         # Any connect (relay or visualizer) can flip `MATCH_STATE.connected` or is otherwise worth
         # re-announcing, so broadcast the current snapshot to both visualizers immediately rather
         # than waiting for the next game event.
         await broadcast_to_visualizers(registry, task.current_match_state())
 
     async def on_disconnect(path: str) -> None:
+        if path in VISUALIZER_PATHS:
+            await task.submit(LinkReset(VISUALIZER_PATHS[path], "position"))
         await broadcast_to_visualizers(registry, task.current_match_state())
 
     ssl_context = build_ssl_context(settings.cert_path, settings.key_path) if settings.use_tls else None
@@ -116,7 +126,8 @@ async def run_engine(settings: EngineSettings) -> None:
         ssl_context=ssl_context,
     )
 
-    await task.start_match()
+    if not settings.require_visualizer_ready:
+        await task.start_match()
     await asyncio.gather(
         run_ws_server(ws_config, registry, on_message, stop_event, on_connect=on_connect, on_disconnect=on_disconnect),
         task.run(stop_event),

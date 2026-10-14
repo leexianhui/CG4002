@@ -14,10 +14,13 @@ from cg_comms.engine.inbound import (
     InboundAction,
     InboundEvent,
     InboundPosition,
+    InboundVisualizerReady,
     InboundWeaponChanged,
     LinkReset,
     ResetMatch,
+    SnapshotRequest,
 )
+from cg_comms.engine.presentation import Presentation
 from cg_comms.engine.reorder import ReorderBuffer
 from cg_comms.engine.resolver import ActionEvent, Decision, _angle_diff_deg, _bearing_deg, resolve
 from cg_comms.engine.rules import Rules
@@ -37,6 +40,7 @@ from cg_comms.messages.models import (
     CombatEvent,
     CombatFeedback,
     Position,
+    StateSnapshot,
     WeaponChanged,
 )
 from cg_comms.messages.models import MatchState as WireMatchState
@@ -73,6 +77,12 @@ class GameStateTask:
     on_action_recognized: Callable[[ActionRecognized], Awaitable[None]]
     presence: Callable[[], dict[str, bool]]
     on_weapon_changed: Callable[[WeaponChanged], Awaitable[None]] | None = None
+    on_state_snapshot: Callable[[StateSnapshot], Awaitable[None]] | None = None
+    require_visualizer_ready: bool = False
+
+    presentation: Presentation = field(init=False)
+    _next_snapshot_ms: int = field(default=0, init=False)
+    _position_floor: dict[int, int] = field(default_factory=dict, init=False)
 
     state: EngineMatchState = field(default_factory=EngineMatchState, init=False)
     _reorder: ReorderBuffer = field(init=False)
@@ -98,6 +108,7 @@ class GameStateTask:
     _position_drop_logs: dict[int, tuple[int, int]] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
+        self.presentation = Presentation(require_ready=self.require_visualizer_ready)
         self._reorder = ReorderBuffer(
             reorder_delay_ms=self.reorder_delay_ms + self.rules.config.guard_grace_ms,
             late_drop_ms=self.late_drop_ms,
@@ -106,7 +117,7 @@ class GameStateTask:
             self.state.players[player_id] = PlayerState(player_id=player_id, hp=self.rules.starting_hp)
 
     async def submit(self, event: InboundEvent) -> None:
-        if isinstance(event, (ResetMatch, LinkReset)):
+        if isinstance(event, (ResetMatch, LinkReset, SnapshotRequest, InboundVisualizerReady)):
             await self._inbox.put(event)
             return
         try:
@@ -129,17 +140,30 @@ class GameStateTask:
             if event is not None:
                 if isinstance(event, ResetMatch):
                     await self.reset_match()
+                elif isinstance(event, SnapshotRequest):
+                    await event.send(self.current_state_snapshot())
+                elif isinstance(event, InboundVisualizerReady):
+                    self.presentation.ready[event.player_id] = event.ready
+                    if not event.ready and self.require_visualizer_ready:
+                        self.state.players[event.player_id].position = None
+                        self._position_floor[event.player_id] = monotonic_ms()
                 elif isinstance(event, LinkReset):
                     self._clock_anchors.pop((event.player_id, event.channel), None)
                     if event.channel == _CHANNEL_POSITION:
                         self._position_drop_logs.pop(event.player_id, None)
+                        self.presentation.ready[event.player_id] = False
+                        if self.require_visualizer_ready:
+                            self.state.players[event.player_id].position = None
+                            self._position_floor[event.player_id] = monotonic_ms()
                     # Already normalized events and gameplay state belong to the match, not the
                     # replacement socket. Clearing guard here would let a later reconnect alter
                     # an earlier queued attack. New input updates state in event-time order.
                     logger.info("engine_channel_reset", player_id=event.player_id, channel=event.channel)
                 else:
                     self._absorb(event)
+            await self._update_presentation()
             await self._drain_ready()
+            await self._update_presentation()
 
     def _anchor(self, player_id: int, channel: str, remote_ts: int, now: int) -> int:
         """Converts a remote-clock timestamp into this engine process's own monotonic_ms() frame.
@@ -201,19 +225,31 @@ class GameStateTask:
                 total_dropped_late=self._reorder.dropped_late)
 
     async def reset_match(self) -> None:
+        previous = self.state
         self.state = EngineMatchState()
         for pid in (1, 2):
             self.state.players[pid] = PlayerState(player_id=pid, hp=self.rules.starting_hp)
+            if self.require_visualizer_ready:
+                # Selection/geometry are physical state, independent of a new round.
+                old, new = previous.players[pid], self.state.players[pid]
+                new.weapon, new.position = old.weapon, old.position
+                new.heading_deg, new.position_ts = old.heading_deg, old.position_ts
         self._reorder = ReorderBuffer(
             reorder_delay_ms=self.reorder_delay_ms + self.rules.config.guard_grace_ms,
             late_drop_ms=self.late_drop_ms)
         self._reset_floor = monotonic_ms()
         self._logged_post_match = False
         self.state.phase = MatchPhase.IN_PROGRESS
+        self.presentation.paused_at = None
+        self.presentation.resume_floor = self._reset_floor
+        self.presentation.reason = "reset"
+        if self.require_visualizer_ready:
+            self.state.phase = MatchPhase.WAITING
         self.state.started_ts = self._reset_floor
         logger.info("match_reset")
         snapshot = self.current_match_state().model_copy(update={"reason": "reset"})
         await self.on_match_state(snapshot)
+        self._next_snapshot_ms = 0
 
     async def _drain_ready(self) -> None:
         ready = self._reorder.drain_ready(monotonic_ms())
@@ -228,6 +264,8 @@ class GameStateTask:
                 if self.on_weapon_changed is not None:
                     await self.on_weapon_changed(event.weapon_changed)
             elif isinstance(event, InboundPosition):
+                if timestamp < self._position_floor.get(event.player_id, -1):
+                    continue
                 player.position = Vec2(event.position.x, event.position.y)
                 player.heading_deg = event.position.heading
                 player.position_ts = timestamp
@@ -235,6 +273,13 @@ class GameStateTask:
                 action = event.action
                 if player.weapon is None:
                     player.weapon = action.weapon
+                if self.require_visualizer_ready and (
+                    self.state.phase != MatchPhase.IN_PROGRESS
+                    or timestamp < self.presentation.resume_floor
+                ):
+                    # Recover physical selection while waiting, but never carry an old
+                    # guard or attack across a pause/resume boundary.
+                    continue
                 if player.guard_state != action.guard_state:
                     player.guard_state = action.guard_state
                     player.guard_entered_ts = timestamp
@@ -258,6 +303,9 @@ class GameStateTask:
                 await self._resolve_one(ev, snapshot)
 
     async def _resolve_one(self, ev: ActionEvent, snapshot: EngineMatchState | None = None) -> None:
+        if self.require_visualizer_ready and ev.timestamp < self.presentation.resume_floor:
+            logger.info("action_before_online_resume", player_id=ev.player_id)
+            return
         resolution_state = snapshot if snapshot is not None else self.state
         decision = resolve(resolution_state, ev, self.rules)
         attacker = self.state.players.get(decision.attacker_id)
@@ -431,3 +479,15 @@ class GameStateTask:
 
     async def _broadcast_match_state(self) -> None:
         await self.on_match_state(self.current_match_state())
+
+    def current_state_snapshot(self) -> StateSnapshot:
+        return self.presentation.snapshot(self.state, self.rules, self.presence(), monotonic_ms())
+
+    async def _update_presentation(self) -> None:
+        now = monotonic_ms()
+        changed = self.presentation.update(self.state, self.rules, self.presence(), now)
+        if changed:
+            await self._broadcast_match_state()
+        if self.on_state_snapshot is not None and (changed or now >= self._next_snapshot_ms):
+            await self.on_state_snapshot(self.current_state_snapshot())
+            self._next_snapshot_ms = now + 100

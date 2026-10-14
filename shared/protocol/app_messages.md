@@ -91,7 +91,8 @@ updates `PlayerState.weapon` and resets nothing else — cooldowns and HP are in
   (`playerId,timestamp,x,y,heading`), with calibration/conversion in its adapter.
 - Current demo: both phones send synthetic avatar positions every 0.5 s. Engine consumes them
   in event-time order; position echo to the other phone remains unimplemented. Real positioning
-  and position echo are future work.
+  and position echo are future work for that demo. Online integration publishes valid positions
+  in STATE_SNAPSHOT (section 4), rather than a separate POSITION echo.
 
 Compatibility: earlier Unity code sent yaw unchanged. Correcting it changes guard-facing results
 to agree with the avatar, without moving either avatar or changing scene/network values.
@@ -266,3 +267,53 @@ Gameplay channels cannot issue this command. The engine's single writer clears g
 combat, preserves socket registrations and clock anchors, starts a fresh match, and sends
 `MATCH_STATE` with `reason:"reset"` to both visualizers and the operator. See
 `python -m cg_comms.tools.reset_match --help`. This is intentionally not persistence.
+In online readiness mode, reset retains physical weapon selections/geometry, clears combat state,
+and waits for readiness/fresh positions before resuming.
+
+## 4. Online visualizer boundary
+
+These additive JSON message types use version 1. Existing binary packet layouts and enums do not
+change. Receivers that do not implement these types may drop them; publishing is opt-in through
+`publish_state_snapshots` or `require_visualizer_ready` in engine config.
+
+### VISUALIZER_READY
+
+Phone to engine, on its own `/visualizer/<playerId>` connection:
+
+```json
+{"type":"VISUALIZER_READY","version":1,"timestamp":1234,"playerId":1,"ready":true}
+```
+
+Readiness means placement, common-frame calibration, and tracking are valid. It is not a reset.
+False invalidates online geometry until fresh input arrives. Reconnection clears readiness.
+In readiness mode the engine also requires relay presence, a selected weapon, and fresh positions
+for both players. It pauses while these conditions are absent, freezes cooldowns, and excludes
+attacks from before resume. The existing automatic-start demo mode remains available.
+
+### STATE_SNAPSHOT
+
+Engine to both visualizers, on connect and every 100 ms. This is a consistent single-writer
+snapshot, not a replay of events. `timestamp` is engine monotonic milliseconds.
+
+```json
+{"type":"STATE_SNAPSHOT","version":1,"timestamp":5000,"phase":"IN_PROGRESS","winnerId":null,
+ "reason":null,"players":[
+  {"playerId":1,"hp":100,"maxHp":100,"weapon":"SWORD","guardState":"IDLE",
+   "connected":true,"ready":true,"position":{"x":0,"y":0,"heading":0},
+   "cooldownAction":"HORIZONTAL_SWING",
+   "cooldowns":[{"action":"HORIZONTAL_SWING","remainingMs":500,"totalMs":800}]},
+  {"playerId":2,"hp":90,"maxHp":100,"weapon":"SWORD","guardState":"IDLE",
+   "connected":true,"ready":true,"position":{"x":1,"y":0,"heading":180},
+   "cooldownAction":null,"cooldowns":[]}]}
+```
+
+Both players occur exactly once. `weapon` is null until selection; `position` is null when missing
+or stale. Coordinates use section 2.3. `connected` means relay socket presence, not physical gateway
+health. Guard includes IDLE releases. Cooldowns are per action, in milliseconds; `cooldownAction`
+identifies the last move that started a cooldown for a single-bar display. A missing action is ready.
+During PAUSED, remaining time is frozen. `totalMs` includes applied stagger. Snapshot processing
+must not animate attacks. Use COMBAT_EVENT once for resolved attack/outcome animation; do not also
+animate the same attack from ACTION_RECOGNIZED.
+
+Schemas: `state_snapshot.schema.json` and `visualizer_ready.schema.json`. Regenerate these two only
+with `python scripts/export_integration_schemas.py` from comms/ after changing their Pydantic models.

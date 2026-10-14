@@ -1,0 +1,12 @@
+# Real visualizer mode. Supply CG_ENGINE_BEARER_TOKEN via .env.engine.
+host: 0.0.0.0
+port: 8443
+use_tls: true
+cert_path: certs/engine.crt
+key_path: certs/engine.key
+logs_dir: logs
+require_visualizer_ready: true
+publish_state_snapshots: true
+reorder_delay_ms: 60
+late_drop_ms: 500
+send_queue_depth: 32

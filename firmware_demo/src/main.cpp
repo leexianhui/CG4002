@@ -14,7 +14,12 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 
+#ifdef CG_HARDWARE_GATEWAY
+#include "gateway_config.h"
+#include "gateway_boundary.h"
+#else
 #include "cg_config.h"
+#endif
 #include "cg_frame.h"
 #include "cg_protocol.h"
 #include "cg_sequence.h"
@@ -42,6 +47,7 @@ uint8_t g_capture_trigger_id = 0;
 CgReliableSend g_pending_rfid;
 CgReliableReceiveCache g_feedback_cache;
 
+#ifndef CG_HARDWARE_GATEWAY
 const uint8_t kActionButtonPins[CG_DEMO_ACTION_BUTTON_COUNT] = CG_DEMO_ACTION_BUTTON_PINS;
 const uint8_t kActionButtonTriggerIds[CG_DEMO_ACTION_BUTTON_COUNT] = CG_DEMO_ACTION_BUTTON_TRIGGER_IDS;
 
@@ -73,6 +79,7 @@ bool debounce_falling_edge(DebouncedButton *btn, uint32_t now) {
     return false;
 }
 
+#endif
 BLECharacteristic *g_notify_char = nullptr;
 BLE2902 *g_notify_cccd = nullptr;  // read to tell whether the relay has subscribed yet
 volatile bool g_connected = false;
@@ -307,12 +314,20 @@ void drain_incoming_non_blocking() {
         if (!len || player_id != CG_DEMO_PLAYER_ID) continue;
         if ((packet_type == CG_PKT_ACK && len != 2) ||
             (packet_type == CG_PKT_COMBAT_FEEDBACK && len != sizeof(cg_payload_combat_feedback_t))) continue;
+#ifdef CG_HARDWARE_GATEWAY
+        // Do not ACK/cache a command the hardware queue could not accept: let the relay retry.
+        if (packet_type == CG_PKT_COMBAT_FEEDBACK && !gatewayQueueFeedback(plaintext)) continue;
+#endif
         g_rx_seq = candidate; // commit replay state only after GCM authentication
         if (packet_type == CG_PKT_COMBAT_FEEDBACK) {
             g_feedback_cache.highest = ext_seq;
             g_feedback_cache.remember(incoming.data, incoming.len, millis());
             send_ack_for(seq);
+#ifdef CG_HARDWARE_GATEWAY
+            Serial.printf("[feedback] queued seq=%u code=%u\n", (unsigned)seq, (unsigned)plaintext[0]);
+#else
             Serial.printf("[feedback] applied seq=%u code=%u\n", (unsigned)seq, (unsigned)plaintext[0]);
+#endif
         } else if (packet_type == CG_PKT_ACK) {
             uint16_t acked_seq;
             memcpy(&acked_seq, plaintext, 2);
@@ -342,6 +357,9 @@ bool do_handshake() {
     hello[6] = CG_DEMO_PLAYER_ID;
     hello[7] = CG_PROTOCOL_VERSION;
     hello[8] = 4;
+#ifdef CG_HARDWARE_GATEWAY
+    hello[8] = 5; // real hardware boundary, same protocol v1
+#endif
     hello[9] = 0;  // firmware_version = 4 (u16 LE): gameplay only, assessment extension removed
     memcpy(hello + 10, &g_device_nonce, 4);
     hello[14] = 0;
@@ -395,6 +413,12 @@ bool do_handshake() {
 }
 
 void send_sensor_frame() {
+#ifdef CG_HARDWARE_GATEWAY
+    cg_payload_sensor_frame_t frame;
+    gatewayReadFrame(frame);
+    uint8_t payload[sizeof(frame)];
+    memcpy(payload, &frame, sizeof(frame));
+#else
     static float phase = 0.0f;
     phase += 0.3f;
 
@@ -421,6 +445,7 @@ void send_sensor_frame() {
     memcpy(payload + 6, dominant, 12);
     memcpy(payload + 18, offhand, 12);
     memcpy(payload + 30, torso, 12);
+#endif
 
     // Rate-limited to 1 line/sec: at 50 Hz an unthrottled print would flood the monitor and
     // slow the loop. Without this the 50 Hz path is invisible on serial and a soak test looks
@@ -457,6 +482,9 @@ void send_heartbeat() {
     uint32_t ts = millis();
     memcpy(payload, &ts, 4);
     uint16_t vbat = 4000, status = 0;
+#ifdef CG_HARDWARE_GATEWAY
+    vbat = 0; // no battery telemetry is supplied by these sketches; never invent a measurement
+#endif
     memcpy(payload + 4, &vbat, 2);
     memcpy(payload + 6, &vbat, 2);
     memcpy(payload + 8, &vbat, 2);
@@ -473,6 +501,9 @@ void send_current_weapon() {
     payload[4] = g_weapon_id;
     payload[5] = 0;
     uint8_t uid[6] = {0xE0, 0x04, 0x01, 0x50, CG_DEMO_PLAYER_ID, g_weapon_id};
+#ifdef CG_HARDWARE_GATEWAY
+    memset(uid, 0, sizeof(uid)); // posture-derived selection, no physical RFID tag
+#endif
     memcpy(payload + 6, uid, 6);
     // A new selection supersedes the pending old selection, including its ACK identity.
     bool accepted = send_packet(CG_PKT_RFID_EVENT, payload, sizeof(payload), nullptr, 0);
@@ -500,14 +531,18 @@ void service_pending_rfid_event() {
 }  // namespace
 
 void setup() {
+#ifndef CG_HARDWARE_GATEWAY
     Serial.begin(115200);
+#endif
     hex_to_bytes(CG_DEMO_PSK_HEX, g_psk, CG_PSK_SIZE);
+#ifndef CG_HARDWARE_GATEWAY
     pinMode(CG_DEMO_WEAPON_BUTTON_PIN, INPUT_PULLUP);
     g_weapon_button.pin = CG_DEMO_WEAPON_BUTTON_PIN;
     for (int i = 0; i < CG_DEMO_ACTION_BUTTON_COUNT; i++) {
         pinMode(kActionButtonPins[i], INPUT_PULLUP);
         g_action_buttons[i].pin = kActionButtonPins[i];
     }
+#endif
     ble_setup();
     Serial.println("[boot] advertising, waiting for relay connection");
 }
@@ -515,6 +550,13 @@ void setup() {
 void loop() {
     static uint32_t last_sensor_ms = 0;
     static uint32_t last_heartbeat_ms = 0;
+#ifdef CG_HARDWARE_GATEWAY
+    uint8_t weapon = gatewayWeapon();
+    if (weapon != g_weapon_id) {
+        g_weapon_id = weapon;
+        if (g_handshake_done) send_current_weapon();
+    }
+#endif
 
     if (!g_connected) {
         delay(50);
@@ -563,6 +605,7 @@ void loop() {
         send_heartbeat();
     }
 
+#ifndef CG_HARDWARE_GATEWAY
     if (debounce_falling_edge(&g_weapon_button, now)) {
         send_rfid_event_next_weapon();
     }
@@ -579,6 +622,7 @@ void loop() {
         }
     }
 
+#endif
     drain_incoming_non_blocking();
     service_pending_rfid_event();
 }

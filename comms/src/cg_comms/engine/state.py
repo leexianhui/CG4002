@@ -30,6 +30,8 @@ class PlayerState:
     guard_entered_ts: int = 0
     last_action: ActionClass = ActionClass.IDLE
     cooldowns: dict[ActionClass, int] = field(default_factory=dict)  # action -> expiry engine-ts-ms
+    cooldown_totals: dict[ActionClass, int] = field(default_factory=dict)
+    cooldown_action: ActionClass | None = None
 
     def clone(self) -> "PlayerState":
         return PlayerState(
@@ -43,6 +45,8 @@ class PlayerState:
             guard_entered_ts=self.guard_entered_ts,
             last_action=self.last_action,
             cooldowns=dict(self.cooldowns),
+            cooldown_totals=dict(self.cooldown_totals),
+            cooldown_action=self.cooldown_action,
         )
 
 

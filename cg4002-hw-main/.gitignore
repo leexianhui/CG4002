@@ -1,0 +1,5 @@
+logs/
+combined.zip
+# figpipe contains source imported by the analysis tools and tests.
+figures/
+__pycache__/

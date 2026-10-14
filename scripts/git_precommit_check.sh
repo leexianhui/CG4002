@@ -85,17 +85,21 @@ is_placeholder_hex() {
 
 PATTERN='(psk_hex|PSK_HEX|bearer_token|BEARER_TOKEN)[^=:]*[=:][[:space:]]*.?[0-9a-fA-F]{32}'
 HITS=''
-while IFS= read -r f; do
-  [[ -n "$f" && -f "$f" ]] || continue
-  case "$f" in *.env.example) continue ;; esac
-  while IFS= read -r line; do
-    [[ -n "$line" ]] || continue
-    hex="$(grep -oE '[0-9a-fA-F]{32}' <<<"$line" | tail -1)"
-    is_placeholder_hex "$hex" && continue
-    HITS="$HITS$f:$line
+# Batch the scan: thousands of Unity assets otherwise launch grep/head once per file on Windows.
+while IFS= read -r line; do
+  [[ -n "$line" ]] || continue
+  hex="$(grep -oE '[0-9a-fA-F]{32}' <<<"$line" | tail -1)"
+  is_placeholder_hex "$hex" && continue
+  HITS="$HITS$line
 "
-  done < <(grep -nIE "$PATTERN" -- "$f" 2>/dev/null | head -3)
-done <<< "$(printf '%s\n' "$CANDIDATES" | grep -vE '^$' | sort -u)"
+done < <(
+  while IFS= read -r f; do
+    [[ -n "$f" && -f "$f" ]] || continue
+    case "$f" in *.env.example) continue ;; esac
+    printf '%s\0' "$f"
+  done <<< "$(printf '%s\n' "$CANDIDATES" | grep -vE '^$' | sort -u)" |
+    xargs -0 -r grep -nIHE "$PATTERN" -- 2>/dev/null || true
+)
 
 if [[ -n "${HITS//[[:space:]]/}" ]]; then
   echo "  suspicious -- a real-looking key assigned in a file that would be committed:" >&2
@@ -112,7 +116,7 @@ BIG="$(git status --porcelain=v1 --untracked-files=all 2>/dev/null | sed 's/^...
   | while IFS= read -r f; do
       [[ -f "$f" ]] || continue
       sz=$(stat -c %s "$f" 2>/dev/null || echo 0)
-      (( sz > 5000000 )) && printf '%8.1f MB  %s\n' "$(echo "$sz/1048576" | bc -l)" "$f"
+      (( sz > 5000000 )) && awk -v size="$sz" -v path="$f" 'BEGIN { printf "%8.1f MB  %s\n", size/1048576, path }'
     done || true)"
 if [[ -n "$BIG" ]]; then
   echo "  files over 5 MB:"; printf '%s\n' "$BIG" | sed 's/^/  /'

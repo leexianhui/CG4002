@@ -160,6 +160,9 @@ class EngineSettings(BaseSettings):
     reorder_delay_ms: int = 60
     late_drop_ms: int = 500
     send_queue_depth: int = 32
+    # Opt-in for real phones; legacy demos retain automatic match startup.
+    require_visualizer_ready: bool = False
+    publish_state_snapshots: bool = False
 
     @classmethod
     def from_yaml(cls, path: Path) -> "EngineSettings":

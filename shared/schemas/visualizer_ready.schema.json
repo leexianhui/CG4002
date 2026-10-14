@@ -1,0 +1,42 @@
+{
+  "additionalProperties": false,
+  "description": "A calibrated/tracking phone is ready; this never resets a match.",
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "timestamp": {
+      "minimum": 0,
+      "title": "Timestamp",
+      "type": "integer"
+    },
+    "type": {
+      "const": "VISUALIZER_READY",
+      "default": "VISUALIZER_READY",
+      "title": "Type",
+      "type": "string"
+    },
+    "playerId": {
+      "enum": [
+        1,
+        2
+      ],
+      "title": "Playerid",
+      "type": "integer"
+    },
+    "ready": {
+      "title": "Ready",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "type",
+    "version",
+    "timestamp",
+    "playerId",
+    "ready"
+  ],
+  "title": "VisualizerReady",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,87 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!319 &31900000
+AvatarMask:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: Mask_GuardArm
+  m_Mask: 01000000010000000100000001000000010000000100000001000000010000000100000001000000010000000100000001000000
+  m_Elements:
+  - m_Path: 
+    m_Weight: 0
+  - m_Path: Hips
+    m_Weight: 0
+  - m_Path: Hips/Spine
+    m_Weight: 0
+  - m_Path: Hips/Spine/Chest
+    m_Weight: 0
+  - m_Path: Hips/Spine/Chest/Neck
+    m_Weight: 0
+  - m_Path: Hips/Spine/Chest/Neck/Head
+    m_Weight: 0
+  - m_Path: Hips/Spine/Chest/Neck/Head/Head_Geo
+    m_Weight: 0
+  - m_Path: Hips/Spine/Chest/Neck/Neck_Geo
+    m_Weight: 0
+  - m_Path: Hips/Spine/Chest/UpperArm_R
+    m_Weight: 0
+  - m_Path: Hips/Spine/Chest/UpperArm_R/Forearm_R
+    m_Weight: 0
+  - m_Path: Hips/Spine/Chest/UpperArm_R/Forearm_R/Hand_R
+    m_Weight: 0
+  - m_Path: Hips/Spine/Chest/UpperArm_R/Forearm_R/Hand_R/Hand_R_Geo
+    m_Weight: 0
+  - m_Path: Hips/Spine/Chest/UpperArm_R/Forearm_R/Hand_R/WeaponSocket_R
+    m_Weight: 0
+  - m_Path: Hips/Spine/Chest/UpperArm_R/Forearm_R/Forearm_R_Geo
+    m_Weight: 0
+  - m_Path: Hips/Spine/Chest/UpperArm_R/UpperArm_R_Geo
+    m_Weight: 0
+  - m_Path: Hips/Spine/Chest/UpperArm_L
+    m_Weight: 1
+  - m_Path: Hips/Spine/Chest/UpperArm_L/Forearm_L
+    m_Weight: 1
+  - m_Path: Hips/Spine/Chest/UpperArm_L/Forearm_L/Hand_L
+    m_Weight: 1
+  - m_Path: Hips/Spine/Chest/UpperArm_L/Forearm_L/Hand_L/Hand_L_Geo
+    m_Weight: 1
+  - m_Path: Hips/Spine/Chest/UpperArm_L/Forearm_L/Forearm_L_Geo
+    m_Weight: 1
+  - m_Path: Hips/Spine/Chest/UpperArm_L/Forearm_L/ShieldSocket_L
+    m_Weight: 1
+  - m_Path: Hips/Spine/Chest/UpperArm_L/UpperArm_L_Geo
+    m_Weight: 1
+  - m_Path: Hips/Spine/Chest/Chest_Geo
+    m_Weight: 0
+  - m_Path: Hips/Spine/Chest/HitAnchor
+    m_Weight: 0
+  - m_Path: Hips/Spine/Spine_Geo
+    m_Weight: 0
+  - m_Path: Hips/UpperLeg_R
+    m_Weight: 0
+  - m_Path: Hips/UpperLeg_R/LowerLeg_R
+    m_Weight: 0
+  - m_Path: Hips/UpperLeg_R/LowerLeg_R/Foot_R
+    m_Weight: 0
+  - m_Path: Hips/UpperLeg_R/LowerLeg_R/Foot_R/Foot_R_Geo
+    m_Weight: 0
+  - m_Path: Hips/UpperLeg_R/LowerLeg_R/LowerLeg_R_Geo
+    m_Weight: 0
+  - m_Path: Hips/UpperLeg_R/UpperLeg_R_Geo
+    m_Weight: 0
+  - m_Path: Hips/UpperLeg_L
+    m_Weight: 0
+  - m_Path: Hips/UpperLeg_L/LowerLeg_L
+    m_Weight: 0
+  - m_Path: Hips/UpperLeg_L/LowerLeg_L/Foot_L
+    m_Weight: 0
+  - m_Path: Hips/UpperLeg_L/LowerLeg_L/Foot_L/Foot_L_Geo
+    m_Weight: 0
+  - m_Path: Hips/UpperLeg_L/LowerLeg_L/LowerLeg_L_Geo
+    m_Weight: 0
+  - m_Path: Hips/UpperLeg_L/UpperLeg_L_Geo
+    m_Weight: 0
+  - m_Path: Hips/Hips_Geo
+    m_Weight: 0

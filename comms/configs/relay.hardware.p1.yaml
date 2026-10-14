@@ -1,0 +1,16 @@
+# Real supplied hardware; distinct from the button-triggered comms demo.
+player_id: 1
+transport:
+  kind: ble
+  # Set CG_RELAY_TRANSPORT__BLE_ADDRESS to the scanned CG4002-Hardware-P1 address.
+  ble_notify_char_uuid: "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
+  ble_write_char_uuid: "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
+windowing:
+  trigger_mode: false
+  frame_rate_hz: 50.0
+  window_samples: 40
+  stride_frames: 5
+  max_stale_pct: 20.0
+  max_span_deviation_pct: 15.0
+# PSK, engine token, engine host/CA and classifier host come from .env.relay.
+# No simulated classifier is enabled implicitly. AI integration remains stage 5.

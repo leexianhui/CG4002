@@ -69,8 +69,8 @@ extern "C" {
 /* SENSOR_FRAME.flags bits                                                                      */
 /* ------------------------------------------------------------------------------------------- */
 
-#define CG_FLAG_DOM_STALE     (1u << 0) /* dominant wrist ESP-NOW frame missed this interval    */
-#define CG_FLAG_OFF_STALE     (1u << 1) /* off-hand wrist ESP-NOW frame missed this interval    */
+#define CG_FLAG_DOM_STALE     (1u << 0) /* dominant wrist sample unavailable/stale             */
+#define CG_FLAG_OFF_STALE     (1u << 1) /* off-hand wrist sample unavailable/stale              */
 /* This frame is part of a triggered capture (comms-demo trigger mode): the belt has flagged a
  * bounded run of SENSOR_FRAMEs as one capture attempt following a button press. Bits 5-7 carry
  * which button (trigger id) started the capture. Continuous/real-game receivers may ignore both. */

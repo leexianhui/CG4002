@@ -7,12 +7,13 @@ with a parsed message."
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 import structlog
 
 from cg_comms.engine.ws_server import RELAY_PATHS, VISUALIZER_PATHS
-from cg_comms.messages.models import Action, Position, WeaponChanged
+from cg_comms.messages.models import Action, Position, StateSnapshot, VisualizerReady, WeaponChanged
 from cg_comms.messages.validate import MessageDropped, parse_app_message
 
 logger = structlog.get_logger(__name__)
@@ -47,7 +48,19 @@ class LinkReset:
     channel: str
 
 
-InboundEvent = InboundAction | InboundWeaponChanged | InboundPosition | ResetMatch | LinkReset
+@dataclass(frozen=True)
+class InboundVisualizerReady:
+    player_id: int
+    ready: bool
+
+
+@dataclass(frozen=True)
+class SnapshotRequest:
+    send: Callable[[StateSnapshot], Awaitable[None]]
+
+
+InboundEvent = (InboundAction | InboundWeaponChanged | InboundPosition | ResetMatch | LinkReset
+                | InboundVisualizerReady | SnapshotRequest)
 
 
 def route_inbound(path: str, raw: str) -> InboundEvent | None:
@@ -75,6 +88,11 @@ def route_inbound(path: str, raw: str) -> InboundEvent | None:
 
     if path in VISUALIZER_PATHS:
         expected_player_id = VISUALIZER_PATHS[path]
+        if isinstance(parsed, VisualizerReady):
+            if parsed.player_id != expected_player_id:
+                logger.warning("inbound_player_id_mismatch", path=path, actual=parsed.player_id)
+                return None
+            return InboundVisualizerReady(expected_player_id, parsed.ready)
         if isinstance(parsed, Position):
             if parsed.player_id != expected_player_id:
                 logger.warning("inbound_player_id_mismatch", path=path, actual=parsed.player_id)

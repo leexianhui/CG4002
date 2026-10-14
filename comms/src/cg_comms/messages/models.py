@@ -73,8 +73,9 @@ class WeaponChanged(_Envelope):
 
 
 class Position(_Envelope):
-    """visualizer -> engine, echoed engine -> visualizer. app_messages.md §2.3."""
+    """visualizer -> engine; online snapshots publish current geometry. app_messages.md §2.3."""
 
+    model_config = ConfigDict(populate_by_name=True, extra="forbid", allow_inf_nan=False)
     type: Literal["POSITION"] = "POSITION"
     player_id: PlayerId = Field(alias="playerId")
     x: float
@@ -197,6 +198,52 @@ class ActionRecognized(_Envelope):
     target_id: PlayerId | None = Field(alias="targetId", default=None)
 
 
+class VisualizerReady(_Envelope):
+    """A calibrated/tracking phone is ready; this never resets a match."""
+
+    type: Literal["VISUALIZER_READY"] = "VISUALIZER_READY"
+    player_id: PlayerId = Field(alias="playerId")
+    ready: bool
+
+
+class SnapshotPosition(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    x: float
+    y: float
+    heading: Annotated[float, Field(ge=0.0, lt=360.0)]
+
+
+class SnapshotPlayer(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    player_id: PlayerId = Field(alias="playerId")
+    hp: int = Field(ge=0)
+    max_hp: int = Field(alias="maxHp", gt=0)
+    weapon: RealWeapon | None
+    guard_state: GuardState = Field(alias="guardState")
+    connected: bool
+    ready: bool
+    position: SnapshotPosition | None
+    cooldown_action: CombatAction | None = Field(alias="cooldownAction")
+    cooldowns: list[CooldownEntry]
+
+
+class StateSnapshot(_Envelope):
+    """Complete presentation state; no attack events are replayed in a snapshot."""
+
+    type: Literal["STATE_SNAPSHOT"] = "STATE_SNAPSHOT"
+    phase: MatchPhase
+    winner_id: PlayerId | None = Field(alias="winnerId", default=None)
+    reason: str | None = None
+    players: list[SnapshotPlayer] = Field(min_length=2, max_length=2)
+
+    @field_validator("players")
+    @classmethod
+    def _both_players(cls, value: list[SnapshotPlayer]) -> list[SnapshotPlayer]:
+        if {p.player_id for p in value} != {1, 2}:
+            raise ValueError("snapshot must contain each player exactly once")
+        return value
+
+
 AppMessage = (
     Action
     | WeaponChanged
@@ -208,4 +255,6 @@ AppMessage = (
     | SensorWindow
     | ActionResult
     | ActionRecognized
+    | VisualizerReady
+    | StateSnapshot
 )

@@ -25,11 +25,15 @@ from cg_comms.messages.models import (
     MatchState,
     Position,
     SensorWindow,
+    StateSnapshot,
+    VisualizerReady,
     WeaponChanged,
 )
 from cg_comms.protocol.constants import PROTOCOL_VERSION
 
 _TYPE_TO_MODEL: dict[str, type[BaseModel]] = {
+    "STATE_SNAPSHOT": StateSnapshot,
+    "VISUALIZER_READY": VisualizerReady,
     "ACTION": Action,
     "WEAPON_CHANGED": WeaponChanged,
     "POSITION": Position,
