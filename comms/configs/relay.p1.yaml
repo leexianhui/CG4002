@@ -16,8 +16,8 @@ transport:
   # the chip's base MAC + 2 -- esptool prints 38:18:2B:17:C1:84 while BLE advertises ...:86, so do not
   # copy the flash log's MAC here. Re-check with scripts/ble_scan.py if the board is ever swapped.
   ble_address: "38:18:2B:17:C1:86"
-  ble_notify_char_uuid: "6e400002-b5a3-f393-e0a9-e50e24dcca9e" # device -> laptop, see firmware_demo/include/cg_config.h
-  ble_write_char_uuid: "6e400003-b5a3-f393-e0a9-e50e24dcca9e" # laptop -> device, see firmware_demo/include/cg_config.h
+  ble_notify_char_uuid: "6e400002-b5a3-f393-e0a9-e50e24dcca9e" # device -> laptop, see comms/firmware/include/cg_config.h
+  ble_write_char_uuid: "6e400003-b5a3-f393-e0a9-e50e24dcca9e" # laptop -> device, see comms/firmware/include/cg_config.h
   tcp_host: 127.0.0.1
   tcp_port: 9001
 
@@ -44,7 +44,7 @@ windowing:
   max_stale_pct: 20.0
   max_span_deviation_pct: 15.0
   frame_rate_hz: 50.0
-  # comms-demo: one tagged capture -> one SensorWindow. Must match firmware_demo's
+  # comms-demo: one tagged capture -> one SensorWindow. Must match comms/firmware's
   # CG_DEMO_CAPTURE_FRAMES (== window_samples above). See docs/DEMO_TRIGGERED_ACTION_PLAN.md §3.2.
   trigger_mode: true
 

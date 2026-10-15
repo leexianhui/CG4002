@@ -12,12 +12,12 @@ logs_dir: logs
 
 transport:
   kind: ble
-  # Temporary P2 dev-bench board: ESP32 DevKitC V4 flashed with env:esp32dev_p2 (firmware_demo/platformio.ini),
+  # Temporary P2 dev-bench board: ESP32 DevKitC V4 flashed with env:esp32dev_p2 (comms/firmware/platformio.ini),
   # advertised name CG4002-Demo-P2. Scan for its BLE address with scripts/ble_scan.py once flashed and
   # paste it here -- same caveat as P1's board applies (BLE address = base MAC + 2, not the flash log's MAC).
   ble_address: null # set to the ESP32 DevKitC V4's BLE MAC address, or switch kind to "tcp" for the mock rig
-  ble_notify_char_uuid: "6e400002-b5a3-f393-e0a9-e50e24dcca9e" # device -> laptop, see firmware_demo/include/cg_config.h
-  ble_write_char_uuid: "6e400003-b5a3-f393-e0a9-e50e24dcca9e" # laptop -> device, see firmware_demo/include/cg_config.h
+  ble_notify_char_uuid: "6e400002-b5a3-f393-e0a9-e50e24dcca9e" # device -> laptop, see comms/firmware/include/cg_config.h
+  ble_write_char_uuid: "6e400003-b5a3-f393-e0a9-e50e24dcca9e" # laptop -> device, see comms/firmware/include/cg_config.h
   tcp_host: 127.0.0.1
   tcp_port: 9002
 
@@ -44,7 +44,7 @@ windowing:
   max_stale_pct: 20.0
   max_span_deviation_pct: 15.0
   frame_rate_hz: 50.0
-  # comms-demo: one tagged capture -> one SensorWindow. Must match firmware_demo's
+  # comms-demo: one tagged capture -> one SensorWindow. Must match comms/firmware's
   # CG_DEMO_CAPTURE_FRAMES (== window_samples above). See docs/DEMO_TRIGGERED_ACTION_PLAN.md §3.2.
   trigger_mode: true
 

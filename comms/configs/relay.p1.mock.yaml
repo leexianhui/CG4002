@@ -13,8 +13,8 @@ logs_dir: logs
 transport:
   kind: tcp
   ble_address: "30:AE:A4:15:0F:7E" # ESP32 DevKitC V4 dev-bench stand-in, advertised name CG4002-Demo-P1
-  ble_notify_char_uuid: "6e400002-b5a3-f393-e0a9-e50e24dcca9e" # device -> laptop, see firmware_demo/include/cg_config.h
-  ble_write_char_uuid: "6e400003-b5a3-f393-e0a9-e50e24dcca9e" # laptop -> device, see firmware_demo/include/cg_config.h
+  ble_notify_char_uuid: "6e400002-b5a3-f393-e0a9-e50e24dcca9e" # device -> laptop, see comms/firmware/include/cg_config.h
+  ble_write_char_uuid: "6e400003-b5a3-f393-e0a9-e50e24dcca9e" # laptop -> device, see comms/firmware/include/cg_config.h
   tcp_host: 127.0.0.1
   tcp_port: 9001
 

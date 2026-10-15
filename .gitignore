@@ -35,44 +35,28 @@ logs/
 # --- Node (tooling only; no subsystem ships a node app) ---
 node_modules/
 
-# --- Firmware (PlatformIO) ---
-firmware/.pio/
-firmware/**/.pio/
+# --- Firmware (PlatformIO build caches) ---
+.pio/
 
-# --- firmware_demo: solo Comms-subsystem demo, not the team's real firmware/ (see firmware_demo/README.md) ---
-firmware_demo/.pio/
-firmware_demo/**/.pio/
-
-# --- AI: datasets, generated artifacts, HLS/Vivado build output ---
-ai/data/raw/
-ai/data/processed/
-!ai/data/MANIFEST.md
+# --- ai/: datasets and results produced locally by the AI scripts ---
+ai/data/
+ai/results/
 ai/hls/projects/
 ai/vivado/build/
 *.jou
 .Xil/
 
-# --- Unity (visualizer) ---
-visualizer/CG4002Visualizer/Library/
-visualizer/CG4002Visualizer/Temp/
-visualizer/CG4002Visualizer/Logs/
-visualizer/CG4002Visualizer/Build/
-visualizer/CG4002Visualizer/Builds/
-visualizer/CG4002Visualizer/UserSettings/
-visualizer/CG4002Visualizer/MemoryCaptures/
-visualizer/CG4002Visualizer/obj/
+# --- visualizer/ (Unity). visualizer/.gitignore covers the rest of Unity's generated folders. ---
+visualizer/Library/
+visualizer/Temp/
+visualizer/Logs/
+visualizer/UserSettings/
 
-# --- visualizer_demo: solo Comms-subsystem demo, not the team's real visualizer/ ---
-visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/Library/
-visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/Temp/
-visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/Logs/
-visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/Build/
-visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/Builds/
-visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/UserSettings/
-visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/MemoryCaptures/
-visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/obj/
-# Android build intermediates (CMake/ninja) written by Unity 6 alongside the project
-visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/.utmp/
+# --- Retired comms-demo Unity HUD (removed from git, recoverable at 94108e4). The local folder may
+# --- still exist on disk: its Library cache is huge and full_ca_chain.pem is referenced by
+# --- ~/.upmconfig.toml for Zscaler, so ignore it wholesale rather than deleting it.
+visualizer_demo/
+
 # Machine-specific proxy CA exports (this work laptop's Zscaler) -- not project material
 *.cer
 

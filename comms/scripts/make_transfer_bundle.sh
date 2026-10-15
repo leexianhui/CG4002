@@ -38,7 +38,7 @@ ARCHIVE="$OUT_DIR/cg4002-bundle-$STAMP.tar.gz"
 
 # What goes in. Deliberately a short allow-list rather than "everything except": a new directory of
 # generated artifacts or credentials appearing later should be excluded by default, not included by
-# default. firmware_demo/ rides along because it is small and it is what proves the demo end to end
+# default. comms/firmware/ rides along because it is small and it is what proves the demo end to end
 # on whichever laptop you end up flashing from.
 INCLUDE=(
   comms/src
@@ -51,9 +51,9 @@ INCLUDE=(
   comms/.env.example      # the TEMPLATE, with placeholder values -- see note at the bottom
   shared
   docs
-  firmware_demo/src
-  firmware_demo/include
-  firmware_demo/platformio.ini
+  comms/firmware/src
+  comms/firmware/include
+  comms/firmware/platformio.ini
   .gitignore
   .gitattributes
 )

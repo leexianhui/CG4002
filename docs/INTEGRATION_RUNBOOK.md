@@ -61,7 +61,7 @@ the isolated checks with 6000.6.2f1 do not establish that upgrading the actual p
 Unity documents the [Hub installation flow](https://docs.unity.com/en-us/hub/add-editor) and
 [Android dependencies](https://docs.unity3d.com/6000.0/Documentation/Manual/android-install-dependencies.html).
 
-1. Open `CG4002-Viz-main` in its recorded Unity **6000.5.10f1** environment.
+1. Open `visualizer` in its recorded Unity **6000.5.10f1** environment.
    The manifest adds Newtonsoft Json 3.2.1; allow package resolution to finish.
 2. Open **`Assets/Scenes/OnlineScene.unity`**, created during stage 2. It contains the online
    client/calibration and disables OfflineEngine. `SampleScene.unity` remains the offline scene.
@@ -117,8 +117,8 @@ Preserve or configure the machine-local environment files and certificates befor
 
 Run `pio-venv\Scripts\pio.exe device list` from the repository root. Identify the physical
 board and port for each role; the old demo's COM7/COM8 mapping does not establish the six-board mapping.
-Verify board and flash-size settings against [the gateway instructions](../firmware_gateway/README.md).
-From `firmware_gateway/`, flash each connected P1 board:
+Verify board and flash-size settings against [the gateway instructions](../hardware/gateway/README.md).
+From `hardware/gateway/`, flash each connected P1 board:
 
 ```powershell
 $env:CG_GATEWAY_PSK_HEX = Read-Host "Existing P1 relay PSK (32 hex digits)"
@@ -191,7 +191,7 @@ The engine host must resolve to the local tunnel and match the existing TLS cert
 
 ### 5. Build and connect the phones
 
-Install the matching Unity editor as described above. Add `CG4002-Viz-main` in Hub and open
+Install the matching Unity editor as described above. Add `visualizer` in Hub and open
 `Assets/Scenes/OnlineScene.unity`. For Android, select **File > Build Profiles > Android**,
 switch to that platform, and confirm OnlineScene is first in the active scene list.
 Under **Project Settings > XR Plug-in Management > Android**, verify ARCore is enabled and
@@ -313,7 +313,7 @@ implementation's right-wrist hub is used as that final board; internal communica
 Wi-Fi/UDP. This boundary was specified by the user and does not need another transport decision.
 
 The implementation and build/relay/physical acceptance steps are in
-[`firmware_gateway/README.md`](../firmware_gateway/README.md). It builds the actual imported
+[`hardware/gateway/README.md`](../hardware/gateway/README.md). It builds the actual imported
 sketches with small opt-in hooks, exports real left/torso samples internally, and reuses BLE v1
 for sensor frames, locked weapon selection and queued engine haptic feedback. Unity needs no
 additional changes for this gateway. AI model integration and physical acceptance remain open.
@@ -350,7 +350,7 @@ labels samples `right_wrist`, and only treats PHASE_LOCKED as an actual weapon s
 not create offhand samples, infer gesture confidence, or turn debug/result strings into actions.
 
 The diagnostic probe remains optional. Production ingress now uses the BLE boundary in
-`firmware_gateway`, not these diagnostic UDP packets. Internal aggregation stays on the hub;
+`hardware/gateway`, not these diagnostic UDP packets. Internal aggregation stays on the hub;
 the laptop relay does not attach to each sensor board. Segment-to-Ultra96 logging stubs remain
 unchanged; their template distances are not used as classifier confidence.
 
@@ -366,7 +366,7 @@ The ignore rule excluding the source package is fixed; missing algorithms have n
 Stage 4 implementation, **14 October 2026**:
 
 - Six actual-hardware integration profiles compile: both hubs, both torsos and both left wrists.
-  The original `firmware_demo` FireBeetle build also compiles with its default behavior.
+  The original `comms/firmware` FireBeetle build also compiles with its default behavior.
   ELF symbol checks confirm BLE initialization is linked only in the two hubs, not the four peers.
 - **286 Python regression tests passed**. Both new hardware relay configurations were loaded
   with environment-supplied BLE addresses and tokens; continuous mode and no implicit mock AI

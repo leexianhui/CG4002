@@ -3,7 +3,7 @@
 
 Windows' bleak backend addresses peripherals by MAC, but the MAC is not printed on the board and is
 not the same as the USB serial port -- it has to be discovered by scanning. The firmware advertises
-CG_DEMO_BLE_DEVICE_NAME (firmware_demo/include/cg_config.h), so match on that rather than making the
+CG_DEMO_BLE_DEVICE_NAME (comms/firmware/include/cg_config.h), so match on that rather than making the
 user eyeball a list of neighbourhood devices.
 
 Usage:

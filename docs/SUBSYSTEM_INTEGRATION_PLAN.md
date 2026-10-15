@@ -6,13 +6,13 @@ FireBeetle per player, not the internal links between that player's boards.
 
 ## Scope and decisions
 
-- Keep both working comms demos. Imported subsystem roots are `cg4002-hw-main/` and
-  `CG4002-Viz-main/`, with the redundant inner folders removed at the user's request.
+- Keep both working comms demos. Imported subsystem roots are `hardware/` and
+  `visualizer/`, with the redundant inner folders removed at the user's request.
 - Add a Unity network adapter; retain MessageDispatcher, GameState, HUD, and avatar contracts.
 - The Python engine remains authoritative for damage, range, guarding, and cooldowns.
 - Online placement means readiness, never a global reset. Reset remains an operator command.
 - Use explicit enum/coordinate conversions; never renumber Unity serialized enums.
-- Keep BLE protocol v1 and reserved packet range 0x40â€“0x4F unchanged.
+- Keep BLE protocol v1 and reserved packet range 0x40–0x4F unchanged.
 - The user confirmed BLE only at the final board-to-relay boundary; preserve internal Wi-Fi/UDP.
   Use the supplied right-wrist hub as that boundary. Real AI inputs still need the AI handoff.
   Do not manufacture offhand samples from torso data or treat a template distance as confidence.
@@ -25,7 +25,7 @@ FireBeetle per player, not the internal links between that player's boards.
 | 2 | Online Unity scene and real Unity clients against mocks | Implemented and host-tested |
 | 3 | Phone deployment and shared-arena calibration | Software preparation implemented; physical acceptance pending |
 | 4 | Final FireBeetle connection and feedback | Real sketch BLE/UDP boundary implemented; six profiles compile; physical acceptance pending |
-| 5 | Real AI integration and final end-to-end acceptance | Awaiting the AI subsystem/input contract |
+| 5 | Real AI integration and final end-to-end acceptance | AI adapter implemented and host-tested (`ai/comms_server.py`); Ultra96/FPGA run and physical acceptance pending |
 
 Three stages remain for complete physical integration, including stage 3. The detailed steps below
 break down implementation work; they are not additional user-facing stages.
@@ -55,17 +55,28 @@ break down implementation work; they are not additional user-facing stages.
 
 ## Completion record
 
+AI integration and repo layout, 15 October 2026: the AI drop is `ai/`. Its own files are kept as
+supplied; `ai/comms_server.py` adapts the relay's SENSOR_WINDOW/ACTION_RESULT contract to the AI
+team's model code (float, bit-accurate fixed-point, or FPGA). `ai/data_utils_lite.py` is a
+reconstruction of a module the drop imported but did not include. Hardware relay windows are now
+100 samples / stride 10, the trained model's input length. AI-only classes (SPIN_ATTACK, UPPERCUT)
+are reported as IDLE until given game rules. No GUARD model was supplied: guard is always IDLE.
+The repo now has four subsystem roots (`ai/`, `comms/`, `hardware/`, `visualizer/`) plus `shared/`,
+`docs/`, `scripts/`; `comms/firmware/` is the shared BLE stack and `hardware/gateway/` the six-board
+build. The retired `visualizer_demo/` HUD was removed (history: 94108e4). 290 Python tests pass,
+including 4 that run the relay's classifier client against the real model.
+
 Deployment preparation, 14 October 2026: flattened both imported roots and updated firmware
 includes, Unity validation tools and documentation. Hardware Wi-Fi credentials remain in the
 teammate sketches as requested. Unity's Git LFS attribute macros are defined at the repository root so its assets can be published
 and checked out correctly. Deployment machines need Git LFS plus their own secrets and certificates.
 
 14 October 2026 correction: BLE at the final board was already the user's requirement. It is not
-an unresolved transport choice. `firmware_gateway/` now builds the six actual two-player sketches
+an unresolved transport choice. `hardware/gateway/` now builds the six actual two-player sketches
 with opt-in boundary hooks. Right-wrist hubs alone use BLE; left/torso export real samples over
 UDP. Locked posture selection becomes the existing weapon event; engine feedback drives hub
 haptics. The left wrist keeps raw sampling after lock only in integration builds. See
-[hardware build and acceptance instructions](../firmware_gateway/README.md). Physical validation
+[hardware build and acceptance instructions](../hardware/gateway/README.md). Physical validation
 and the AI input contract remain open. Earlier interface-blocker entries below are superseded. All six hardware profiles and the
 existing FireBeetle demo compile; 286 Python tests pass. Six new native C++ tests are pending
 a host gcc/g++ toolchain (absent on this machine). No boards were flashed.

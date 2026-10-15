@@ -26,16 +26,19 @@ def main():
     if not (root / "shared").is_dir() or not (root / "comms").is_dir():
         parser.error("Run from the CG4002 repository root, or pass --root.")
 
-    unity = "visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project"
+    unity = "visualizer"
     if args.role == "firmware":
-        sources = ["firmware_demo/src", "firmware_demo/include", "firmware_demo/lib",
-                   "firmware_demo/platformio.ini", "shared"]
+        sources = ["hardware/gateway/src", "hardware/gateway/include", "hardware/gateway/scripts",
+                   "hardware/gateway/platformio.ini", "hardware/2 players", "comms/firmware/src",
+                   "comms/firmware/lib", "shared/protocol"]
         # Preserve available build images as additional evidence, not build caches/toolchains.
-        for env in ("firebeetle32", "esp32dev_p2"):
-            build = root / "firmware_demo/.pio/build" / env
+        for env in ("p1_hub", "p2_hub", "p1_torso", "p2_torso", "p1_left", "p2_left"):
+            build = root / "hardware/gateway/.pio/build" / env
             sources.extend(str(p.relative_to(root)) for p in sorted(build.glob("*.bin")))
     elif args.role in ("laptop", "ultra96"):
         sources = ["comms/src", "comms/configs", "comms/scripts", "comms/pyproject.toml", "shared"]
+        if args.role == "ultra96":
+            sources.append("ai")
     else:
         if not args.apk:
             parser.error("Visualizer requires --apk with the final APK used on the phone.")

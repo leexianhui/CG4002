@@ -1,8 +1,8 @@
 # Comms demo runbook
 
 How to bring the demo up on one laptop, what to look at while it runs, and how to tell a real
-failure from a healthy-but-quiet rig. Scope is the 3-week Communications demo: `firmware_demo/`
-(ESP32 over BLE) + `comms/` (relay, engine, mocks) + `visualizer_demo/` (Unity).
+failure from a healthy-but-quiet rig. Scope is the 3-week Communications demo: `comms/firmware/`
+(ESP32 over BLE) + `comms/` (relay, engine, mocks) + the retired `visualizer_demo/` Unity HUD (in git history at 94108e4; the real visualizer is now `visualizer/`).
 
 Bring it up in three stages, each of which narrows down where a failure can be:
 
@@ -254,7 +254,7 @@ before deploying the paired relay/firmware changes.
    $env:PATH = "C:\Users\T0332075\Desktop\CG4002\pio-venv\Scripts;$env:PATH"
    ```
 
-   Then from `firmware_demo/` (these are yours to run, not the script's):
+   Then from `comms/firmware/` (these are yours to run, not the script's):
 
    ```bash
    pio device list                                              # confirm the port FIRST
@@ -295,7 +295,7 @@ times and then log `link_degraded` + `combat_feedback_undelivered` at ERROR whil
 actually fine. If you ever see that pair in BLE mode, check that handler first -- it is a device
 bug, not a radio problem.
 
-`firmware_demo/` has no equivalent of the Windows timer-resolution problem
+`comms/firmware/` has no equivalent of the Windows timer-resolution problem
 (`cg_comms/timer_resolution.py`): FreeRTOS ticks at 1 ms, so the ESP32's 50 Hz loop is accurate and
 the windowing span check passes. That failure mode is specific to the laptop-side sims.
 
@@ -402,7 +402,7 @@ commit (tracked plus untracked-not-ignored), because `.gitignore` only governs f
 already track: anything added before a rule existed stays tracked and keeps being committed silently.
 
 `.gitignore` was verified rule-by-rule for this: `pio-venv/`, `lecture_slides/`, `comms/.venv/`,
-`logs/`, `certs/`, `.env`, `.env.relay`, `.env.engine`, `firmware_demo/.pio/` and the caches are all
+`logs/`, `certs/`, `.env`, `.env.relay`, `.env.engine`, `comms/firmware/.pio/` and the caches are all
 excluded, while `src/`, `shared/config/`, `.env.example` and the docs are all included. That is what
 takes ~440 MB on disk down to a small repo.
 

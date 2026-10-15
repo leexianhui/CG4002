@@ -1,0 +1,149 @@
+CG4002 - AI Integration Files Guide
+===================================
+
+This folder contains the files needed for the AI side of the system integration.
+
+FILES THAT RUN ON THE ULTRA96
+-----------------------------
+
+classifier_server.py
+- Main AI integration program.
+- Intended to run on the Ultra96 during full-system integration.
+- Receives the input data from the communications side, sends the IMU window to the AI inference flow, gets the predicted action, and provides the result back to the rest of the system.
+- This is the main file to look at first for Communications <-> AI integration.
+
+fpga_infer.py
+- Runs the CNN inference on the Ultra96 FPGA.
+- Loads the FPGA overlay/bitstream.
+- Sends the processed IMU input to the CNN accelerator through DMA.
+- Reads the CNN output back from the FPGA.
+- Used by the AI side to perform the actual hardware inference.
+
+client_test.py
+- Test client used for checking the AI communication/server interface.
+- Useful for testing the connection and message flow before connecting the full Communications subsystem.
+- Mainly for integration/debugging.
+
+config.py
+- Shared AI configuration file.
+- Contains important settings such as:
+  * sampling rate
+  * window size
+  * input channels
+  * action classes
+  * model names / model IDs
+- Other AI scripts use these settings so that the same configuration is used everywhere.
+
+fixedpoint_ref.py
+- Software/reference version of the CNN calculations.
+- Used for checking the FPGA output and for debugging.
+- Helpful during integration if we need to compare software and FPGA results.
+- Not normally the main program that is launched for the final system.
+
+
+FPGA FILES USED ON THE ULTRA96
+------------------------------
+
+cnn.bit
+- FPGA bitstream.
+- Programs the Ultra96 programmable logic with the CNN accelerator hardware.
+- Must be present on the Ultra96 for FPGA inference.
+
+cnn.hwh
+- Hardware description file used together with cnn.bit.
+- Allows PYNQ/Python to understand the FPGA design, including the DMA and CNN IP connections.
+- Must stay together with cnn.bit.
+
+
+TRAINED MODEL FILES
+-------------------
+
+weights.npz
+- Contains the trained CNN weights and biases.
+- These are the learned parameters from model training.
+
+norm.json
+- Contains the normalization values used during training.
+- The incoming IMU data must be normalized in the same way before inference.
+
+classes.json
+- Contains the action-class names and their order.
+- Used to convert the CNN output index into the final action name.
+
+The current trained model predicts ACTIONS such as:
+
+- IDLE
+- HORIZONTAL_SWING
+- VERTICAL_SWING
+- DIAGONAL_SWING
+- THRUST
+- SPIN_ATTACK
+- UPPERCUT
+
+The current model folder may be called SWORD because it was trained using the sword dataset, but the model output itself is the detected movement/action.
+
+
+HOW THE FILES WORK TOGETHER
+---------------------------
+
+Communications data
+        |
+        v
+classifier_server.py
+        |
+        v
+input preprocessing / normalization
+(using norm.json)
+        |
+        v
+fpga_infer.py
+        |
+        v
+cnn.bit + cnn.hwh on Ultra96 FPGA
+        |
+        v
+CNN output
+        |
+        v
+classes.json
+        |
+        v
+Predicted action
+        |
+        v
+Communications / game logic
+
+
+MAIN FILES FOR THE COMMUNICATIONS TEAMMATE TO CHECK
+---------------------------------------------------
+
+1. classifier_server.py
+   Main integration point between Communications and AI.
+
+2. fpga_infer.py
+   Shows how the Ultra96 performs FPGA inference.
+
+3. client_test.py
+   Useful for testing the AI communication interface.
+
+4. config.py
+   Shows the AI configuration, classes, window size and model settings.
+
+
+IMPORTANT CURRENT LIMITATION
+----------------------------
+
+The currently deployed Ultra96 model/bitstream is based on the previous single-IMU input:
+
+6 channels:
+ax, ay, az, gx, gy, gz
+
+The new dataset currently being collected uses 3 IMUs:
+
+RIGHT + LEFT + TORSO
+= 18 channels
+
+The new 18-channel model has not yet replaced the currently deployed Ultra96 model/bitstream.
+
+So, for integration right now, use the current working Ultra96 interface and current trained model.
+After the new 3-sensor model is trained and the FPGA design is updated, the AI files will need to be updated again.

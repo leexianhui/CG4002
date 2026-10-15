@@ -1,7 +1,7 @@
 """Receive-only decoder for the supplied two-player hub's UDP diagnostic output.
 
 This is NOT the BLE v1 codec or an agreed final gateway protocol. Source layouts:
-cg4002-hw-main/2 players/p{1,2}_right_wrist/*.ino.
+hardware/2 players/p{1,2}_right_wrist/*.ino.
 """
 
 from __future__ import annotations

@@ -1,5 +1,5 @@
 # Demo-only ACTION_RESULT cycle for cg-ultra96-sim, used by the 3-week Comms demo
-# (firmware_demo/, visualizer_demo/) instead of a real classifier.
+# (comms/firmware/ + the since-retired visualizer_demo/ HUD) instead of a real classifier.
 #
 # No longer the demo's classifier source: the triggered-action demo runs cg-ultra96-sim with
 # --trigger-map comms/configs/scenarios/demo_trigger_map.yaml instead (button press -> the action the

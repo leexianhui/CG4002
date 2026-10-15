@@ -1,0 +1,14 @@
+{
+  "classes": [
+    "IDLE",
+    "HORIZONTAL_SWING",
+    "VERTICAL_SWING",
+    "DIAGONAL_SWING",
+    "THRUST",
+    "SPIN_ATTACK",
+    "UPPERCUT"
+  ],
+  "models": [
+    "SWORD"
+  ]
+}

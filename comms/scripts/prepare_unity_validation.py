@@ -12,7 +12,7 @@ repo = Path(__file__).resolve().parents[2]
 editor = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(
     "C:/Program Files/Unity/Hub/Editor/6000.6.2f1/Editor")
 dest = repo / "output" / "unity-integration-validation"
-source = repo / "CG4002-Viz-main" / "Assets" / "CG4002"
+source = repo / "visualizer" / "Assets" / "CG4002"
 assets = dest / "Assets"
 assets.mkdir(parents=True, exist_ok=True)
 shutil.copytree(source / "Scripts" / "Runtime", assets / "Runtime", dirs_exist_ok=True)
@@ -33,10 +33,13 @@ for name in ("com.unity.inputsystem", "com.unity.xr.arfoundation", "com.unity.xr
 for name in ("com.unity.editorcoroutines", "com.unity.ext.nunit", "com.unity.mathematics",
              "com.unity.ugui", "com.unity.test-framework"):
     dependencies[name] = "file:" + (package_root / "BuiltInPackages" / name).as_posix()
-cache = (repo / "visualizer_demo" / "CG4002VisualizerDemo_UnityTemp"
-         / "My project" / "Library" / "PackageCache")
-dependencies["com.unity.nuget.newtonsoft-json"] = "file:" + next(
-    cache.glob("com.unity.nuget.newtonsoft-json@*")).as_posix()
+# Newtonsoft is not an editor built-in: borrow it from the real project's package cache, which
+# exists once visualizer/ has been opened in Unity at least once.
+cache = repo / "visualizer" / "Library" / "PackageCache"
+newtonsoft = next(cache.glob("com.unity.nuget.newtonsoft-json@*"), None)
+if newtonsoft is None:
+    sys.exit(f"Open visualizer/ in Unity once first: no Newtonsoft package under {cache}")
+dependencies["com.unity.nuget.newtonsoft-json"] = "file:" + newtonsoft.as_posix()
 (dest / "Packages").mkdir(exist_ok=True)
 (dest / "Packages" / "manifest.json").write_text(
     json.dumps({"dependencies": dependencies}, indent=2), encoding="utf-8")

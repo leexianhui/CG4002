@@ -1,5 +1,5 @@
 # Demo-only POSITION timeline for cg-visualizer-sim, used by the 3-week Comms demo
-# (visualizer_demo/) to exercise the engine's position-echo path alongside a real ESP32.
+# (the since-retired visualizer_demo/ HUD) to exercise the engine's position-echo path alongside a real ESP32.
 steps:
   - delay_ms: 1000
     kind: position

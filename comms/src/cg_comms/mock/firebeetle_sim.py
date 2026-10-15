@@ -172,7 +172,7 @@ class FireBeetleSim:
                 # retransmitted to exhaustion and then reported as link_degraded +
                 # combat_feedback_undelivered at ERROR level -- a loud, alarming failure on an
                 # otherwise perfectly healthy rig, purely because the device never answered. Real
-                # firmware has to ACK this too (firmware_demo/src/main.cpp's incoming handler).
+                # firmware has to ACK this too (comms/firmware/src/main.cpp's incoming handler).
                 if decoded.header.packet_type == int(PacketType.COMBAT_FEEDBACK):
                     await self._send(
                         PacketType.ACK,

@@ -16,7 +16,7 @@ development PC for this plan.
 ### 1.1 The chain that exists today
 
 ```
-FireBeetle (firmware_demo/, ESP32)
+FireBeetle (comms/firmware/, ESP32)
   │  BLE GATT, custom binary frames (8-byte header, AES-128-GCM, CRC-16/CCITT-FALSE)
   │  SENSOR_FRAME 0x10 @50 Hz, HEARTBEAT 0x20 @1 Hz, RFID_EVENT 0x11 on button press
   ▼
@@ -142,7 +142,7 @@ a wire-semantics extension, not literally "zero wire changes".
 
 ## 2. CURRENT BUTTON / FIRMWARE BEHAVIOUR (verified)
 
-`firmware_demo/src/main.cpp` is 387 lines; the relevant part is `loop()` (line 338):
+`comms/firmware/src/main.cpp` is 387 lines; the relevant part is `loop()` (line 338):
 
 ```cpp
 uint32_t now = millis();
@@ -360,7 +360,7 @@ Three properties worth stating plainly:
 
 Three separate places, each owned by the machine that should own it:
 
-1. **Which GPIO is which trigger id** — `firmware_demo/include/cg_config.h`, two parallel arrays plus
+1. **Which GPIO is which trigger id** — `comms/firmware/include/cg_config.h`, two parallel arrays plus
    a count. Edit and re-flash; no other file changes.
 2. **Which trigger id means which action, per weapon** — `comms/configs/scenarios/demo_trigger_map.yaml`,
    read by `cg-ultra96-sim` on the Ultra96. Edit and restart the sim; no re-flash, no relay change.
@@ -991,7 +991,7 @@ in parallel; within a group, order matters.
   struct. Golden vectors must remain valid untouched.
 - Test: `pio test -e native_test` (CRC + nonce vectors) still passes.
 
-**F2 — `firmware_demo/include/cg_config.h`**
+**F2 — `comms/firmware/include/cg_config.h`**
 - Change: add `CG_DEMO_ACTION_BUTTON_COUNT 3`, `CG_DEMO_ACTION_BUTTON_PINS {25, 26, 27}`,
   `CG_DEMO_ACTION_BUTTON_TRIGGER_IDS {1, 2, 3}`, `CG_DEMO_BUTTON_DEBOUNCE_MS 200`,
   `CG_DEMO_CAPTURE_FRAMES 40`. Comment that `CG_DEMO_CAPTURE_FRAMES` must equal the relay's
@@ -1000,7 +1000,7 @@ in parallel; within a group, order matters.
   `CG_DEMO_SENSOR_FRAME_INTERVAL_MS 20`, `CG_DEMO_HEARTBEAT_INTERVAL_MS 1000`.
 - Test: compiles.
 
-**F3 — `firmware_demo/src/main.cpp`**
+**F3 — `comms/firmware/src/main.cpp`**
 - Functions: `setup()` (add `pinMode(..., INPUT_PULLUP)` per action pin), `loop()` (replace the single
   button poll with a debounced loop over all buttons), `send_sensor_frame()` (compute `flags` from the
   capture state instead of hardcoding 0).
@@ -1161,7 +1161,7 @@ add `MatchState.connected: dict[str, bool] | None = None`. The guard fields use 
 `window_ready` + one `action_classified` + one `ACTION_RECOGNIZED` **per press**, not 10/s); add the
 §15 failure rows; add the button wiring table.
 
-**C2 — `firmware_demo/README.md`** — button wiring table, the `CG_DEMO_CAPTURE_FRAMES` ↔
+**C2 — `comms/firmware/README.md`** — button wiring table, the `CG_DEMO_CAPTURE_FRAMES` ↔
 `window_samples` coupling, and the debounce constant.
 
 **C3 — `comms/configs/scenarios/demo_scenario.yaml`** — one header line noting it is the mock-rig
@@ -1178,7 +1178,7 @@ driver, no longer the demo's classifier source. Do NOT delete it (tests use it).
 - The `log.txt` Ultra96 command reads `--port8888` (missing space). Harmless typo in a pasted note;
   the runbook's version should be the canonical one.
 
-**C6 — security item, flagged not scheduled:** `firmware_demo/include/cg_config.h` carries a concrete
+**C6 — security item, flagged not scheduled:** `comms/firmware/include/cg_config.h` carries a concrete
 32-hex PSK in tracked source, while its own header comment says "Never commit a real PSK — this file
 ships with a placeholder and should stay that way in shared history." Either rotate the PSK and keep
 the placeholder discipline, or accept it explicitly as a throwaway demo key. This is the user's call;
@@ -1587,4 +1587,4 @@ while idle; `P2: OFFLINE` with `targetId: null`; and the whole thing still works
     engine→visualizer flow for a cosmetic gain that `ACTION_RECOGNIZED.weapon` already covers.
     Reconciling `app_messages.md` §3.2's "ignores unknown
     keys" claim with pydantic `extra="forbid"`; the `stfjump`/`stujump` jump-host discrepancy; and the
-    committed PSK in `firmware_demo/include/cg_config.h`.
+    committed PSK in `comms/firmware/include/cg_config.h`.

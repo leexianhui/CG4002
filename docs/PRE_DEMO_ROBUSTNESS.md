@@ -13,13 +13,13 @@ Paths are relative to the repository. Some files serve more than one category.
 
 | Category | Files |
 |---|---|
-| Diagnostics | `comms/src/cg_comms/relay/windowing.py`, `relay/session.py`, `engine/game_state_task.py`; `firmware_demo/src/main.cpp` |
+| Diagnostics | `comms/src/cg_comms/relay/windowing.py`, `relay/session.py`, `engine/game_state_task.py`; `comms/firmware/src/main.cpp` |
 | Connection/recovery | `comms/src/cg_comms/relay/{app,ultra96,engine_link,reconnect,tunnel}.py`, `transport/ble.py`, `engine/ws_server.py`, `mock/ultra96_sim.py`; `comms/tests/test_pre_demo_recovery.py` |
-| Firmware/BLE/protocol | `firmware_demo/src/main.cpp`, `lib/cg_protocol/{cg_sequence.h,cg_reliable.h,cg_crypto.cpp}`, `platformio.ini`, `test/test_sequence_window/test_sequence_window.cpp`, `test/test_reliable/test_reliable.cpp`; `comms/src/cg_comms/protocol/{codec,crypto,constants}.py`, `relay/{session,reliability}.py`, `mock/firebeetle_sim.py`; `comms/tests/test_pre_demo_protocol.py` |
+| Firmware/BLE/protocol | `comms/firmware/src/main.cpp`, `lib/cg_protocol/{cg_sequence.h,cg_reliable.h,cg_crypto.cpp}`, `platformio.ini`, `test/test_sequence_window/test_sequence_window.cpp`, `test/test_reliable/test_reliable.cpp`; `comms/src/cg_comms/protocol/{codec,crypto,constants}.py`, `relay/{session,reliability}.py`, `mock/firebeetle_sim.py`; `comms/tests/test_pre_demo_protocol.py` |
 | Combat ordering | `comms/src/cg_comms/engine/{game_state_task,inbound,reorder,resolver,app}.py`, `config.py`, `shared/config/match.yaml`; `comms/configs/engine.yaml` (source-of-truth comment only); `comms/tests/{test_pre_demo_combat,test_game_state_task_clock_skew,test_resolver,test_soak}.py` |
 | Position contract/tests | `comms/src/cg_comms/engine/coordinates.py`, `comms/tests/test_pre_demo_combat.py`, `shared/schemas/position.schema.json`, `shared/protocol/app_messages.md`; active Unity `EngineClient.cs` and `DemoHudController.cs` |
 | Unity/reset | Active project `visualizer_demo/CG4002VisualizerDemo_UnityTemp/My project/Assets/Scripts/Net/EngineClient.cs`, `Assets/Scripts/Controllers/DemoHudController.cs`, `Assets/Editor/CreateDemoScene.cs`; `comms/src/cg_comms/tools/reset_match.py`, engine routing/state/server files above |
-| Documentation | This report, `comms/README.md`, `comms/DEMO_RUNBOOK.md`, `firmware_demo/README.md`, `visualizer_demo/README.md`, `shared/protocol/{wire_protocol,app_messages}.md` |
+| Documentation | This report, `comms/README.md`, `comms/DEMO_RUNBOOK.md`, `comms/firmware/README.md`, `visualizer_demo/README.md`, `shared/protocol/{wire_protocol,app_messages}.md` |
 
 The pre-existing scene/render-settings changes and untracked personal files were not edited by this
 work. `log.txt`, PSK, bearer token, BLE addresses, serialized scene connection values, phone tunnels,
@@ -225,8 +225,8 @@ python -m ruff check --select E9,F63,F7,F82 src tests
 python -m ruff check src tests
 python -m mypy
 # From repository root, in the PlatformIO environment
-python -m platformio run -d firmware_demo -e firebeetle32 -e esp32dev_p2
-python -m platformio test -d firmware_demo -e native_test
+python -m platformio run -d comms/firmware -e firebeetle32 -e esp32dev_p2
+python -m platformio test -d comms/firmware -e native_test
 ```
 
 ## H. Physical demo verification

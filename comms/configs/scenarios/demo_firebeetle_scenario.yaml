@@ -1,4 +1,4 @@
-# Demo-only device timeline for cg-firebeetle-sim - the software stand-in for firmware_demo/ when
+# Demo-only device timeline for cg-firebeetle-sim - the software stand-in for comms/firmware/ when
 # no ESP32 is attached (comms/README.md "Running (mock rig, no hardware)").
 #
 # Mirrors what the real firmware does: pick up a weapon (RFID_EVENT), then stream SENSOR_FRAMEs at

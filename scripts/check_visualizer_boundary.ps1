@@ -27,7 +27,7 @@ class BoundaryRunner {
     }
 }
 '@ | Set-Content -LiteralPath $runner -Encoding utf8
-$source = Join-Path $repo 'CG4002-Viz-main/Assets/CG4002'
+$source = Join-Path $repo 'visualizer/Assets/CG4002'
 $exe = Join-Path $taskOutput 'BoundaryTests.exe'
 $argsList = @('/nologo', '/noconfig', '/nostdlib+', '/langversion:9', '/target:exe', "/out:$exe")
 $references = @('mscorlib.dll', 'System.dll', 'System.Core.dll') | ForEach-Object { Join-Path $monoApi $_ }

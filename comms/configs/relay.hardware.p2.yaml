@@ -8,9 +8,30 @@ transport:
 windowing:
   trigger_mode: false
   frame_rate_hz: 50.0
-  window_samples: 40
-  stride_frames: 5
+  # 100 samples = 2.0 s at 50 Hz: the input length the supplied AI model was trained on
+  # (ai/models/norm.json "window"). Stride 10 = one classification every 200 ms.
+  window_samples: 100
+  stride_frames: 10
   max_stale_pct: 20.0
   max_span_deviation_pct: 15.0
-# PSK, engine token, engine host/CA and classifier host come from .env.relay.
-# No simulated classifier is enabled implicitly. AI integration remains stage 5.
+
+# Classifier (ai/comms_server.py, or cg-ultra96-sim for canned actions) and engine both on the
+# Ultra96, reached through the relay laptop's SSH tunnel on 127.0.0.1:8888 / 127.0.0.1:8443 --
+# the same targets as relay.p1.yaml/relay.p2.yaml in the comms demo.
+ultra96:
+  host: "127.0.0.1"
+  port: 8888
+  request_timeout_ms: 120
+  max_in_flight: 2
+  min_confidence: 0.6
+
+engine_link:
+  host: "127.0.0.1"
+  port: 8443
+  use_tls: true
+  ca_cert_path: certs/engine.crt
+  # bearer_token is NOT set here: CG_RELAY_ENGINE_LINK__BEARER_TOKEN in .env.relay. Leave the key
+  # out entirely -- an explicit value here would override the env var.
+
+# Secrets and per-board values come from .env.relay or the shell: CG_RELAY_PSK_HEX,
+# CG_RELAY_TRANSPORT__BLE_ADDRESS, CG_RELAY_ENGINE_LINK__BEARER_TOKEN.
