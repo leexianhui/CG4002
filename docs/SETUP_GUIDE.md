@@ -6,7 +6,7 @@ Every long-running command needs **its own terminal**.
 
 ```text
  dev laptop (this one)      relay laptop (Qian Hui's)          Ultra96                     phones
- build + flash boards       P1 relay ══BLE══ P1 hub board      ai/comms_server.py  :8888   Termux tunnel
+ build + flash boards       P1 relay ══BLE══ P1 hub board      ai/classifier_server.py :8888  Termux tunnel
                             P2 relay ══BLE══ P2 hub board      cg-engine          :8443   Unity app
                             SSH tunnel ──────────────────────▶ (both)
 ```
@@ -21,7 +21,7 @@ Every long-running command needs **its own terminal**.
 What changed since the comms demo:
 - The boards are the **real hardware**, built from `hardware/gateway/` (was `firmware_demo/`).
 - The relay uses `configs/relay.hardware.p1.yaml` / `p2.yaml`, not `relay.p1.yaml`.
-- The classifier is the **real AI** (`ai/comms_server.py`), not `cg-ultra96-sim`.
+- The classifier is the **real AI** (`ai/classifier_server.py`), not `cg-ultra96-sim`.
 - The engine uses `configs/engine.integration.yaml`, which waits until both phones are ready.
 - The `--assessment`, `--latency-profile`, `--assess-seed`, `--trigger-map` and `throughput` flags are gone.
 
@@ -120,14 +120,14 @@ ssh -J e1138443@stujump.comp.nus.edu.sg xilinx@makerslab-fpga-53.ddns.comp.nus.e
 
 ```sh
 cd ai
-python3 comms_server.py --backend float
+python3 classifier_server.py --backend numpy     # or --backend fixed: the FPGA's exact maths on the ARM
 ```
 
-Expect `AI classifier listening on 127.0.0.1:8888 [float, ..., window 100, guard none (always IDLE)]`.
+Expect `classifier service listening on 127.0.0.1:8888  (backend=NumpyBackend)`.
 Once that works end to end, try the FPGA (PYNQ normally needs root):
 
 ```sh
-sudo -E python3 comms_server.py --backend fpga --bit cnn.bit
+sudo -E python3 classifier_server.py --backend fpga --bit cnn.bit
 ```
 
 > Run **either** the AI **or** `cg-ultra96-sim`, never both: they share port 8888. For canned,
@@ -253,7 +253,7 @@ Reset the match (Ultra96, from `comms/`):
 |---|---|
 | Relay never logs `weapon_changed`, no windows | The weapon is not locked on the hub yet (hold the selection pose), or the hub can't reach the torso/left boards (check the hardware Wi-Fi hotspot) |
 | `window_dropped reason=classifier offline` | Terminal A (AI) is not running, or the SSH tunnel is down |
-| `classifier correlation mismatch` | Something other than `ai/comms_server.py` is on port 8888, e.g. the AI team's `classifier_server.py` |
+| `classifier correlation mismatch` | Something other than `ai/classifier_server.py` (or `cg-ultra96-sim`) is on port 8888, or an old copy of the AI server that does not echo `requestId`/`timestamp` |
 | Always `IDLE` while swinging | Normal at low confidence: the gate is 0.6 (`min_confidence`). Check the AI terminal for replies, and see `ai/README.md` known gaps |
 | `SPIN_ATTACK` / `UPPERCUT` swings do nothing | Expected: there are no game rules for them yet, so they map to `IDLE` |
 | Never guards | No GUARD model was supplied, so guard is always `IDLE` |
@@ -272,10 +272,12 @@ From `comms/` on any laptop:
 .\.venv\Scripts\python.exe -m cg_comms.tools.integration_mock --plain-local   # engine + 2 sim devices + sim AI
 ```
 
+Check the AI service on its own (through the tunnel, or on the board): `python3 ai/client_test.py --n 50`.
+
 To run the real AI locally instead of on the board (needs `pip install numpy` in that Python):
 
 ```powershell
-python ai\comms_server.py --backend float
+python ai\classifier_server.py --backend numpy
 ```
 
 More detail: [`INTEGRATION_RUNBOOK.md`](INTEGRATION_RUNBOOK.md) (phones and calibration),

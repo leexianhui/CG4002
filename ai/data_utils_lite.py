@@ -1,6 +1,6 @@
 """
 STAND-IN written by Comms during integration (2026-10-15). The AI drop imports this module from
-classifier_server.py, but the file itself was not included in AI_Integration_Codes. These two
+classifier_server.py, but the file itself was not included in the AI drop (AI_Integration_Codes). These two
 functions are reconstructed from how classifier_server.py calls them; replace this file with the
 AI team's original if theirs differs (especially fit_window's padding rule).
 

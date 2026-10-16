@@ -1,57 +1,59 @@
 # ai/ — action classifier (runs on the Ultra96)
 
-The AI team's drop (`AI_Integration_Codes`), kept as supplied, plus two files Comms added to
-connect it to the relay. See `AI_FILES_GUIDE.txt` for the AI team's own description.
+The AI team's drop (`AI_Integration_Codes`). Their model code is unchanged. For integration, Comms
+changed only the parts that touch other subsystems: the message format in `classifier_server.py`,
+the request format in `client_test.py`, and the model folder layout. See `AI_FILES_GUIDE.txt` for
+the AI team's own description.
 
-| File | Owner | Purpose |
+| File | Purpose | Changed for integration? |
 |---|---|---|
-| `comms_server.py` | Comms | **What you run.** TCP service on port 8888 that speaks the relay's `SENSOR_WINDOW` → `ACTION_RESULT` contract and calls the AI model code below |
-| `data_utils_lite.py` | Comms (stand-in) | `fit_window` / `load_norm_json`, imported by the AI code but missing from the drop. Replace with the AI team's original if they send it |
-| `classifier_server.py` | AI | The AI team's original server. Not used: it needs per-weapon + GUARD model folders and a different request shape |
-| `fixedpoint_ref.py` | AI | CNN maths in float and bit-accurate fixed point |
-| `fpga_infer.py` | AI | Runs the CNN on the FPGA via PYNQ + AXI DMA |
-| `config.py` | AI | Class list, window size, model ids |
-| `client_test.py` | AI | The AI team's own latency test client (uses their older request shape) |
-| `cnn.bit`, `cnn.hwh` | AI | FPGA bitstream + hardware description (Git LFS; keep them together) |
-| `models/` | AI | Trained weights, normalisation, class names |
+| `classifier_server.py` | **What you run.** TCP service on port 8888 for the relay | Boundary only: request/response fields, echoed IDs, action names, load only the models that exist |
+| `client_test.py` | Latency/sanity client, run through the SSH tunnel or on the board | Request format updated to the relay's; checks `requestId` comes back |
+| `data_utils_lite.py` | `fit_window` / `load_norm_json` | **Added**: imported by the server but missing from the drop. Replace with the AI team's original |
+| `fixedpoint_ref.py`, `fpga_infer.py`, `config.py` | CNN maths, FPGA driver, class list / window size | no |
+| `cnn.bit`, `cnn.hwh` | FPGA bitstream + hardware description (Git LFS; keep them together) | no |
+| `models/SWORD/` | Trained weights, normalisation, class names | Moved into `models/<NAME>/`, the layout `classifier_server.py` and `fpga_infer.py` already expect |
 
 ## Run it (on the Ultra96, from `ai/`)
 
-Needs Python 3 with `numpy` (already present on PYNQ images).
+Needs Python 3 with `numpy` (already on PYNQ images).
 
 ```sh
-python3 comms_server.py --backend float            # CNN on the ARM cores: start here
-python3 comms_server.py --backend fixed            # bit-accurate copy of what the FPGA computes
-sudo -E python3 comms_server.py --backend fpga --bit cnn.bit   # real FPGA (PYNQ usually needs root)
-python3 comms_server.py --backend stub             # random answers, no model: plumbing only
+python3 classifier_server.py --backend numpy           # float CNN on the ARM cores: start here
+python3 classifier_server.py --backend fixed           # bit-accurate copy of what the FPGA computes
+sudo -E python3 classifier_server.py --backend fpga --bit cnn.bit   # real FPGA (PYNQ usually needs root)
+python3 classifier_server.py --backend stub            # random answers, no model: plumbing only
+python3 client_test.py --n 50                          # in another terminal: checks replies + latency
 ```
 
 It listens on `127.0.0.1:8888`, the same port as `cg-ultra96-sim`. Run one or the other, never both.
 
-## How it maps the contract
+## The boundary with comms
 
-- **Input:** `dominant` (right wrist) goes to the action model. `offhand` (left wrist) goes to a GUARD
-  model if `models/GUARD/` exists; otherwise guard is always `IDLE`. Accel is in g and gyro in °/s,
-  the same units the model was trained on.
-- **Window:** the model was trained on 100 samples (2 s at 50 Hz, `models/norm.json`).
-  `comms/configs/relay.hardware.p*.yaml` sends exactly 100. A shorter window is front-padded and
-  a longer one keeps the newest 100.
-- **Output:** `requestId`, `timestamp` and `playerId` are echoed unchanged. The relay rejects the
-  reply otherwise.
-- **Vocabulary:** `SPIN_ATTACK` and `UPPERCUT` have no game rules in `shared/config/weapons.yaml`,
-  so they are reported as `IDLE` (the original label is still sent as `aiAction` for logs). The
-  engine also ignores moves a weapon doesn't have, such as `HORIZONTAL_SWING` with a MACE.
-- **Weapons:** one weapon-independent action model serves SWORD, SPEAR and MACE. If per-weapon
-  folders (`models/SPEAR/weights.npz` + `norm.json`) appear later, they are used automatically.
+The contract is `shared/protocol/app_messages.md` §3.1/§3.2 and `shared/schemas/sensor_window.schema.json` / `action_result.schema.json`.
+
+- **In:** `dominant` (right wrist) goes to the action model and `offhand` (left wrist) to the GUARD
+  model. Each is a list of `[ax, ay, az, gx, gy, gz]` in g and °/s, the units the model was trained on.
+- **Window:** the model takes 100 samples (2 s at 50 Hz, `models/SWORD/norm.json`), and
+  `comms/configs/relay.hardware.p*.yaml` sends exactly 100.
+- **Out:** `requestId`, `playerId` and `timestamp` are echoed unchanged; the relay drops any reply
+  where they differ.
+- **Action names:** classes the game has no rules for are reported as `IDLE` via `COMMS_ACTION_MAP`
+  (currently `SPIN_ATTACK` and `UPPERCUT`). The original label is still sent as `aiAction`, so it
+  shows up in logs.
+- **Models:** only folders that exist under `models/` are loaded. A weapon without its own folder
+  uses `SWORD` (the current single action model). Without `models/GUARD/`, guard is `IDLE`. Dropping
+  in `models/SPEAR/`, `models/MACE/` or `models/GUARD/` later needs no code change. The FPGA
+  backend's `model_id` order (`config.MODEL_IDS`) must match how the bitstream was exported.
 
 ## Known gaps (AI team to supply)
 
-1. No GUARD model, so the game never sees a guard from the AI.
-2. The 18-channel (right + left + torso) model is not trained yet (see `AI_FILES_GUIDE.txt`). The
-   hub already forwards the torso, but the relay sends only both wrists to the classifier.
-3. Game rules are needed for `SPIN_ATTACK` and `UPPERCUT`. Add them to `ACTION_MAP` in
-   `comms_server.py` and to `shared/config/weapons.yaml`.
-4. `data_utils_lite.py` is a reconstruction (see above).
+1. **No GUARD model,** so the game never sees a guard from the AI.
+2. **The 18-channel (right + left + torso) model is not trained yet.** The hub already forwards the
+   torso, but the relay sends the classifier only the two wrists.
+3. **Game meaning for `SPIN_ATTACK` and `UPPERCUT`.** Either map them in `COMMS_ACTION_MAP` or add
+   the moves to `shared/config/weapons.yaml`.
+4. **`data_utils_lite.py`** is a reconstruction, as noted above.
 
-Tested from `comms/`: `python -m pytest tests/test_ai_boundary.py`. It runs the relay's real
-classifier client against this server with the supplied model, in float and fixed-point.
+Tested from `comms/` with `python -m pytest tests/test_ai_boundary.py`. It runs the relay's real
+classifier client against `classifier_server.py` with the supplied model, in numpy and fixed-point.

@@ -25,7 +25,7 @@ FireBeetle per player, not the internal links between that player's boards.
 | 2 | Online Unity scene and real Unity clients against mocks | Implemented and host-tested |
 | 3 | Phone deployment and shared-arena calibration | Software preparation implemented; physical acceptance pending |
 | 4 | Final FireBeetle connection and feedback | Real sketch BLE/UDP boundary implemented; six profiles compile; physical acceptance pending |
-| 5 | Real AI integration and final end-to-end acceptance | AI adapter implemented and host-tested (`ai/comms_server.py`); Ultra96/FPGA run and physical acceptance pending |
+| 5 | Real AI integration and final end-to-end acceptance | AI server boundary adapted and host-tested (`ai/classifier_server.py`); Ultra96/FPGA run and physical acceptance pending |
 
 Three stages remain for complete physical integration, including stage 3. The detailed steps below
 break down implementation work; they are not additional user-facing stages.
@@ -56,7 +56,7 @@ break down implementation work; they are not additional user-facing stages.
 ## Completion record
 
 AI integration and repo layout, 15 October 2026: the AI drop is `ai/`. Its own files are kept as
-supplied; `ai/comms_server.py` adapts the relay's SENSOR_WINDOW/ACTION_RESULT contract to the AI
+supplied except the comms boundary of `ai/classifier_server.py`, which now speaks the relay's SENSOR_WINDOW/ACTION_RESULT contract around the AI
 team's model code (float, bit-accurate fixed-point, or FPGA). `ai/data_utils_lite.py` is a
 reconstruction of a module the drop imported but did not include. Hardware relay windows are now
 100 samples / stride 10, the trained model's input length. AI-only classes (SPIN_ATTACK, UPPERCUT)

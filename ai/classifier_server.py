@@ -1,11 +1,20 @@
 """
 Classifier service for the Ultra96 -- the thing the Comms teammate's SSH tunnel (localhost:8888) talks to.
-Line-delimited JSON, schema exactly as in report section 4.5:
+Line-delimited JSON. Comms boundary = shared/protocol/app_messages.md 3.1/3.2 (shared/schemas/
+sensor_window.schema.json, action_result.schema.json):
 
-  in : {"type":"SENSOR_WINDOW","playerId":1,"weapon":"SWORD","timestamp":12345678,
-        "dominantWristSamples":[[ax,ay,az,gx,gy,gz],...],"offHandSamples":[[...],...]}
-  out: {"type":"ACTION_RESULT","playerId":1,"weapon":"SWORD","action":"HORIZONTAL_SWING",
-        "actionConfidence":0.94,"guardState":"IDLE","guardConfidence":0.88,"timestamp":12345680}
+  in : {"type":"SENSOR_WINDOW","version":1,"playerId":1,"requestId":42,"weapon":"SWORD","timestamp":12345678,
+        "windowStartTs":..,"windowEndTs":..,"sampleRateHz":50,"stalePct":0,
+        "dominant":[[ax,ay,az,gx,gy,gz],...],"offhand":[[...],...]}          accel in g, gyro in deg/s
+  out: {"type":"ACTION_RESULT","version":1,"playerId":1,"requestId":42,"action":"HORIZONTAL_SWING",
+        "actionConfidence":0.94,"guardState":"IDLE","guardConfidence":0.88,"timestamp":12345678}
+
+  requestId, playerId and timestamp are echoed UNCHANGED: the relay matches replies by requestId and
+  drops a reply whose timestamp/playerId differ. Integration notes (Comms, 2026-10-16):
+  * Only models present under models/<NAME>/ are loaded. A weapon without its own model uses the
+    SWORD model (the current single, weapon-independent action model). No GUARD model -> guardState IDLE.
+  * Classes the game has no rules for (COMMS_ACTION_MAP) are reported as IDLE; the original label is
+    kept in "aiAction" for logs.
 
 Backends (choose with --backend):
   stub    fixed/random answers, zero dependencies  -> give this to your teammates TODAY so they can integrate
@@ -31,11 +40,21 @@ import time
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, ".."))
 sys.path.insert(0, os.path.join(HERE, "..", "src"))
 import config as C  # noqa: E402
 from data_utils_lite import fit_window, load_norm_json  # noqa: E402
 from fixedpoint_ref import FxCfg, forward_fixed, forward_float, load_weights, pad_out, softmax  # noqa: E402
+
+PROTOCOL_VERSION = 1
+# Action names the comms engine accepts (comms ActionClass / shared/schemas/action_result.schema.json).
+COMMS_ACTIONS = {"IDLE", "HORIZONTAL_SWING", "VERTICAL_SWING", "DIAGONAL_SWING", "THRUST",
+                 "CHARGED_ATTACK", "CHARGED_THRUST", "SWING"}
+# AI classes with no game rule yet -> what the engine is told. To make one count, map it to a game
+# action here (or add the move to shared/config/weapons.yaml and COMMS_ACTIONS).
+COMMS_ACTION_MAP = {"SPIN_ATTACK": "IDLE", "UPPERCUT": "IDLE"}
+FALLBACK_ACTION_MODEL = "SWORD"
 
 
 class StubBackend(object):
@@ -48,8 +67,11 @@ class StubBackend(object):
 
 class NumpyBackend(object):
     def __init__(self, models_dir, fixed=False, fx=None):
-        self.W = {n: load_weights(os.path.join(models_dir, n, "weights.npz")) for n in C.MODEL_NAMES}
-        self.norm = {n: load_norm_json(os.path.join(models_dir, n, "norm.json")) for n in C.MODEL_NAMES}
+        present = [n for n in C.MODEL_NAMES if os.path.exists(os.path.join(models_dir, n, "weights.npz"))]
+        if FALLBACK_ACTION_MODEL not in present:
+            raise FileNotFoundError("no %s model under %s" % (FALLBACK_ACTION_MODEL, models_dir))
+        self.W = {n: load_weights(os.path.join(models_dir, n, "weights.npz")) for n in present}
+        self.norm = {n: load_norm_json(os.path.join(models_dir, n, "norm.json")) for n in present}
         self.fixed, self.cfg = fixed, FxCfg(*fx) if fx else FxCfg()
         if fixed:
             self.W = {n: pad_out(w, C.NOUT) for n, w in self.W.items()}
@@ -81,20 +103,36 @@ def classify(backend, model, samples):
     return C.CLASSES[model][k], float(p[k])
 
 
+def has_model(backend, name):
+    return isinstance(backend, StubBackend) or name in backend.W
+
+
 def handle_request(backend, req, debug=False):
     if req.get("type") == "PING":
         return {"type": "PONG", "timestamp": int(time.time() * 1000)}
     if req.get("type") != "SENSOR_WINDOW":
         return {"type": "ERROR", "error": "unknown type %r" % req.get("type")}
+    for key in ("timestamp", "playerId", "requestId", "dominant", "offhand"):
+        if key not in req:
+            return {"type": "ERROR", "error": "missing %s" % key, "requestId": req.get("requestId")}
     weapon = str(req.get("weapon", "")).upper()
     if weapon not in C.WEAPONS:
-        return {"type": "ERROR", "error": "unknown weapon %r" % weapon}
+        return {"type": "ERROR", "error": "unknown weapon %r" % weapon, "requestId": req["requestId"]}
     t0 = time.perf_counter()
-    action, a_conf = classify(backend, weapon, req["dominantWristSamples"])
-    guard, g_conf = classify(backend, "GUARD", req["offHandSamples"])
-    out = {"type": "ACTION_RESULT", "playerId": req.get("playerId"), "weapon": weapon, "action": action,
-           "actionConfidence": round(a_conf, 4), "guardState": guard, "guardConfidence": round(g_conf, 4),
-           "timestamp": int(time.time() * 1000)}
+    action_model = weapon if has_model(backend, weapon) else FALLBACK_ACTION_MODEL
+    ai_action, a_conf = classify(backend, action_model, req["dominant"])
+    if has_model(backend, "GUARD"):
+        guard, g_conf = classify(backend, "GUARD", req["offhand"])
+    else:
+        guard, g_conf = "IDLE", 0.0
+    action = COMMS_ACTION_MAP.get(ai_action, ai_action)
+    if action not in COMMS_ACTIONS:
+        action = "IDLE"
+    out = {"type": "ACTION_RESULT", "version": PROTOCOL_VERSION, "playerId": req["playerId"],
+           "requestId": req["requestId"], "action": action, "actionConfidence": round(a_conf, 4),
+           "guardState": guard, "guardConfidence": round(g_conf, 4), "timestamp": req["timestamp"]}
+    if ai_action != action:
+        out["aiAction"] = ai_action
     if debug:
         out["latencyMs"] = round((time.perf_counter() - t0) * 1000, 3)
     return out

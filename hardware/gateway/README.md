@@ -102,7 +102,7 @@ real relays: that launcher also creates simulated devices and relay sessions for
 3. Send engine feedback, retry the same packet, confirm one queued vibration; verify PWM/duration.
 4. Repeat with both players together. Measure Wi-Fi/BLE coexistence, dropped frames, sampling rate,
    timing alignment and heap during a sustained run. Compile success does not establish these.
-5. Complete phone calibration acceptance, then run with the real AI (`ai/comms_server.py`).
+5. Complete phone calibration acceptance, then run with the real AI (`ai/classifier_server.py`).
 
 Host checks on 14 October 2026: 286 Python tests passed; both relay profiles load correctly
 with environment-supplied addresses/credentials. Six native C++ boundary tests were added, but

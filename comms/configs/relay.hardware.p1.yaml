@@ -9,13 +9,13 @@ windowing:
   trigger_mode: false
   frame_rate_hz: 50.0
   # 100 samples = 2.0 s at 50 Hz: the input length the supplied AI model was trained on
-  # (ai/models/norm.json "window"). Stride 10 = one classification every 200 ms.
+  # (ai/models/SWORD/norm.json "window"). Stride 10 = one classification every 200 ms.
   window_samples: 100
   stride_frames: 10
   max_stale_pct: 20.0
   max_span_deviation_pct: 15.0
 
-# Classifier (ai/comms_server.py, or cg-ultra96-sim for canned actions) and engine both on the
+# Classifier (ai/classifier_server.py, or cg-ultra96-sim for canned actions) and engine both on the
 # Ultra96, reached through the relay laptop's SSH tunnel on 127.0.0.1:8888 / 127.0.0.1:8443 --
 # the same targets as relay.p1.yaml/relay.p2.yaml in the comms demo.
 ultra96:

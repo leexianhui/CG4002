@@ -25,7 +25,7 @@ def main():
     ap.add_argument("--n", type=int, default=200)
     ap.add_argument("--rate", type=float, default=10.0)
     ap.add_argument("--weapon", default="SWORD")
-    ap.add_argument("--samples", type=int, default=50)
+    ap.add_argument("--samples", type=int, default=100)
     a = ap.parse_args()
 
     rng = np.random.RandomState(1)
@@ -34,15 +34,18 @@ def main():
     rtts, errors, last = [], 0, None
     nxt = time.perf_counter()
     for i in range(a.n):
-        req = {"type": "SENSOR_WINDOW", "playerId": 1, "weapon": a.weapon, "timestamp": int(time.time() * 1000),
-               "dominantWristSamples": (rng.randn(a.samples, 6) * np.array([0.3, 0.3, 0.3, 50, 50, 50])).round(4).tolist(),
-               "offHandSamples": (rng.randn(a.samples, 6) * np.array([0.3, 0.3, 0.3, 50, 50, 50])).round(4).tolist()}
+        now = int(time.time() * 1000)
+        req = {"type": "SENSOR_WINDOW", "version": 1, "playerId": 1, "requestId": i, "weapon": a.weapon,
+               "timestamp": now, "windowStartTs": now - 20 * (a.samples - 1), "windowEndTs": now,
+               "sampleRateHz": 50, "stalePct": 0,
+               "dominant": (rng.randn(a.samples, 6) * np.array([0.3, 0.3, 0.3, 50, 50, 50])).round(4).tolist(),
+               "offhand": (rng.randn(a.samples, 6) * np.array([0.3, 0.3, 0.3, 50, 50, 50])).round(4).tolist()}
         t0 = time.perf_counter()
         f.write((json.dumps(req) + "\n").encode())
         f.flush()
         resp = json.loads(f.readline().decode())
         rtts.append((time.perf_counter() - t0) * 1000)
-        errors += resp.get("type") != "ACTION_RESULT"
+        errors += resp.get("type") != "ACTION_RESULT" or resp.get("requestId") != i
         last = resp
         nxt += 1.0 / a.rate
         sl = nxt - time.perf_counter()
