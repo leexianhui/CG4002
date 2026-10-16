@@ -18,6 +18,27 @@ Every long-running command needs **its own terminal**.
 | Ultra96 | AI classifier (8888), game engine (8443) | — |
 | Phone ×2 | Termux tunnel + `socat`, Unity app | `ssh -J ... -L 8443` |
 
+## Secrets and settings per machine
+
+Nothing new is needed: these are the same token, PSK and certificate as the comms demo. Only the BLE
+addresses and the hardware Wi-Fi hotspot are new.
+
+| Where | What | Set in | New? |
+|---|---|---|---|
+| **Ultra96** `comms/.env.engine` | `CG_ENGINE_BEARER_TOKEN` | already there from the demo | no |
+| **Ultra96** `comms/certs/` | `engine.crt` + `engine.key` (CN `cg4002-engine`; SAN 127.0.0.1/localhost; valid to Sep 2027) | already there | no |
+| **Relay laptop** `comms/.env.relay` | `CG_RELAY_PSK_HEX` (one key, both players) and `CG_RELAY_ENGINE_LINK__BEARER_TOKEN` (= the engine token) | already there | no |
+| **Relay laptop** `comms/certs/engine.crt` | copy of the Ultra96's `engine.crt` (public cert only, not the key) | already there | no |
+| **Relay laptop** terminal | `CG_RELAY_TRANSPORT__BLE_ADDRESS`, one per relay terminal | `$env:` in step 3 | **yes**: scan for `CG4002-Hardware-P1/P2` |
+| **Dev laptop** terminal | `CG_GATEWAY_PSK_HEX` = the same PSK as `.env.relay`, only when building the two hubs | `$env:` in step 1 | changed: was hard-coded in `comms/firmware/include/cg_config.h`; the hub build now reads it from this variable |
+| **6 boards** | hardware Wi-Fi hotspot SSID/password | in the hardware sketches (`hardware/2 players/*/*.ino`), compiled in | **yes**: start that hotspot (`xin hui's laptop`) before powering the boards |
+| **Phones** | engine token, typed into the app | Unity app **Bearer token** field | no (same token) |
+| **Phones** (Termux) | your NUS SSH login for `stujump` + `xilinx@makerslab-fpga-53` | typed at the ssh prompt | no |
+| **Ultra96 / relay laptop** | NUS SSH login (`e1138443`) | typed at the ssh prompt | no |
+
+Player ids need no setup. `relay.hardware.p1.yaml` / `p2.yaml` set them and override `.env.relay`'s
+`CG_RELAY_PLAYER_ID`. Ports are fixed: 8888 (AI), 8443 (engine), 8080 (phone `socat`).
+
 What changed since the comms demo:
 - The boards are the **real hardware**, built from `hardware/gateway/` (was `firmware_demo/`).
 - The relay uses `configs/relay.hardware.p1.yaml` / `p2.yaml`, not `relay.p1.yaml`.
@@ -67,7 +88,7 @@ wrist send to it over the hardware team's Wi-Fi.
 
 | Board | P1 env | P2 env | Needs the PSK? |
 |---|---|---|---|
-| Right wrist (FireBeetle, BLE hub) | `p1_hub` | `p2_hub` | yes: the same PSK that player's relay uses |
+| Right wrist (FireBeetle, BLE hub) | `p1_hub` | `p2_hub` | yes: the comms PSK (`CG_RELAY_PSK_HEX` in `comms/.env.relay`; one key for both players) |
 | Torso | `p1_torso` | `p2_torso` | no |
 | Left wrist | `p1_left` | `p2_left` | no |
 
@@ -80,13 +101,13 @@ cd hardware\gateway
 **Player 1** (one PowerShell window):
 
 ```powershell
-$env:CG_GATEWAY_PSK_HEX = Read-Host "P1 relay PSK (32 hex digits)"
+$env:CG_GATEWAY_PSK_HEX = "<the 32-hex PSK from comms/.env.relay>"   # once per PowerShell window
 & "..\..\pio-venv\Scripts\pio.exe" run -e p1_hub   -t upload --upload-port COM8   # <- your P1 right-wrist port
 & "..\..\pio-venv\Scripts\pio.exe" run -e p1_torso -t upload --upload-port COMx   # <- P1 torso port
 & "..\..\pio-venv\Scripts\pio.exe" run -e p1_left  -t upload --upload-port COMy   # <- P1 left-wrist port
 ```
 
-**Player 2**: same, with the P2 PSK, `p2_hub` / `p2_torso` / `p2_left` and the P2 ports.
+**Player 2**: same window (same PSK), with `p2_hub` / `p2_torso` / `p2_left` and the P2 ports.
 
 Watch a hub boot (close the monitor before flashing again):
 
@@ -166,7 +187,6 @@ demo boards were `CG4002-Demo-P1/P2`.
 
 ```powershell
 $env:CG_RELAY_TRANSPORT__BLE_ADDRESS = "AA:BB:CC:DD:EE:01"   # <- CG4002-Hardware-P1 from the scan
-$env:CG_RELAY_PSK_HEX = Read-Host "P1 PSK (same one used to flash p1_hub)"
 .\.venv\Scripts\python.exe -m cg_comms.relay.app --config configs\relay.hardware.p1.yaml --no-tunnel --console-level INFO
 ```
 
@@ -174,12 +194,12 @@ $env:CG_RELAY_PSK_HEX = Read-Host "P1 PSK (same one used to flash p1_hub)"
 
 ```powershell
 $env:CG_RELAY_TRANSPORT__BLE_ADDRESS = "AA:BB:CC:DD:EE:02"   # <- CG4002-Hardware-P2 from the scan
-$env:CG_RELAY_PSK_HEX = Read-Host "P2 PSK (same one used to flash p2_hub)"
 .\.venv\Scripts\python.exe -m cg_comms.relay.app --config configs\relay.hardware.p2.yaml --no-tunnel --console-level INFO
 ```
 
-The engine token comes from `.env.relay`, exactly as in the demo. The `$env:` values only last for
-that terminal, which is what lets two relays share one checkout.
+The PSK and engine token come from `.env.relay`, exactly as in the demo, and the player id comes
+from the YAML. Only the BLE address differs per terminal. `$env:` values last only for that
+terminal, which is what lets two relays share one checkout.
 
 What healthy looks like in each relay:
 1. `session_streaming`, then `weapon_changed` once that player holds the weapon-selection pose
