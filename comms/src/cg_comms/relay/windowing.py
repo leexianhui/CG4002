@@ -85,6 +85,7 @@ class PlayerWindower:
     _refractory: bool = field(default=False, init=False)
     _capture_weapon: Weapon | None = field(default=None, init=False)
     _capture_id: int = field(default=0, init=False)
+    _last_continuous_suppression: str | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         self._dominant = deque(maxlen=self.window_samples)
@@ -101,6 +102,7 @@ class PlayerWindower:
         self._frame_count = 0
         self._current_weapon = None
         self._armed = self._refractory = False
+        self._last_continuous_suppression = None
         self._capture_remaining = 0
         self._capture_weapon = None
         # Request/capture counters belong to the relay lifetime, not a BLE session.
@@ -147,7 +149,13 @@ class PlayerWindower:
             return None
         window, reason, _extra = self._build_window_if_gates_pass(engine_ts_ms, trigger_id=None)
         if window is None and self._frame_count >= self.window_samples:
-            self._log_suppression(reason, None)
+            # Continuous mode re-checks every stride (5x/s): log a reason when it starts, not each
+            # time it repeats, or e.g. "no_weapon" before the weapon locks floods the console.
+            if reason != self._last_continuous_suppression:
+                self._log_suppression(reason, None)
+            self._last_continuous_suppression = reason
+        elif window is not None:
+            self._last_continuous_suppression = None
         return window
 
     def _ingest_frame_triggered(self, engine_ts_ms: int, flags: int) -> SensorWindow | None:

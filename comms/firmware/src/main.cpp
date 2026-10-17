@@ -160,7 +160,14 @@ class ServerCallbacks : public BLEServerCallbacks {
     // than the passive advertising hint. Only a request — the central may refuse or pick another
     // value, hence the stall counters in send_sensor_frame() rather than trusting it took.
     void onConnect(BLEServer *server, esp_ble_gatts_cb_param_t *param) override {
+#ifdef CG_HARDWARE_GATEWAY
+        // The hub's one radio also has to receive the torso/left-wrist Wi-Fi. 7.5 ms connection
+        // events left Wi-Fi almost no airtime (nodes went unheard, LEDs stayed yellow). 15-30 ms
+        // still carries the 50 Hz stream: frames are batched per connection event.
+        server->updateConnParams(param->connect.remote_bda, 0x0C, 0x18, 0, 400);
+#else
         server->updateConnParams(param->connect.remote_bda, 0x06, 0x0C, 0, 400);
+#endif
     }
     void onDisconnect(BLEServer *server) override {
         portENTER_CRITICAL(&g_connection_mux);
@@ -207,12 +214,9 @@ void ble_setup() {
     BLEAdvertising *advertising = BLEDevice::getAdvertising();
     advertising->addServiceUUID(CG_DEMO_BLE_SERVICE_UUID);
 #ifdef CG_HARDWARE_GATEWAY
-    // The hub shares one radio between BLE and the sensor nodes' Wi-Fi broadcasts. With Wi-Fi
-    // preferred (the default) the hub became unscannable once the torso/left wrist came online.
-    // Give BLE the radio when they contend, and advertise on a short fixed interval (units 0.625 ms).
-    esp_coex_preference_set(ESP_COEX_PREFER_BT);
-    advertising->setMinInterval(0x20);  // 20 ms
-    advertising->setMaxInterval(0x40);  // 40 ms
+    // One 2.4 GHz radio is time-shared between BLE and the node Wi-Fi. Keep coexistence BALANCED
+    // (the IDF default): PREFER_BT starved Wi-Fi so the hub stopped hearing the torso/left wrist.
+    esp_coex_preference_set(ESP_COEX_PREFER_BALANCE);
 #endif
     advertising->start();
 }
