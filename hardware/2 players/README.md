@@ -41,7 +41,7 @@ flashed with a player 1 sketch pairs with the wrong player.
    rejected if it is the lead-in to a swing in the same candidate.
 
    - **Accepted:** the stroke is close enough to its nearest template
-     (`STRIKE_MAX_DIST`) and isn't the return to guard after the strike
+     (the locked weapon's `ACTION_LIMITS` distance) and isn't the return to guard after the strike
      before it. It gives a short buzz and a green flash, and the hub asks the
      torso for the same time window of its samples.
    - **Rejected:** a red flash.
@@ -50,9 +50,67 @@ flashed with a player 1 sketch pairs with the wrong player.
    a `Stroke ...` debug line with its features and decision.
 
    The templates are fitted from recordings by `fit_strike_model.py`, which
-   writes the `STRIKE_MODEL` table into both hub sketches. Refit after new
-   recordings or after changing how a board is strapped on.
+   writes weapon-specific strike, thrust, and limit tables into both hub
+   sketches. The current rows were fitted from the 76 labeled player 1 debug
+   sessions, including five explicitly attested grip overrides.
+   Refit after changing how a board is strapped on.
    `speed_study.py` checks a model offline before you flash it.
+
+## Recording and fitting weapon-specific actions
+
+Use the same sensor mounting for both players. Record one player at a time so
+each session has a unique timestamp. The fitter reads the hub's `Stroke` debug
+lines, and checks each session's filename weapon against its periodic
+`Active weapon=<name>` line. The lock line is now available with `RAW_STREAM 0`;
+raw samples are optional diagnostics and are not used for fitting.
+
+For each of `sword_shield`, `spear`, and `mace`, record at least eight clear
+repetitions of each of the six actions at slow, normal, and fast speeds. Record one session
+each of `fake_flick`, `fake_handling`, `fake_walking`,
+`fake_body_turn`, and `guard_raise`. For example:
+
+```
+python listener_2p.py --players 1 --label vertical_slow_spear
+python listener_2p.py --players 1 --label fake_handling_spear
+```
+
+The fitter reports usable counts and stops if any action and speed group has
+fewer than eight. The debug log must contain all `Stroke` lines and the closing
+`Candidate ENDED` line for a thrust candidate. Inspect the printed training
+comparison, especially thrust misses and non-action accepts, before using
+`--write`.
+
+The 2026-10-13 training check found mace thrust at 5/10 slow, 6/10 normal,
+and 13/22 fast with the selected limit. Raising that limit admitted more
+recorded non-actions, so test mace thrust and handling carefully after flashing.
+Some sword/shield diagonals were accepted as another strike type; verify action
+identity as well as detection in live play.
+
+The hub keeps its weapon lock until reboot. Reboot it before changing weapon,
+hold the new weapon's ready stance until it locks, and confirm the matching
+`Active weapon=<name>` line before starting each labeled capture. Five
+2026-10-13 spear/mace top-ups logged `Active weapon=sword_shield`; the recorder
+confirmed the physical spear/mace grips. `logs/p1/weapon_grip_overrides.csv`
+records those specific attestations. The fitter checks both labels and the
+logged lock, retains the logged lock for diagnostics, and uses the attested
+physical grip for fitting. Any other mismatch still stops fitting.
+
+From the repository root, fit and inspect the generated model before writing:
+
+```
+python fit_strike_model.py --logs "2 players/logs/p1"
+python fit_strike_model.py --logs "2 players/logs/p1" --write
+```
+
+The fitter excludes older sessions with no weapon label. The optional `_train`
+suffix is equivalent to omitting a split. You can add `_val` sessions later
+for a separate offline check, but they are not needed to fit the model. It fails
+if a labeled session lacks a locked-weapon debug line, if the labels conflict
+without a specific attestation, or if any group lacks enough usable strokes.
+When `_val` recordings are supplied, it reports held-out detection and
+non-action accepts against the model currently in the hub sketch. Otherwise,
+flash both hubs after fitting and check detection and accidental accepts in
+live play.
 
 The hub broadcasts the current phase every 100 ms, so a board that reboots
 rejoins on its own.

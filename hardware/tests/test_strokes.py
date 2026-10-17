@@ -15,6 +15,7 @@ import fit_strike_model as F
 from figpipe import parsers as P
 from figpipe import raw
 from figpipe import replay as R
+from figpipe import debug_fit as D
 
 DT = 10  # ms, 100 Hz like the hub
 A_STRIKE = np.array([0.6, 0.0, -0.8])     # strike rotation axis
@@ -136,6 +137,16 @@ class TestDecision(unittest.TestCase):
                                                  r.rot, r.torso_ratio, self.model)
             self.assertAlmostEqual(d.dist[i], dist, places=6)
 
+    def test_short_rotation_cannot_match_spin(self):
+        row = self.rep.iloc[[0]].copy()
+        model = self.model.copy()
+        model.loc[0, "action"] = "spin"
+        model.loc[0, "bidirectional"] = True
+        self.assertEqual(R.template_distance(np.array([row.ux.iat[0], row.uy.iat[0], row.uz.iat[0]]),
+                                             np.array([row.hx.iat[0], row.hy.iat[0], row.hz.iat[0]]),
+                                             row.rot.iat[0], row.torso_ratio.iat[0], model)[0], None)
+        self.assertEqual(R.decide(row, model, 8).reason.iat[0], "far")
+
     def test_fast_uppercut_needs_torso_motion_but_slow_one_does_not(self):
         row = self.rep.iloc[[0]].copy().reset_index(drop=True)
         model = self.model.copy()
@@ -220,19 +231,110 @@ class TestModelRoundTrip(unittest.TestCase):
         model = model_from_stroke(rep.iloc[0])
         thrust = {"ux": -0.24, "uy": 0.96, "uz": -0.14, "dir_spread": 36.3, "reach_mean": 0.61,
                   "reach_spread": 0.485, "rot_ref": 50.6, "rot_spread": 12.6}
-        block = F.c_block(model, 1.75, thrust, 1.25, ["20261004_120000_synthetic"])
+        models = {}
+        for w, limit in (("sword_shield", 1.75), ("spear", 2.0), ("mace", 2.25)):
+            own = model.copy()
+            own["weapon"] = w
+            own.loc[0, "ux"] += (limit - 1.75) * 0.1
+            own_thrust = dict(thrust)
+            own_thrust["reach_mean"] += limit - 1.75
+            models[w] = (own, limit, own_thrust, 1.25, 0.20)
+        block = F.c_block(models, ["20261004_120000_synthetic"])
         src = "header\n" + block + "\nfooter\n"
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "sketch.ino")
             with open(p, "w", encoding="utf-8") as fh:
                 fh.write(src)
-            back, limit, back_thrust, thrust_limit = R.model_from_sketch(p)
-        self.assertEqual((limit, thrust_limit), (1.75, 1.25))
+            back, limit, back_thrust, thrust_limit = R.model_from_sketch(p, "spear")
+            sword, _, _, _ = R.model_from_sketch(p, "sword_shield")
+            reach_limit = R.reach_limit_from_sketch(p, "spear")
+        self.assertEqual((limit, thrust_limit), (2.0, 1.25))
+        self.assertEqual(reach_limit, 0.20)
+        self.assertEqual(set(back.weapon), {"spear"})
+        self.assertNotAlmostEqual(back.ux.iat[0], sword.ux.iat[0])
         for c in R.MODEL_COLS:
-            self.assertAlmostEqual(back[c].iat[0], model[c].iat[0], places=3)
+            self.assertAlmostEqual(back[c].iat[0], models["spear"][0][c].iat[0], places=3)
         for c in R.THRUST_COLS:
-            self.assertAlmostEqual(back_thrust[c], thrust[c], places=3)
+            self.assertAlmostEqual(back_thrust[c], models["spear"][2][c], places=3)
         self.assertTrue(F.BLOCK_RE.search(src))
+
+    def test_recording_label_and_lock_cross_check(self):
+        self.assertEqual(raw.recording_metadata("vertical_slow_sword_shield_train"),
+                         ("sword_shield", "train"))
+        self.assertEqual(raw.recording_metadata("vertical_slow_sword_shield"),
+                         ("sword_shield", "train"))
+        self.assertEqual(raw.recording_metadata("fake_handling_mace_val"), ("mace", "val"))
+        with self.assertRaises(ValueError):
+            raw.recording_metadata("vertical_spear_mace_train")
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "raw_20261012_120000_vertical_slow_spear_train.csv")
+            debug = path.replace("raw_", "debug_")
+            with open(debug, "w", encoding="utf-8") as f:
+                f.write("rx_time,source,line\n2026-10-12T12:00:00,wrist,[wrist] Active weapon=spear\n")
+            s = session([(50, pulse(60, 400, A_STRIKE))])
+            s.path, s.weapon, s.split = path, "spear", "train"
+            self.assertEqual(F.verified_weapon(s), "spear")
+            s.weapon = "mace"
+            with self.assertRaises(ValueError):
+                F.verified_weapon(s)
+            s.weapon = None
+            with self.assertRaises(ValueError):
+                F.verified_weapon(s)
+            s.weapon = "spear"
+            with open(debug, "w", encoding="utf-8") as f:
+                f.write("rx_time,source,line\n2026-10-12T12:00:00,wrist,[wrist] "
+                        "Candidate ENDED weapon=spear raw=1 rawDur=10 strokes=0 pushes=0 "
+                        "accepted=0 reason=settled\n")
+            with self.assertRaisesRegex(ValueError, "locked-weapon log"):
+                F.verified_weapon(s)
+            with open(debug, "w", encoding="utf-8") as f:
+                f.write("rx_time,source,line\n2026-10-12T12:00:00,wrist,[wrist] Active weapon=sword_shield\n")
+            with self.assertRaisesRegex(ValueError, "conflicts"):
+                F.verified_weapon(s)
+            overrides = {os.path.basename(debug): ("spear", "sword_shield")}
+            self.assertEqual(F.verified_weapon(s, overrides), "spear")
+            self.assertEqual(s.locked_weapon, "sword_shield")
+            with self.assertRaisesRegex(ValueError, "conflicts"):
+                F.verified_weapon(s, {os.path.basename(debug): ("mace", "sword_shield")})
+
+    def test_grip_override_manifest_requires_attestation(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, F.OVERRIDE_FILE)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("debug_file,physical_weapon,logged_locked_weapon,attestation\n"
+                        "debug_20261012_120000_spin_slow_mace.csv,mace,sword_shield,User confirmed mace grip\n")
+            self.assertEqual(F.read_grip_overrides(d)["debug_20261012_120000_spin_slow_mace.csv"],
+                             ("mace", "sword_shield"))
+            with open(path, "a", encoding="utf-8") as f:
+                f.write("debug_20261012_120000_spin_slow_mace.csv,mace,sword_shield,Duplicate\n")
+            with self.assertRaisesRegex(ValueError, "duplicate"):
+                F.read_grip_overrides(d)
+
+    def test_incomplete_coverage_rejected(self):
+        empty = pd.DataFrame(columns=["session", "role", "has_gap", "kind"])
+        with self.assertRaisesRegex(ValueError, "insufficient recording coverage"):
+            F.validate_coverage([], empty)
+
+    def test_validation_is_optional(self):
+        self.assertIn("No validation sessions", F.validation_report({}, [], pd.DataFrame()))
+
+    def test_generated_block_written_identically(self):
+        with tempfile.TemporaryDirectory() as d:
+            paths = [os.path.join(d, f"p{p}.ino") for p in (1, 2)]
+            for p in paths:
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(F.BEGIN + "\nold\n" + F.END)
+            old = F.SKETCHES
+            try:
+                F.SKETCHES = paths
+                F.write_sketches(F.BEGIN + "\nnew\n" + F.END)
+            finally:
+                F.SKETCHES = old
+            with open(paths[0], encoding="utf-8") as f:
+                a = f.read()
+            with open(paths[1], encoding="utf-8") as f:
+                b = f.read()
+            self.assertEqual(a, b)
 
 
 # Built from the onMotionEnd() format strings in "2 players/p1_right_wrist.ino".
@@ -266,6 +368,60 @@ class TestStrokeLines(unittest.TestCase):
     def test_candidate_ended(self):
         d = P.parse_line(SAMPLE_CAND)
         self.assertEqual((d["kind"], d["strokes"], d["accepted"], d["reason"]), ("candidate_ended", 2, 1, "settled"))
+
+
+class TestDebugFit(unittest.TestCase):
+    def make_lines(self, texts):
+        rows = []
+        for n, value in enumerate(texts):
+            row = P.parse_line(value)
+            row.update(session="debug_session.csv", stream="debug", row=n)
+            rows.append(row)
+        return pd.DataFrame(rows)
+
+    def capture(self, label="vertical", speed="normal", weapon="spear"):
+        return D.Capture("session", "debug_session.csv", label, speed, "real", weapon, "train")
+
+    def test_complete_candidate_keeps_logged_features(self):
+        end = SAMPLE_CAND.replace("strokes=2 pushes=3", "strokes=1 pushes=1")
+        rep, warnings = D.stroke_rows([self.capture()], self.make_lines([SAMPLE_STROKE, SAMPLE_PUSH, end]))
+        self.assertFalse(warnings)
+        self.assertEqual(list(rep.kind), ["rot", "push"])
+        self.assertTrue(rep.candidate_complete.all())
+        self.assertFalse(rep.has_gap.any())
+        self.assertAlmostEqual(rep.iloc[0].torso_ratio, 0.071)
+        self.assertAlmostEqual(rep.iloc[1].reach, 0.880)
+
+    def test_missing_candidate_line_disqualifies_push(self):
+        rep, warnings = D.stroke_rows([self.capture()], self.make_lines([SAMPLE_STROKE, SAMPLE_PUSH]))
+        self.assertTrue(warnings)
+        self.assertFalse(rep.iloc[0].has_gap)
+        self.assertTrue(rep.iloc[1].has_gap)
+
+    def test_spin_partial_rotation_is_not_a_training_strike(self):
+        line = SAMPLE_STROKE.replace("rot=198.5", "rot=320.0")
+        end = SAMPLE_CAND.replace("strokes=2 pushes=3", "strokes=2 pushes=0")
+        rep, _ = D.stroke_rows([self.capture("spin", "fast")], self.make_lines([
+            line, line.replace("rot=320.0", "rot=90.0"), end]))
+        roles = D.label_roles(rep)
+        self.assertEqual(list(roles.role), ["strike", "other"])
+
+    def test_immediate_second_forward_push_is_return(self):
+        end = SAMPLE_CAND.replace("strokes=2 pushes=3", "strokes=0 pushes=1")
+        second = SAMPLE_PUSH.replace("t0=408626 t1=409098", "t0=409200 t1=409500")
+        rep, warnings = D.stroke_rows([self.capture("thrust")], self.make_lines([
+            SAMPLE_PUSH, end, second, end]))
+        self.assertFalse(warnings)
+        self.assertEqual(list(D.label_roles(rep).role), ["strike", "return"])
+
+    def test_bad_debug_line_rejects_capture(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "debug_20261012_120000_vertical_slow_spear.csv")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("rx_time,source,line\n2026-10-12T12:00:00,wrist,"
+                        + SAMPLE_STROKE.replace(" dist=0.62", "") + "\n")
+            with self.assertRaisesRegex(ValueError, "unparseable training log"):
+                D.load_captures(d)
 
 
 if __name__ == "__main__":
