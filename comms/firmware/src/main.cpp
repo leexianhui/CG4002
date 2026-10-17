@@ -180,6 +180,13 @@ class ServerCallbacks : public BLEServerCallbacks {
 void ble_setup() {
     g_incoming_queue = xQueueCreate(16, sizeof(IncomingFrame));
     configASSERT(g_incoming_queue != nullptr);
+#ifdef CG_HARDWARE_GATEWAY
+    // The hub also runs Wi-Fi and the hardware algorithms; BLEDevice::createServer() ran out of heap.
+    // Only BLE is used, so hand back the Classic-BT controller memory (allowed only before init).
+    esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+    Serial.printf("[ble] free heap before init: %u (largest block %u)\n",
+                  (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+#endif
     BLEDevice::init(CG_DEMO_BLE_DEVICE_NAME);
     BLEServer *server = BLEDevice::createServer();
     server->setCallbacks(new ServerCallbacks());
