@@ -115,15 +115,6 @@ Watch a hub boot (close the monitor before flashing again):
 & "..\..\pio-venv\Scripts\pio.exe" device monitor -p COM8 -b 115200
 ```
 
-> **If the hub reboot-loops** right after Wi-Fi connects, with a message like *"Should enable WiFi
-> modem sleep when both WiFi and Bluetooth are enabled"*: the hardware sketch turns Wi-Fi sleep
-> off, which the ESP32 doesn't allow while BLE is running. Flash the fallback hub build instead,
-> which is identical except for leaving Wi-Fi sleep on:
->
-> ```powershell
-> & "..\..\pio-venv\Scripts\pio.exe" run -e p1_hub_wifisleep -t upload --upload-port COM8   # or p2_hub_wifisleep
-> ```
-
 The boards must join the hardware team's Wi-Fi network (the SSID and password are in their sketches). Turn that
 hotspot on before powering the boards.
 
@@ -220,7 +211,8 @@ simulated P2 board instead, on the relay laptop from `comms/`, in two more termi
 
 ```powershell
 # Terminal 5: P2 relay talking to the simulated board instead of BLE
-.\.venv\Scripts\python.exe -m cg_comms.relay.app --config configselay.sim.p2.yaml --no-tunnel --console-level INFO
+.\.venv\Scripts\python.exe -m cg_comms.relay.app --config configs
+elay.sim.p2.yaml --no-tunnel --console-level INFO
 ```
 
 The fake P2 sends motion that the AI will classify, usually as IDLE. Phone P2 is still needed,
@@ -297,7 +289,7 @@ Reset the match (Ultra96, from `comms/`):
 | Never guards | No GUARD model was supplied, so guard is always `IDLE` |
 | Engine stuck in WAITING or PAUSED | A phone isn't ready or calibrated, a relay is disconnected, or a position is more than 1 s old. Use **Show setup readings** |
 | Relay can't reach the engine (TLS error) | `comms/certs/engine.crt` is missing on the relay laptop. Copy it from the Ultra96 as for the demo |
-| Hub reboot-loops after Wi-Fi connects | See the Wi-Fi sleep note in step 1 |
+| Hub reboot-loops right after `[cfg] ... wifi_sleep=off` | Old hub build: re-flash `p1_hub`/`p2_hub` from the current repo (hub builds now keep Wi-Fi sleep on, which BLE requires) |
 
 ---
 
