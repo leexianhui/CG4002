@@ -17,6 +17,7 @@
 #ifdef CG_HARDWARE_GATEWAY
 #include "gateway_config.h"
 #include "gateway_boundary.h"
+#include <esp_coexist.h>
 #else
 #include "cg_config.h"
 #endif
@@ -205,6 +206,14 @@ void ble_setup() {
     service->start();
     BLEAdvertising *advertising = BLEDevice::getAdvertising();
     advertising->addServiceUUID(CG_DEMO_BLE_SERVICE_UUID);
+#ifdef CG_HARDWARE_GATEWAY
+    // The hub shares one radio between BLE and the sensor nodes' Wi-Fi broadcasts. With Wi-Fi
+    // preferred (the default) the hub became unscannable once the torso/left wrist came online.
+    // Give BLE the radio when they contend, and advertise on a short fixed interval (units 0.625 ms).
+    esp_coex_preference_set(ESP_COEX_PREFER_BT);
+    advertising->setMinInterval(0x20);  // 20 ms
+    advertising->setMaxInterval(0x40);  // 40 ms
+#endif
     advertising->start();
 }
 
