@@ -36,13 +36,16 @@ logger = structlog.get_logger(__name__)
 _ACCEL_AXES = 3  # ax, ay, az; remaining three axes are gx, gy, gz
 
 
-def _scale_sample(raw: tuple[int, ...]) -> list[float]:
+def scale_sample(raw: tuple[int, ...]) -> list[float]:
     """Converts one raw int16 IMU sample (ax, ay, az, gx, gy, gz) to physical units (g, deg/s) —
     shared/config/sensors.yaml. Comms converts to float only here, for the SENSOR_WINDOW app
     message; the wire SENSOR_FRAME payload stays raw ints (§4.3)."""
     accel = [v / ACCEL_LSB_PER_G for v in raw[:_ACCEL_AXES]]
     gyro = [v / GYRO_LSB_PER_DPS for v in raw[_ACCEL_AXES:]]
     return accel + gyro
+
+
+_scale_sample = scale_sample
 
 
 @dataclass
@@ -110,6 +113,10 @@ class PlayerWindower:
     @property
     def current_weapon(self) -> Weapon | None:
         return self._current_weapon
+
+    def next_request_id(self) -> int:
+        """Request ids are shared with segment-mode windows so the two paths never collide."""
+        return self._request_ids.next()
 
     def ingest_frame(
         self,

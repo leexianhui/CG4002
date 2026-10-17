@@ -22,7 +22,7 @@ GCM_TAG_SIZE: int = 16  # trailing auth tag, inside PAYLOAD/LEN
 NONCE_SIZE: int = 12  # derived AES-GCM nonce, never sent on the wire
 PSK_SIZE: int = 16  # AES-128 key
 
-# The largest real payload (SENSOR_FRAME, 42 B plaintext) is well under this. Used by framing.py
+# The largest real payload (SEGMENT_CHUNK, 208 B plaintext) is well under this. Used by framing.py
 # to reject an implausible LEN field as a false-positive MAGIC match rather than stalling forever
 # waiting for bytes that will never complete a bogus frame.
 MAX_PAYLOAD_LEN: int = 512
@@ -42,6 +42,7 @@ class PacketType(IntEnum):
     TIME_SYNC_RESP = 0x04
     SENSOR_FRAME = 0x10
     RFID_EVENT = 0x11
+    SEGMENT_CHUNK = 0x12
     HEARTBEAT = 0x20
     ACK = 0x21
     COMBAT_FEEDBACK = 0x30
@@ -58,6 +59,7 @@ RELIABLE_PACKET_TYPES: frozenset[PacketType] = frozenset(
         PacketType.TIME_SYNC_REQ,
         PacketType.TIME_SYNC_RESP,
         PacketType.RFID_EVENT,
+        PacketType.SEGMENT_CHUNK,
         PacketType.COMBAT_FEEDBACK,
     }
 )
@@ -73,9 +75,21 @@ RELIABLE_PACKET_TYPES: frozenset[PacketType] = frozenset(
 ACK_RETRANSMIT_PACKET_TYPES: frozenset[PacketType] = frozenset(
     {
         PacketType.RFID_EVENT,
+        PacketType.SEGMENT_CHUNK,
         PacketType.COMBAT_FEEDBACK,
     }
 )
+
+# The subset of ACK_RETRANSMIT_PACKET_TYPES the sender may keep several of in flight at once (a
+# segment's chunks). These are replay-checked by the ordinary 64-wide sliding window instead of a
+# per-type monotonic watermark: with several in flight, a watermark would reject the retransmit of a
+# lost chunk as a replay once a later chunk had arrived. Exact-ciphertext duplicates are still
+# recognised (and re-ACKed) through the reliable-frame cache.
+WINDOWED_RETRANSMIT_PACKET_TYPES: frozenset[PacketType] = frozenset({PacketType.SEGMENT_CHUNK})
+
+# SEGMENT_CHUNK layout limits (wire_protocol.md §3, cg_protocol.h CG_SEGMENT_*).
+SEGMENT_CHUNK_SAMPLES: int = 16
+SEGMENT_MAX_CHUNKS: int = 32
 
 # SENSOR_FRAME.flags bits (wire_protocol.md §3.1).
 FLAG_DOM_STALE: int = 1 << 0

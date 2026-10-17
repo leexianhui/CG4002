@@ -109,6 +109,12 @@ $env:CG_GATEWAY_PSK_HEX = "<the 32-hex PSK from comms/.env.relay>"   # once per 
 
 **Player 2**: same window (same PSK), with `p2_hub` / `p2_torso` / `p2_left` and the P2 ports.
 
+Reflash **all three** boards of a player together. Hub and nodes must agree on the uplink mode. By
+default (event mode) the hub sends the relay one segment per swing its own segmenter accepts, and
+the torso/left wrist do not stream samples to it. The old continuous 50 Hz stream is still there:
+add `-DCG_GATEWAY_EVENT_MODE=0` to the `build_flags` of all three envs, and set
+`segment_mode: false` in that player's relay YAML.
+
 Watch a hub boot (close the monitor before flashing again):
 
 ```powershell
@@ -195,9 +201,12 @@ terminal, which is what lets two relays share one checkout.
 What healthy looks like in each relay:
 1. `session_streaming`, then `weapon_changed` once that player holds the weapon-selection pose
    (the hub locks the weapon until it reboots).
-2. `window_ready` → `classifier_request` → `classifier_response` repeating about 5 times a second.
-   With no swing these are `IDLE`, which is normal.
-3. `action_classified` when a swing is recognised.
+2. Nothing while standing still. Each swing the hub accepts gives exactly one
+   `segment_received` → `classifier_request` → `segment_classified` (the AI's answer, with
+   `passes_gate`), then `action_classified` if it cleared the confidence gate. On the hub's serial
+   monitor the same swing shows `[Ultra96 send queued] ...` then `[segment] sent seg=...`.
+3. `ble_mtu_too_small_for_segments` at connect means Windows refused the larger BLE packet size;
+   every segment will then fail. Report it: the uplink has to be split smaller.
 
 ### Only P1 has hardware? Simulate P2
 
@@ -289,6 +298,8 @@ Reset the match (Ultra96, from `comms/`):
 | Never guards | No GUARD model was supplied, so guard is always `IDLE` |
 | Engine stuck in WAITING or PAUSED | A phone isn't ready or calibrated, a relay is disconnected, or a position is more than 1 s old. Use **Show setup readings** |
 | Relay can't reach the engine (TLS error) | `comms/certs/engine.crt` is missing on the relay laptop. Copy it from the Ultra96 as for the demo |
+| Swings accepted on the hub (`action_accepted`) but no `segment_received` | Hub serial shows `[segment] undelivered`: the BLE link is losing chunks. `stream_decode_drop reason=bad_crc` on the relay: the BLE packet size is too small (see `ble_mtu_too_small_for_segments`). `segment_ignored`: the relay YAML lacks `segment_mode: true` |
+| `segment_abandoned reason=timeout` | Some chunks of a swing never arrived within 2 s; that swing is skipped. Occasional is fine, constant means a weak link |
 | Hub reboot-loops right after `[cfg] ... wifi_sleep=off` | Old hub build: re-flash `p1_hub`/`p2_hub` from the current repo (hub builds now keep Wi-Fi sleep on, which BLE requires) |
 
 ---

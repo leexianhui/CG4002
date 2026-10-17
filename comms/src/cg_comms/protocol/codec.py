@@ -28,6 +28,7 @@ from cg_comms.protocol.constants import (
     PROTOCOL_VERSION,
     TYPE_MASK,
     TYPE_MORE_FRAGMENTS,
+    WINDOWED_RETRANSMIT_PACKET_TYPES,
     Direction,
     PacketType,
 )
@@ -162,6 +163,7 @@ def reliable_kind(packet_type: PacketType) -> str:
 
     Types in one group must never have more than one packet in flight at a time, so that a retransmit
     is always the newest packet of its group. Every ACK-retransmit type is currently its own group.
+    WINDOWED_RETRANSMIT_PACKET_TYPES are exempt: they never use a watermark.
     """
     return str(packet_type.name)
 
@@ -227,7 +229,10 @@ def decode_packet(
     candidate = copy.copy(sequence_tracker)
     candidate._seen = sequence_tracker._seen.copy()
     ext_seq = candidate.accept(seq)
-    reliable = reliable_duplicates and packet_type in ACK_RETRANSMIT_PACKET_TYPES
+    # Windowed reliable types (several in flight) use the sliding window above for replay; a
+    # retransmit of one already applied is caught by the exact-frame cache before this point.
+    windowed = reliable_duplicates and packet_type in WINDOWED_RETRANSMIT_PACKET_TYPES
+    reliable = reliable_duplicates and packet_type in ACK_RETRANSMIT_PACKET_TYPES and not windowed
     if reliable:
         # A first RFID arrival may be >64 sensor packets late after multiple lost sends.
         # Give reliable application effects their own monotonic replay watermark.
@@ -267,9 +272,10 @@ def decode_packet(
     sequence_tracker._highest_ext_seq = candidate._highest_ext_seq
     sequence_tracker._seen = candidate._seen
     packet = DecodedPacket(header=header, ext_seq=ext_seq, fields=fields)
-    if reliable:
-        sequence_tracker.reliable_high[reliable_kind(packet_type)] = ext_seq
+    if reliable or windowed:
+        if reliable:
+            sequence_tracker.reliable_high[reliable_kind(packet_type)] = ext_seq
         sequence_tracker.reliable_frames[frame] = (time.monotonic(), packet)
-        while len(sequence_tracker.reliable_frames) > 16:
+        while len(sequence_tracker.reliable_frames) > 32:
             sequence_tracker.reliable_frames.popitem(last=False)
     return packet

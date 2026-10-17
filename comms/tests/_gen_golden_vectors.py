@@ -234,6 +234,7 @@ PACKET_TYPES = {
     "TIME_SYNC_RESP": 0x04,
     "SENSOR_FRAME": 0x10,
     "RFID_EVENT": 0x11,
+    "SEGMENT_CHUNK": 0x12,
     "HEARTBEAT": 0x20,
     "ACK": 0x21,
     "COMBAT_FEEDBACK": 0x30,
@@ -366,6 +367,20 @@ vectors.append(normal_vector(
     "RFID_EVENT", PACKET_TYPES["RFID_EVENT"],
     session_id=SESSION_ID, player_id=1, direction=0, seq=7, ext_seq=7,
     plaintext=rfid_plaintext,
+))
+
+# SEGMENT_CHUNK: chunk 1 of 3 of segment 0x0ABCDEF0, 10 real samples then 6 zero rows.
+segment_rows = [(i * 100, -i * 100, 2048, i * 16, -i * 16, 0) for i in range(10)] + [(0,) * 6] * 6
+segment_plaintext = struct.pack(
+    "<IBBBBHIBB96h",
+    0x0ABCDEF0, 1, 3, 2, 0, 100, 777000, 10, 0,
+    *[v for row in segment_rows for v in row],
+)
+assert len(segment_plaintext) == 208
+vectors.append(normal_vector(
+    "SEGMENT_CHUNK", PACKET_TYPES["SEGMENT_CHUNK"],
+    session_id=SESSION_ID, player_id=1, direction=0, seq=11, ext_seq=11,
+    plaintext=segment_plaintext,
 ))
 
 heartbeat_plaintext = struct.pack("<IHHHH", 50000, 3700, 3650, 3600, 0)

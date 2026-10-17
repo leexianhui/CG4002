@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from cg_comms.protocol.constants import PacketType
+from cg_comms.protocol.constants import SEGMENT_CHUNK_SAMPLES, PacketType
 
 
 class FieldKind(Enum):
@@ -88,6 +88,19 @@ PAYLOAD_TABLES: dict[PacketType, tuple[Field, ...]] = {
         Field("weapon_id", FieldKind.U8),
         Field("reserved", FieldKind.U8),
         Field("tag_uid", FieldKind.BYTES, 6),
+    ),
+    PacketType.SEGMENT_CHUNK: (
+        Field("segment_id", FieldKind.U32),
+        Field("chunk_index", FieldKind.U8),
+        Field("chunk_count", FieldKind.U8),
+        Field("weapon_id", FieldKind.U8),
+        Field("flags", FieldKind.U8),
+        Field("sample_rate_hz", FieldKind.U16),
+        Field("first_sample_ms", FieldKind.U32),
+        Field("sample_count", FieldKind.U8),
+        Field("reserved", FieldKind.U8),
+        # SEGMENT_CHUNK_SAMPLES rows of (ax, ay, az, gx, gy, gz), flattened; unused rows are zero.
+        Field("samples", FieldKind.I16_ARRAY, SEGMENT_CHUNK_SAMPLES * 6),
     ),
     PacketType.HEARTBEAT: (
         Field("device_timestamp_ms", FieldKind.U32),

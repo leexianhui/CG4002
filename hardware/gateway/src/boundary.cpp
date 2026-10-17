@@ -5,6 +5,7 @@
 #include <freertos/queue.h>
 #include "gateway_boundary.h"
 #include "gateway_samples.h"
+#include "gateway_segments.h"
 
 namespace {
 WiFiUDP udp;
@@ -14,6 +15,10 @@ uint32_t bootId, sequence, lastExport;
 GatewaySamples samples;
 portMUX_TYPE sampleMux = portMUX_INITIALIZER_UNLOCKED;
 QueueHandle_t feedbackQueue;
+#if CG_GATEWAY_ROLE == 0 && CG_GATEWAY_EVENT_MODE
+GatewaySegmentQueue segments;
+portMUX_TYPE segmentMux = portMUX_INITIALIZER_UNLOCKED;
+#endif
 }
 
 #if CG_GATEWAY_ROLE == 0
@@ -43,6 +48,10 @@ void gatewayBegin(uint8_t player, uint8_t role) {
 }
 
 void gatewaySample(float ax, float ay, float az, float gx, float gy, float gz) {
+#if CG_GATEWAY_EVENT_MODE
+    // Event mode sends segments, not a stream: no node broadcast competes with the hub's BLE link.
+    (void)ax; (void)ay; (void)az; (void)gx; (void)gy; (void)gz;
+#else
     uint32_t now = millis();
     if (roleId && now - lastExport < 20) return;
     lastExport = now;
@@ -67,6 +76,7 @@ void gatewaySample(float ax, float ay, float az, float gx, float gy, float gz) {
         udp.write((uint8_t *)&s, sizeof(s));
         udp.endPacket();
     }
+#endif
 }
 
 void gatewayPoll(uint8_t locked_weapon) {
@@ -129,3 +139,51 @@ int gatewayFeedbackDuty() {
     }
     return elapsed % cycle < current.duration_ms ? current.intensity_pct * 255 / 100 : 0;
 }
+
+#if CG_GATEWAY_ROLE == 0 && CG_GATEWAY_EVENT_MODE
+void gatewaySegmentBegin(uint32_t segment_id, uint8_t weapon, uint16_t source_samples) {
+    portENTER_CRITICAL(&segmentMux);
+    uint32_t dropped = segments.dropped;
+    segments.begin(segment_id, weapon <= 3 ? weapon : 0, source_samples, millis());
+    bool lostOne = segments.dropped != dropped;
+    uint32_t lost = segments.last_dropped_id;
+    portEXIT_CRITICAL(&segmentMux);
+    if (lostOne)
+        Serial.printf("[segment] queue full, dropped unsent seg=%lu\n", (unsigned long)lost);
+}
+// Touches only the FILLING slot, which the BLE task never reads: no lock needed.
+void gatewaySegmentSample(uint32_t t_ms, float ax, float ay, float az, float gx, float gy, float gz) {
+    const float values[] = {ax, ay, az, gx, gy, gz};
+    int16_t axes[6];
+    for (unsigned i = 0; i < 6; ++i) axes[i] = gatewayScale(values[i], i < 3 ? 2048.0f : 16.4f);
+    segments.add(t_ms, axes);
+}
+bool gatewaySegmentEnd() {
+    portENTER_CRITICAL(&segmentMux);
+    bool queued = segments.end();
+    portEXIT_CRITICAL(&segmentMux);
+    return queued;
+}
+const GatewaySegment *gatewaySegmentTake(uint32_t now, uint32_t max_age_ms, int &slot) {
+    portENTER_CRITICAL(&segmentMux);
+    uint32_t dropped = segments.dropped;
+    slot = segments.take(now, max_age_ms);
+    bool lostOne = segments.dropped != dropped;
+    uint32_t lost = segments.last_dropped_id;
+    portEXIT_CRITICAL(&segmentMux);
+    if (lostOne)
+        Serial.printf("[segment] dropped stale unsent seg=%lu\n", (unsigned long)lost);
+    return slot < 0 ? nullptr : &segments.slots[slot];
+}
+void gatewaySegmentDone(int slot) {
+    portENTER_CRITICAL(&segmentMux);
+    segments.done(slot);
+    portEXIT_CRITICAL(&segmentMux);
+}
+#else
+void gatewaySegmentBegin(uint32_t, uint8_t, uint16_t) {}
+void gatewaySegmentSample(uint32_t, float, float, float, float, float, float) {}
+bool gatewaySegmentEnd() { return false; }
+const GatewaySegment *gatewaySegmentTake(uint32_t, uint32_t, int &slot) { slot = -1; return nullptr; }
+void gatewaySegmentDone(int) {}
+#endif

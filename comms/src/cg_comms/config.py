@@ -72,6 +72,12 @@ class WindowingConfig(_Model):
     # comms-demo only (docs/DEMO_TRIGGERED_ACTION_PLAN.md §3.2): one SensorWindow per tagged button
     # capture instead of continuous stride emission. False (the real game's mode) is unchanged behaviour.
     trigger_mode: bool = False
+    # Hardware hub event mode (hardware/gateway CG_GATEWAY_EVENT_MODE): the device sends one
+    # SEGMENT_CHUNK-encoded segment per action its own segmenter accepted, and the relay sends exactly
+    # one SENSOR_WINDOW per complete segment, resampled to frame_rate_hz and fitted to window_samples.
+    # SENSOR_FRAMEs still go through the continuous/trigger windower either way: this only adds a path.
+    segment_mode: bool = False
+    segment_timeout_ms: float = 2000.0
 
 
 class Ultra96Config(_Model):

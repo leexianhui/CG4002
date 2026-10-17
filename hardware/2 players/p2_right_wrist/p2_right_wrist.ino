@@ -2033,16 +2033,30 @@ const char *pushContextReject(const PushStroke &p)
     return nullptr;
 }
 
-// ---------------- Segment -> Ultra96 (not yet transmitted) ----------------
+// ---------------- Segment -> Ultra96 ----------------
 // Samples for this segment live in buffer[sendStart..sendEnd] — the accepted
 // stroke plus SEND_PAD_FRAC of its duration either side (see acceptSegment()).
-// The transmit isn't wired up yet, so this only logs what would be sent.
+// Gateway builds (hardware/gateway, event mode) transmit it; others only log.
 const float SEND_PAD_FRAC = 0.25;
 
 void sendSegmentToUltra96(uint32_t segId, int sendStart, int sendEnd)
 {
+#if defined(CG_HARDWARE_GATEWAY) && CG_GATEWAY_EVENT_MODE
+    // Gateway event mode: hand the segment to the BLE task, which sends it to the relay once as
+    // SEGMENT_CHUNKs (decimated to the classifier's 50 Hz). Returns immediately; no radio work here.
+    gatewaySegmentBegin(segId, (uint8_t)lockedWeapon, (uint16_t)(sendEnd - sendStart + 1));
+    for (int i = sendStart; i <= sendEnd; i++)
+    {
+        const Sample &s = buffer[i];
+        gatewaySegmentSample(s.t, s.ax, s.ay, s.az, s.gx, s.gy, s.gz);
+    }
+    bool queued = gatewaySegmentEnd();
+    debugLog(String(queued ? "[Ultra96 send queued] " : "[Ultra96 send failed] ") +
+             String(sendEnd - sendStart + 1) + " wrist samples for seg=" + String(segId));
+#else
     debugLog("[Ultra96 send skipped] would send " + String(sendEnd - sendStart + 1) +
              " wrist samples for seg=" + String(segId));
+#endif
 }
 
 // Sends buffer[a..b] plus a margin, so the AI sees the whole movement.

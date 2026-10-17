@@ -82,3 +82,17 @@ def test_bad_requests_return_error_not_crash(ai):
     bad = _wire(_window(3)) | {"weapon": "AXE"}
     assert ai.handle_request(backend, bad) == {
         "type": "ERROR", "error": "unknown weapon 'AXE'", "requestId": 3}
+
+
+def test_segment_mode_window_is_accepted_by_ai_model(ai):
+    """A hub segment (100 Hz source decimated to 50 Hz, 1.5 s) -> relay window -> AI model."""
+    from test_segments import SegmentAssembler, segment_chunks, session
+
+    subject = session()
+    chunks, _ = segment_chunks(11, 75, weapon=1)
+    assembler = SegmentAssembler()
+    segment = [assembler.add(c, now=0.0) for c in chunks][-1]
+    window = subject._segment_window(segment)
+    out = ai.handle_request(ai.NumpyBackend(str(AI_DIR / "models")), _wire(window))
+    assert out["type"] == "ACTION_RESULT" and out["requestId"] == window.request_id
+    assert out["guardState"] == "IDLE"

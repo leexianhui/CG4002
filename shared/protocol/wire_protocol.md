@@ -45,6 +45,7 @@ discard a corrupted frame before spending a decrypt on it, which matters on the 
 | `CG_PKT_TIME_SYNC_RESP` | `0x04` | laptop → device | reliable |
 | `CG_PKT_SENSOR_FRAME` | `0x10` | device → laptop | best-effort |
 | `CG_PKT_RFID_EVENT` | `0x11` | device → laptop | reliable |
+| `CG_PKT_SEGMENT_CHUNK` | `0x12` | device → laptop | reliable, windowed |
 | `CG_PKT_HEARTBEAT` | `0x20` | both | best-effort |
 | `CG_PKT_ACK` | `0x21` | both | never acked itself |
 | `CG_PKT_COMBAT_FEEDBACK` | `0x30` | laptop → device | reliable |
@@ -54,6 +55,7 @@ discard a corrupted frame before spending a decrypt on it, which matters on the 
 |---|---|---|
 | `SENSOR_FRAME`, `HEARTBEAT` | best-effort | Dropped capture frames can cause too_few/span suppression; never fill with unrelated frames |
 | `RFID_EVENT`, `COMBAT_FEEDBACK` | ACK + identical-ciphertext retry | One application effect; exact duplicates get another ACK |
+| `SEGMENT_CHUNK` | ACK + identical-ciphertext retry, up to 4 unACKed | One classifier request per complete segment; replay-checked by the 64-wide window, not a per-type watermark (several are in flight, so a watermark would reject a lost chunk's retransmit) |
 | `HELLO`, `HELLO_ACK`, `TIME_SYNC_*` | Bounded request/response | Failure restarts handshake with a fresh device nonce and BLE session; no generic ACK exchange |
 | `ACK` | never acked | obviously |
 
@@ -77,11 +79,23 @@ TIME_SYNC_RESP       (12 B)  t0 u32 (echoed) | t1 u32 | t2 u32 (laptop clock, rx
 SENSOR_FRAME         (42 B)  deviceTimestampMs u32 | flags u8 | weaponId u8 |
                              dominant[6] i16 | offhand[6] i16 | torso[6] i16
 RFID_EVENT           (12 B)  deviceTimestampMs u32 | weaponId u8 | reserved u8 | tagUid[6]
+SEGMENT_CHUNK       (208 B)  segmentId u32 | chunkIndex u8 | chunkCount u8 | weaponId u8 | flags u8 |
+                             sampleRateHz u16 | firstSampleMs u32 | sampleCount u8 | reserved u8 |
+                             samples[16][6] i16   (ax ay az gx gy gz; rows >= sampleCount are 0)
 HEARTBEAT            (12 B)  deviceTimestampMs u32 | vbatBelt_mV u16 | vbatDom_mV u16 |
                              vbatOff_mV u16 | statusFlags u16
 ACK                   (2 B)  ackedSeq u16
 COMBAT_FEEDBACK       (6 B)  feedbackCode u8 | intensityPct u8 | durationMs u16 | repeatCount u16
 ```
+
+`SEGMENT_CHUNK` is the event-mode uplink of the hardware hub (`hardware/gateway`): instead of a
+50 Hz `SENSOR_FRAME` stream, the hub sends the dominant-wrist samples of each action segment its own
+segmenter accepted, once, as `chunkCount` (1–32) chunks of up to 16 samples. Chunk *i* holds samples
+`[16·i, 16·i + sampleCount)`; `firstSampleMs` is that chunk's first sample on the device clock.
+`flags` is reserved (0). The frame is 234 bytes on the wire (8 + 208 + 16 + 2), inside the 244-byte
+BLE payload MTU. The relay ACKs every chunk (duplicates included), reassembles by `segmentId`,
+abandons a segment that is not complete within its timeout, and sends exactly one `SENSOR_WINDOW` per
+complete segment. The device keeps at most a few segments queued and drops the oldest when full.
 
 ### 3.1 `SENSOR_FRAME.flags` bit layout
 
@@ -197,8 +211,9 @@ not match what it just sent.
 ## 6. Fragmentation
 
 Negotiate the BLE ATT MTU up at connection time; target ≥ 247 bytes, giving ~244 usable bytes. The
-largest payload, `SENSOR_FRAME` at 42 bytes plaintext (68 bytes on the wire including tag/header/CRC), is
-well under this — fragmentation should never trigger in practice.
+largest payload, `SEGMENT_CHUNK` at 208 bytes plaintext (234 bytes on the wire including
+tag/header/CRC), is under this — fragmentation should never trigger in practice. A relay connected to a
+segment-mode device must see a payload MTU of at least 234.
 
 Implement it anyway, because "should never" is not "cannot": reserve the bit and treat a received set
 `MORE_FRAGMENTS` as a hard error in Week 5 — log it loudly and drop the packet. Do **not** implement

@@ -15,9 +15,12 @@
 extern "C" {
 #endif
 
-// Max frame this firmware ever sends/receives: header(8) + cleartext_prefix(<=4) +
-// max plaintext payload(42, SENSOR_FRAME) + tag(16) + crc(2). Rounded up generously.
-#define CG_MAX_FRAME_SIZE 96
+// Max frame this firmware ever sends: header(8) + max plaintext payload(208, SEGMENT_CHUNK) +
+// tag(16) + crc(2) = 234, rounded up.
+#define CG_MAX_FRAME_SIZE 240
+// Max frame this firmware ever receives (laptop -> device; the largest is HELLO_ACK at 46 bytes).
+// Kept separate so the incoming queue and duplicate cache do not grow with the uplink.
+#define CG_MAX_RX_FRAME_SIZE 96
 
 // Builds one wire frame into `out` (caller-provided CG_MAX_FRAME_SIZE buffer) and returns its
 // length, or 0 on failure (encryption error or oversized payload).

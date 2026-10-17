@@ -58,6 +58,7 @@ extern "C" {
 #define CG_PKT_TIME_SYNC_RESP  0x04 /* laptop -> device   reliable    */
 #define CG_PKT_SENSOR_FRAME    0x10 /* device -> laptop   best-effort */
 #define CG_PKT_RFID_EVENT      0x11 /* device -> laptop   reliable    */
+#define CG_PKT_SEGMENT_CHUNK   0x12 /* device -> laptop   reliable, windowed (up to 4 unACKed) */
 #define CG_PKT_HEARTBEAT       0x20 /* both               best-effort */
 #define CG_PKT_ACK             0x21 /* both               never acked itself */
 #define CG_PKT_COMBAT_FEEDBACK 0x30 /* laptop -> device   reliable    */
@@ -169,6 +170,25 @@ typedef struct CG_PACKED {
     uint8_t  reserved;
     uint8_t  tag_uid[6];
 } cg_payload_rfid_event_t;
+
+/* device -> laptop, one action segment split into chunks (event mode, hardware hub). 208 bytes.
+ * A segment is `chunk_count` chunks sharing `segment_id`; chunk i carries samples
+ * [i*CG_SEGMENT_CHUNK_SAMPLES, i*CG_SEGMENT_CHUNK_SAMPLES + sample_count). Unused sample slots are 0.
+ * Each sample is one dominant-wrist IMU reading: ax ay az (1/2048 g) gx gy gz (1/16.4 deg/s). */
+#define CG_SEGMENT_CHUNK_SAMPLES 16
+#define CG_SEGMENT_MAX_CHUNKS    32
+typedef struct CG_PACKED {
+    uint32_t segment_id;
+    uint8_t  chunk_index;     /* 0 .. chunk_count-1 */
+    uint8_t  chunk_count;     /* 1 .. CG_SEGMENT_MAX_CHUNKS, same on every chunk of a segment */
+    uint8_t  weapon_id;       /* weapon locked when the segment was accepted */
+    uint8_t  flags;           /* reserved, 0 */
+    uint16_t sample_rate_hz;  /* nominal spacing of the samples in this chunk */
+    uint32_t first_sample_ms; /* device clock of this chunk's first sample */
+    uint8_t  sample_count;    /* 1 .. CG_SEGMENT_CHUNK_SAMPLES */
+    uint8_t  reserved;
+    int16_t  samples[CG_SEGMENT_CHUNK_SAMPLES][6];
+} cg_payload_segment_chunk_t;
 
 /* both directions, 1 Hz, best-effort. 12 bytes. */
 typedef struct CG_PACKED {

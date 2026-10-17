@@ -57,6 +57,12 @@ const Vector kVectors[] = {
      "8b295454a102978fa9a5ab74e533766e6de55db03bc"},
     {"RFID_EVENT", 3405691582u, 1, 0, 7, "bebafeca0100070000000000",
      "c901110700011c00f8720a04580c9334e632e24002a802e32184d60be029bf3432c334cab069"},
+    {"SEGMENT_CHUNK", 3405691582u, 1, 0, 11, "bebafeca01000b0000000000",
+     "c901120b0001e000ba13830637f7d3cfe7ebbf0ec01004beeb024a52a9fc151d9d32509fa9196305771b2fc9e3b744ed"
+     "93f594d7db8c1fd4be983fe0d984f839cf2705b4600f2af9736d0240ccce05e426395be9ff7b7e2d2b0258bbf14b6fa9"
+     "925086515e48de7357cc7eee6bc16538496dde8e110db293d989c351604e0710584f45208a19092f3d12525973d1a063"
+     "2a61a150e079eeb137457e1a6a8ec8dc62bb162a4a216096529844741e47610a7b7d5651a1a063ff9f2195b1968ab46a"
+     "6e7fb0a0d79b881943dd29fc3cf5f9eb9c4c4e94f7bf21a8066ca7b06f5f25accca979fb6777f7ca09bd"},
     {"HEARTBEAT", 3405691582u, 1, 0, 3, "bebafeca0100030000000000",
      "c901200300011c001e9a0feee4d06f4beb52fd7c503f10e16006880ed1536b3b02315e60cec6"},
     {"ACK", 3405691582u, 1, 1, 9, "bebafeca0101090000000000",
@@ -67,7 +73,7 @@ const Vector kVectors[] = {
 
 void test_crc16_matches_every_vector() {
     for (const Vector &v : kVectors) {
-        uint8_t frame[128];
+        uint8_t frame[256];
         size_t frame_len = hex_decode(v.wire_frame_hex, frame, sizeof(frame));
         uint16_t expected_crc = (uint16_t)(frame[frame_len - 2] | (frame[frame_len - 1] << 8));
         uint16_t actual_crc = cg_crc16(frame, (uint32_t)(frame_len - CG_CRC_SIZE));

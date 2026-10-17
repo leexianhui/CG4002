@@ -17,6 +17,7 @@
 #ifdef CG_HARDWARE_GATEWAY
 #include "gateway_config.h"
 #include "gateway_boundary.h"
+#include "gateway_segments.h"
 #include <esp_coexist.h>
 #else
 #include "cg_config.h"
@@ -47,6 +48,20 @@ uint8_t g_capture_trigger_id = 0;
 // A duplicate is ACKed again but never applied twice on either side.
 CgReliableSend g_pending_rfid;
 CgReliableReceiveCache g_feedback_cache;
+
+#if defined(CG_HARDWARE_GATEWAY) && CG_GATEWAY_EVENT_MODE
+// Event-mode uplink (wire_protocol.md §3 SEGMENT_CHUNK). One segment at a time; up to
+// kSegmentWindow of its chunks unACKed, each retried with identical ciphertext. Runs on the BLE task.
+#define CG_SEGMENT_UPLINK 1
+constexpr unsigned kSegmentWindow = 4;
+constexpr uint32_t kSegmentChunkTimeoutMs = 150; // first retry; doubles, five sends in all (~2.3 s)
+constexpr uint32_t kSegmentMaxQueuedMs = 1500;   // an action older than this is not worth sending
+CgReliableSend g_segment_tx[kSegmentWindow];
+const GatewaySegment *g_segment = nullptr;
+int g_segment_slot = -1;
+uint8_t g_segment_next_chunk = 0, g_segment_chunks = 0;
+uint32_t g_segment_started_ms = 0;
+#endif
 
 #ifndef CG_HARDWARE_GATEWAY
 const uint8_t kActionButtonPins[CG_DEMO_ACTION_BUTTON_COUNT] = CG_DEMO_ACTION_BUTTON_PINS;
@@ -169,6 +184,13 @@ class ServerCallbacks : public BLEServerCallbacks {
         server->updateConnParams(param->connect.remote_bda, 0x06, 0x0C, 0, 400);
 #endif
     }
+#ifdef CG_HARDWARE_GATEWAY
+    // A segment chunk is 234 bytes on the wire; below a 237-byte ATT MTU notify() truncates it.
+    void onMtuChanged(BLEServer *server, esp_ble_gatts_cb_param_t *param) override {
+        Serial.printf("[ble] mtu=%u%s\n", (unsigned)param->mtu.mtu,
+                      param->mtu.mtu < 237 ? " (too small for segment chunks)" : "");
+    }
+#endif
     void onDisconnect(BLEServer *server) override {
         portENTER_CRITICAL(&g_connection_mux);
         g_connection_generation++;
@@ -196,6 +218,9 @@ void ble_setup() {
                   (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
 #endif
     BLEDevice::init(CG_DEMO_BLE_DEVICE_NAME);
+#ifdef CG_HARDWARE_GATEWAY
+    BLEDevice::setMTU(247); // room for a 234-byte SEGMENT_CHUNK; the central still has to agree
+#endif
     BLEServer *server = BLEDevice::createServer();
     server->setCallbacks(new ServerCallbacks());
     BLEService *service = server->createService(CG_DEMO_BLE_SERVICE_UUID);
@@ -233,7 +258,7 @@ bool notify_frame(const uint8_t *frame, size_t frame_len) {
 // Encoding always consumes a fresh sequence. Reliable retries reuse these bytes, never reseal.
 bool send_packet(uint8_t packet_type, const uint8_t *plaintext, size_t plaintext_len,
                   const uint8_t *cleartext_prefix, size_t cleartext_prefix_len,
-                  uint16_t *wire_seq_out = nullptr) {
+                  uint16_t *wire_seq_out = nullptr, CgReliableSend *pending = nullptr) {
     uint32_t ext_seq;
     uint16_t seq = g_tx_seq.next(&ext_seq);
     uint32_t nonce_base = (packet_type == CG_PKT_HELLO) ? g_device_nonce : g_session_id;
@@ -248,6 +273,7 @@ bool send_packet(uint8_t packet_type, const uint8_t *plaintext, size_t plaintext
     if (wire_seq_out != nullptr) *wire_seq_out = seq;
     if (packet_type == CG_PKT_RFID_EVENT)
         g_pending_rfid.begin(frame, frame_len, seq, millis());
+    if (pending != nullptr) pending->begin(frame, frame_len, seq, millis());
     return notify_frame(frame, frame_len);
 }
 
@@ -355,14 +381,65 @@ void drain_incoming_non_blocking() {
             g_pending_rfid.ack(acked_seq);
             if (was_pending && !g_pending_rfid.active)
                 Serial.printf("[weapon] rfid_event acked seq=%u\n", (unsigned)acked_seq);
+#ifdef CG_SEGMENT_UPLINK
+            for (auto &chunk : g_segment_tx) chunk.ack(acked_seq);
+#endif
         }
     }
 }
+
+#ifdef CG_SEGMENT_UPLINK
+void finish_segment(const char *outcome) {
+    if (g_segment == nullptr) return;
+    Serial.printf("[segment] %s seg=%lu samples=%u chunks=%u in %lums\n", outcome,
+                  (unsigned long)g_segment->id, (unsigned)g_segment->count, (unsigned)g_segment_chunks,
+                  (unsigned long)(millis() - g_segment_started_ms));
+    for (auto &chunk : g_segment_tx) chunk.reset();
+    gatewaySegmentDone(g_segment_slot);
+    g_segment = nullptr;
+    g_segment_slot = -1;
+}
+
+// Sends the next chunks of the current segment as window slots free up, retries unACKed ones, and
+// moves on to the next queued segment once every chunk is ACKed (or one exhausts its retries).
+void service_segments() {
+    uint32_t now = millis();
+    if (g_segment == nullptr) {
+        g_segment = gatewaySegmentTake(now, kSegmentMaxQueuedMs, g_segment_slot);
+        if (g_segment == nullptr) return;
+        g_segment_next_chunk = 0;
+        g_segment_chunks = gatewaySegmentChunks(*g_segment);
+        g_segment_started_ms = now;
+    }
+    bool busy = false;
+    for (auto &chunk : g_segment_tx) {
+        int due = chunk.poll(now);
+        if (due < 0) {
+            finish_segment("undelivered");
+            return;
+        }
+        if (due > 0) notify_frame(chunk.frame, chunk.len);
+        if (!chunk.active && g_segment_next_chunk < g_segment_chunks) {
+            cg_payload_segment_chunk_t payload;
+            gatewaySegmentChunk(*g_segment, g_segment_next_chunk++, payload);
+            send_packet(CG_PKT_SEGMENT_CHUNK, (const uint8_t *)&payload, sizeof(payload), nullptr, 0,
+                        nullptr, &chunk);
+            chunk.timeout_ms = kSegmentChunkTimeoutMs; // ACKs return within a few connection events
+            chunk.next_ms = now + kSegmentChunkTimeoutMs;
+        }
+        busy |= chunk.active;
+    }
+    if (!busy && g_segment_next_chunk >= g_segment_chunks) finish_segment("sent");
+}
+#endif
 
 bool do_handshake() {
     g_tx_seq.reset();
     g_rx_seq.reset();
     g_pending_rfid.reset();
+#ifdef CG_SEGMENT_UPLINK
+    finish_segment("abandoned (relay reconnected)");
+#endif
     g_feedback_cache.reset();
     g_capture_remaining = 0;
     g_session_id = 0;
@@ -610,6 +687,10 @@ void loop() {
     }
 
     uint32_t now = millis();
+#ifdef CG_SEGMENT_UPLINK
+    // Event mode: no periodic SENSOR_FRAME; accepted segments go out in service_segments() below.
+    (void)last_sensor_ms;
+#else
     if (now - last_sensor_ms >= CG_DEMO_SENSOR_FRAME_INTERVAL_MS) {
         // Absolute-deadline pacing: advance by exactly one interval rather than snapping to `now`,
         // so loop jitter (BLE notify, Serial) does not accumulate into a lower average rate -- the
@@ -620,6 +701,7 @@ void loop() {
         if (now - last_sensor_ms >= CG_DEMO_SENSOR_FRAME_INTERVAL_MS) last_sensor_ms = now;
         send_sensor_frame();
     }
+#endif
     if (now - last_heartbeat_ms >= CG_DEMO_HEARTBEAT_INTERVAL_MS) {
         last_heartbeat_ms = now;
         send_heartbeat();
@@ -645,4 +727,7 @@ void loop() {
 #endif
     drain_incoming_non_blocking();
     service_pending_rfid_event();
+#ifdef CG_SEGMENT_UPLINK
+    service_segments();
+#endif
 }

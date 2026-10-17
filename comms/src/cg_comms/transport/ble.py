@@ -42,6 +42,10 @@ class BleTransport(ITransport):
             self._mtu = max(negotiated - 3, 20)
         if self._mtu < 68:
             raise TransportClosed(f"BLE payload MTU {self._mtu} cannot carry a SENSOR_FRAME (68)")
+        if self._mtu < 234:
+            # Event-mode hardware hubs send 234-byte SEGMENT_CHUNKs; a smaller MTU truncates them
+            # on the device, and every chunk then fails CRC here. SENSOR_FRAME-only devices are fine.
+            logger.warning("ble_mtu_too_small_for_segments", mtu_payload=self._mtu, needed=234)
         logger.info("ble_connected", mtu_payload=self._mtu)
 
     def _on_notify(self, _handle: int, data: bytearray) -> None:

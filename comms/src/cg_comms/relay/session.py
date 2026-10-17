@@ -30,6 +30,7 @@ from cg_comms.protocol.crypto import OutgoingSequenceCounter, SequenceTracker
 from cg_comms.protocol.framing import Framer
 from cg_comms.relay.heartbeat import HeartbeatMonitor, run_heartbeat_sender, run_liveness_watchdog
 from cg_comms.relay.reliability import LinkDegraded, ReliabilitySender
+from cg_comms.relay.segments import OFFHAND_PLACEHOLDER, Segment, SegmentAssembler, classifier_rows
 from cg_comms.relay.timesync import LaptopSideSample, TimeSyncEstimator, estimate_offset_laptop_side
 from cg_comms.relay.ultra96 import Ultra96Client, Ultra96Unavailable, passes_confidence_gate
 from cg_comms.relay.windowing import PlayerWindower
@@ -60,6 +61,8 @@ class SessionConfig:
     reliability_max_attempts: int
     reliability_jitter_pct: float
     min_action_confidence: float
+    segment_mode: bool = False
+    segment_timeout_ms: float = 2000.0
 
 
 @dataclass
@@ -91,6 +94,9 @@ class Session:
     )
     _streaming: bool = field(default=False, init=False)
     _last_weapon_ts: int = field(default=-1, init=False)
+    _segments: SegmentAssembler = field(init=False)
+    # request_id -> segment_id for in-flight segment-mode windows, for the segment_classified log.
+    _segment_requests: dict[int, int] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         self._time_sync = TimeSyncEstimator(ewma_alpha=self.config.ewma_alpha)
@@ -105,6 +111,7 @@ class Session:
             interval_ms=self.config.heartbeat_interval_ms,
             liveness_timeout_factor=self.config.heartbeat_liveness_factor,
         )
+        self._segments = SegmentAssembler(timeout_ms=self.config.segment_timeout_ms)
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -400,6 +407,11 @@ class Session:
             await self._send_ack(decoded.header.seq)
             if not decoded.duplicate:
                 await self._handle_rfid_event(decoded)
+        elif packet_type == int(PacketType.SEGMENT_CHUNK):
+            self._heartbeat_monitor.mark_received()
+            await self._send_ack(decoded.header.seq)
+            if not decoded.duplicate:
+                self._handle_segment_chunk(decoded)
         elif packet_type == int(PacketType.TIME_SYNC_REQ):
             # Request/response exchange, not ACK-of-ACK reliability. Current demo firmware only
             # initiates sync at handshake, but a delayed/future resync request must receive RESP.
@@ -462,12 +474,70 @@ class Session:
             window_timestamp_ms=window.timestamp,
             weapon=window.weapon.value,
         )
+        self._start_classification(window)
+
+    def _handle_segment_chunk(self, decoded: DecodedPacket) -> None:
+        if not self.config.segment_mode:
+            logger.warning("segment_ignored", reason="segment_mode_off",
+                           segment_id=decoded.fields["segment_id"])
+            return
+        segment = self._segments.add(decoded.fields)
+        if segment is None:
+            return
+        window = self._segment_window(segment)
+        if window is None:
+            return
+        self._start_classification(window)
+
+    def _segment_window(self, segment: Segment) -> SensorWindow | None:
+        windower = self.windower
+        weapon = windower.current_weapon
+        try:
+            sent_weapon = Weapon.from_wire(segment.weapon_id)
+        except ValueError:
+            sent_weapon = Weapon.NONE
+        if sent_weapon is not Weapon.NONE:
+            weapon = sent_weapon  # the weapon locked when the hub accepted this action
+        start_ts = self._time_sync.to_engine_ms(segment.first_sample_ms)
+        span_ms = round(1000.0 * (len(segment.samples) - 1) / segment.sample_rate_hz)
+        log = dict(player_id=self.config.player_id, segment_id=segment.segment_id,
+                   samples=len(segment.samples), sample_rate_hz=segment.sample_rate_hz,
+                   chunks=segment.chunk_count, assembly_ms=round(segment.assembly_ms, 1),
+                   span_ms=span_ms)
+        if weapon is None or weapon is Weapon.NONE:
+            logger.info("segment_suppressed", reason="no_weapon", **log)
+            return None
+        n = windower.window_samples
+        dominant = classifier_rows(segment, windower.frame_rate_hz, n)
+        window = SensorWindow(
+            # Arrival time, not the segment's end: the hub only sends a segment after its stroke has
+            # settled (~0.4-1 s later), and the engine drops actions older than its reorder window
+            # (max_age_exceeded). The device-time span stays in windowStartTs/windowEndTs.
+            timestamp=max(monotonic_ms(), start_ts + span_ms),
+            player_id=self.config.player_id,  # type: ignore[arg-type]
+            request_id=windower.next_request_id(),
+            weapon=weapon,  # type: ignore[arg-type]
+            window_start_ts=start_ts,
+            window_end_ts=start_ts + span_ms,
+            sample_rate_hz=windower.frame_rate_hz,
+            dominant=dominant,
+            offhand=[list(OFFHAND_PLACEHOLDER) for _ in range(n)],
+            # Only the dominant half is measured; the placeholder off-hand half counts as stale.
+            stale_pct=50.0,
+        )
+        logger.info("segment_received", request_id=window.request_id, weapon=weapon.value, **log)
+        self._segment_requests[window.request_id] = segment.segment_id
+        return window
+
+    def _start_classification(self, window: SensorWindow) -> None:
         if len(self._classification_tasks) >= self.ultra96.max_in_flight:
             logger.warning("window_dropped", request_id=window.request_id, reason="classifier_capacity")
+            self._segment_requests.pop(window.request_id, None)
             return
         task = asyncio.create_task(self._classify(window))
         self._classification_tasks.add(task)
         task.add_done_callback(self._classification_done)
+        task.add_done_callback(lambda _t: self._segment_requests.pop(window.request_id, None))
 
     def _classification_done(self, task: asyncio.Task) -> None:
         self._classification_tasks.discard(task)
@@ -475,6 +545,7 @@ class Session:
             logger.error("classification_failed", error=str(task.exception()))
 
     async def _classify(self, window: SensorWindow) -> None:
+        segment_id = self._segment_requests.get(window.request_id)
         try:
             result = await self.ultra96.request(window)
         except Ultra96Unavailable as exc:
@@ -491,6 +562,16 @@ class Session:
                 reason="classifier_timeout",
             )
             return
+        if segment_id is not None:
+            logger.info(
+                "segment_classified",
+                player_id=result.player_id,
+                request_id=result.request_id,
+                segment_id=segment_id,
+                action=result.action.value,
+                confidence=result.action_confidence,
+                passes_gate=passes_confidence_gate(result, self.config.min_action_confidence),
+            )
         if not passes_confidence_gate(result, self.config.min_action_confidence):
             logger.info(
                 "action_below_confidence_gate",

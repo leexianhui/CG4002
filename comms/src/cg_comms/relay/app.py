@@ -122,6 +122,8 @@ async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
         reliability_max_attempts=settings.reliability.retry_max_attempts,
         reliability_jitter_pct=settings.reliability.retry_jitter_pct,
         min_action_confidence=settings.ultra96.min_confidence,
+        segment_mode=settings.windowing.segment_mode,
+        segment_timeout_ms=settings.windowing.segment_timeout_ms,
     )
 
     backoff_ms = settings.heartbeat.reconnect_backoff_ms

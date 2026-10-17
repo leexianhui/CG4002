@@ -38,7 +38,7 @@ public:
 };
 
 class CgReliableReceiveCache {
-    struct Entry { uint8_t frame[CG_MAX_FRAME_SIZE]; size_t len = 0; uint32_t at = 0; };
+    struct Entry { uint8_t frame[CG_MAX_RX_FRAME_SIZE]; size_t len = 0; uint32_t at = 0; };
     Entry entries[16];
     unsigned next = 0;
 public:

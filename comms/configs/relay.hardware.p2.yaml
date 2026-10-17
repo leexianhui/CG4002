@@ -7,6 +7,11 @@ transport:
   ble_write_char_uuid: "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 windowing:
   trigger_mode: false
+  # The hub sends one segment per action its own segmenter accepted (hardware/gateway event mode,
+  # the default); each complete segment becomes exactly one classifier request. A hub built with
+  # -DCG_GATEWAY_EVENT_MODE=0 streams SENSOR_FRAMEs instead, which the stride settings below window.
+  segment_mode: true
+  segment_timeout_ms: 2000
   frame_rate_hz: 50.0
   # 100 samples = 2.0 s at 50 Hz: the input length the supplied AI model was trained on
   # (ai/models/SWORD/norm.json "window"). Stride 10 = one classification every 200 ms.
