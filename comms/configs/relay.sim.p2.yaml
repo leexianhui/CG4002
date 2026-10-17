@@ -1,0 +1,30 @@
+# Player 2 with NO hardware: a simulated board (cg-firebeetle-sim) instead of the BLE hub.
+# Same as relay.hardware.p2.yaml except the transport: TCP to the simulator on 127.0.0.1:9002.
+# Use it to test with only P1's real boards. Start the simulator first (docs/SETUP_GUIDE.md).
+player_id: 2
+transport:
+  kind: tcp
+  tcp_host: "127.0.0.1"
+  tcp_port: 9002
+windowing:
+  trigger_mode: false
+  frame_rate_hz: 50.0
+  # Matches relay.hardware.p2.yaml: 100 samples = the AI model's input length.
+  window_samples: 100
+  stride_frames: 10
+  max_stale_pct: 20.0
+  max_span_deviation_pct: 15.0
+
+ultra96:
+  host: "127.0.0.1"
+  port: 8888
+  request_timeout_ms: 120
+  max_in_flight: 2
+  min_confidence: 0.6
+
+engine_link:
+  host: "127.0.0.1"
+  port: 8443
+  use_tls: true
+  ca_cert_path: certs/engine.crt
+  # bearer_token comes from .env.relay (CG_RELAY_ENGINE_LINK__BEARER_TOKEN), same as the real relays.

@@ -208,6 +208,24 @@ What healthy looks like in each relay:
    With no swing these are `IDLE`, which is normal.
 3. `action_classified` when a swing is recognised.
 
+### Only P1 has hardware? Simulate P2
+
+A P2 relay with no board connected never starts a session, so the engine waits forever. Run a
+simulated P2 board instead, on the relay laptop from `comms/`, in two more terminals:
+
+```powershell
+# Terminal 4: simulated P2 board (same PSK as .env.relay; it streams SWORD frames 50 times a second)
+.\.venv\Scripts\python.exe -m cg_comms.mock.firebeetle_sim --psk-hex <PSK from .env.relay> --player-id 2 --tcp-port 9002 --scenario configs\scenarios\demo_firebeetle_scenario.yaml --loop-scenario
+```
+
+```powershell
+# Terminal 5: P2 relay talking to the simulated board instead of BLE
+.\.venv\Scripts\python.exe -m cg_comms.relay.app --config configselay.sim.p2.yaml --no-tunnel --console-level INFO
+```
+
+The fake P2 sends motion that the AI will classify, usually as IDLE. Phone P2 is still needed,
+because the engine also waits for both phones to be ready.
+
 ---
 
 ## 4. Phones: tunnel to the engine
