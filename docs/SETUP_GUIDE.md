@@ -226,8 +226,7 @@ simulated P2 board instead, on the relay laptop from `comms/`, in two more termi
 
 ```powershell
 # Terminal 5: P2 relay talking to the simulated board instead of BLE
-.\.venv\Scripts\python.exe -m cg_comms.relay.app --config configs
-elay.sim.p2.yaml --no-tunnel --console-level INFO
+.\.venv\Scripts\python.exe -m cg_comms.relay.app --config configs\relay.sim.p2.yaml --no-tunnel --console-level INFO
 ```
 
 The fake P2 sends motion that the AI will classify, usually as IDLE. Phone P2 is still needed,
