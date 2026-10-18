@@ -8,10 +8,10 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/OnlineScene.unity
     guid: 764e7b3dc84c4f5397ca7ab1c280f2e9
-  - enabled: 1
+  - enabled: 0
     path: Assets/Scenes/SampleScene.unity
     guid: 99c9720ab356a0642a771bea13969a05
-  - enabled: 1
+  - enabled: 0
     path: Assets/CG4002/Scenes/Showcase.unity
     guid: 46340fd87da1549f8a62e1bf478bf618
   m_configObjects:
