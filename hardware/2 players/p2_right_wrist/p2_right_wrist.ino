@@ -1,5 +1,6 @@
 #ifdef CG_HARDWARE_GATEWAY
 #include "gateway_boundary.h"
+#include "gateway_link.h"
 #endif
 // ============================================================================
 // RIGHT WRIST NODE (hub) — weapon detection -> weapon lock -> valid-action
@@ -253,9 +254,16 @@ const unsigned long WEAPON_DROPOUT_GRACE_MS = 500;
 #define DEBUG_POSE_STREAM true
 const unsigned long POSE_LOG_INTERVAL_MS = 300;
 
+#if defined(CG_HARDWARE_GATEWAY) && CG_GATEWAY_NODE_LINK
+// Board-to-board packets go over BLE (hardware/gateway/include/gateway_link.h).
+GatewayLinkUdp debugUdp;
+GatewayLinkUdp linkUdp;
+GatewayLinkUdp poseUdp;
+#else
 WiFiUDP debugUdp;
 WiFiUDP linkUdp;
 WiFiUDP poseUdp;
+#endif
 
 // ---------------- Local types ----------------
 // Every type a function takes or returns is declared here, before any
@@ -2458,6 +2466,9 @@ void setup()
 
     motorSetup();
 
+#if defined(CG_HARDWARE_GATEWAY) && CG_GATEWAY_NODE_LINK
+    gatewayNodeLinkStart(); // no Wi-Fi: the radio is BLE only
+#else
     Serial.print("Connecting to WiFi");
     WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED)
@@ -2473,6 +2484,7 @@ void setup()
     Serial.println(broadcastIP);
 #if WIFI_SLEEP_DISABLED
     WiFi.setSleep(false);
+#endif
 #endif
 
     debugUdp.begin(DEBUG_PORT);

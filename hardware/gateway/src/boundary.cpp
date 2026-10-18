@@ -4,11 +4,17 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include "gateway_boundary.h"
+#include "gateway_link.h"
 #include "gateway_samples.h"
 #include "gateway_segments.h"
 
 namespace {
+// Continuous-mode node samples: Wi-Fi UDP, or the BLE node link (it maps the port to a tag).
+#if CG_GATEWAY_NODE_LINK
+GatewayLinkUdp udp;
+#else
 WiFiUDP udp;
+#endif
 uint8_t playerId, roleId, weaponId;
 uint16_t samplePort;
 uint32_t bootId, sequence, lastExport;
@@ -71,7 +77,11 @@ void gatewaySample(float ax, float ay, float az, float gx, float gy, float gz) {
         samples.accept(s, playerId, now);
         portEXIT_CRITICAL(&sampleMux);
     } else {
+#if CG_GATEWAY_NODE_LINK
+        IPAddress broadcast;
+#else
         IPAddress broadcast((uint32_t)WiFi.localIP() | ~(uint32_t)WiFi.subnetMask());
+#endif
         udp.beginPacket(broadcast, samplePort);
         udp.write((uint8_t *)&s, sizeof(s));
         udp.endPacket();

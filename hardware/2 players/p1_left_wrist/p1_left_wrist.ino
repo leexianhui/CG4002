@@ -1,5 +1,6 @@
 #ifdef CG_HARDWARE_GATEWAY
 #include "gateway_boundary.h"
+#include "gateway_link.h"
 #endif
 // ============================================================================
 // LEFT WRIST NODE. Follows the phase the right-wrist hub broadcasts in
@@ -219,8 +220,14 @@ const int POSE_PORT = 4212 + PLAYER_PORT_OFFSET;  // <-> hub (WristPose out, Hub
 
 #define DEBUG_LOG true
 
+#if defined(CG_HARDWARE_GATEWAY) && CG_GATEWAY_NODE_LINK
+// Board-to-board packets go over BLE (hardware/gateway/include/gateway_link.h).
+GatewayLinkUdp debugUdp;
+GatewayLinkUdp poseUdp;
+#else
 WiFiUDP debugUdp;
 WiFiUDP poseUdp;
+#endif
 
 // ---------------- RGB LED (status indicator, common cathode) ----------------
 #define LED_R_PIN 25
@@ -558,6 +565,9 @@ void setup()
     pinMode(LED_B_PIN, OUTPUT);
     ledCalibrating();
 
+#if defined(CG_HARDWARE_GATEWAY) && CG_GATEWAY_NODE_LINK
+    gatewayNodeLinkStart(); // no Wi-Fi: the radio is BLE only
+#else
     Serial.print("Connecting to WiFi");
     WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED)
@@ -573,6 +583,7 @@ void setup()
     Serial.println(broadcastIP);
 #if WIFI_SLEEP_DISABLED
     WiFi.setSleep(false);
+#endif
 #endif
 
     debugUdp.begin(DEBUG_PORT);

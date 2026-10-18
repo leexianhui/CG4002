@@ -21,7 +21,7 @@ Every long-running command needs **its own terminal**.
 ## Secrets and settings per machine
 
 Nothing new is needed: these are the same token, PSK and certificate as the comms demo. Only the BLE
-addresses and the hardware Wi-Fi hotspot are new.
+addresses are new. The boards no longer need any Wi-Fi hotspot: all their links are BLE.
 
 | Where | What | Set in | New? |
 |---|---|---|---|
@@ -31,7 +31,7 @@ addresses and the hardware Wi-Fi hotspot are new.
 | **Relay laptop** `comms/certs/engine.crt` | copy of the Ultra96's `engine.crt` (public cert only, not the key) | already there | no |
 | **Relay laptop** terminal | `CG_RELAY_TRANSPORT__BLE_ADDRESS`, one per relay terminal | `$env:` in step 3 | **yes**: scan for `CG4002-Hardware-P1/P2` |
 | **Dev laptop** terminal | `CG_GATEWAY_PSK_HEX` = the same PSK as `.env.relay`, only when building the two hubs | `$env:` in step 1 | changed: was hard-coded in `comms/firmware/include/cg_config.h`; the hub build now reads it from this variable |
-| **6 boards** | hardware Wi-Fi hotspot SSID/password | in the hardware sketches (`hardware/2 players/*/*.ino`), compiled in | **yes**: start that hotspot (`xin hui's laptop`) before powering the boards |
+| **6 boards** | nothing: each hub finds its own torso and left wrist over BLE | none | no. The hotspot SSID/password in the sketches is used only by the hardware team's recording (UDP) builds |
 | **Phones** | engine token, typed into the app | Unity app **Bearer token** field | no (same token) |
 | **Phones** (Termux) | your NUS SSH login for `stujump` + `xilinx@makerslab-fpga-53` | typed at the ssh prompt | no |
 | **Ultra96 / relay laptop** | NUS SSH login (`e1138443`) | typed at the ssh prompt | no |
@@ -83,8 +83,8 @@ not in git, and they still work as before.
 
 ## 1. Dev laptop: build and flash the six boards
 
-Each player has **three** boards. Only the right wrist talks BLE to the relay. The torso and left
-wrist send to it over the hardware team's Wi-Fi.
+Each player has **three** boards, all BLE. The right wrist (hub) talks to the relay and is also
+connected to its own torso and left wrist. No board uses Wi-Fi, so no hotspot is needed.
 
 | Board | P1 env | P2 env | Needs the PSK? |
 |---|---|---|---|
@@ -121,8 +121,14 @@ Watch a hub boot (close the monitor before flashing again):
 & "..\..\pio-venv\Scripts\pio.exe" device monitor -p COM8 -b 115200
 ```
 
-The boards must join the hardware team's Wi-Fi network (the SSID and password are in their sketches). Turn that
-hotspot on before powering the boards.
+Power the torso and left wrist in any order, before or after the hub. On the hub's serial monitor,
+look for `[link] torso connected` and `[link] left_wrist connected`, then `all_nodes_ready`. A torso
+or left wrist prints `[link] hub connected`. The sketches still print `initialized at IP 0.0.0.0`;
+that is expected, no Wi-Fi is started.
+
+The hardware team's recording tools (`listener_2p.py`) need their original Wi-Fi links: build all
+three boards of that player with `-DCG_GATEWAY_NODE_LINK=0` added to their `build_flags` and start
+their hotspot. See `hardware/gateway/README.md`.
 
 ---
 
@@ -290,7 +296,8 @@ Reset the match (Ultra96, from `comms/`):
 
 | Symptom | Likely cause |
 |---|---|
-| Relay never logs `weapon_changed`, no windows | The weapon is not locked on the hub yet (hold the selection pose), or the hub can't reach the torso/left boards (check the hardware Wi-Fi hotspot) |
+| Relay never logs `weapon_changed`, no windows | The weapon is not locked on the hub yet (hold the selection pose), or the hub hasn't connected its torso/left wrist (no `[link] ... connected` on the hub serial: power them, and check they were flashed for the same player) |
+| All three boards stay yellow | The hub has no node links. Check the hub serial for `[link]` lines; reflash all three boards of that player from the current repo (old node builds still wait for a Wi-Fi hotspot) |
 | `window_dropped reason=classifier offline` | Terminal A (AI) is not running, or the SSH tunnel is down |
 | `classifier correlation mismatch` | Something other than `ai/classifier_server.py` (or `cg-ultra96-sim`) is on port 8888, or an old copy of the AI server that does not echo `requestId`/`timestamp` |
 | Always `IDLE` while swinging | Normal at low confidence: the gate is 0.6 (`min_confidence`). Check the AI terminal for replies, and see `ai/README.md` known gaps |
@@ -301,6 +308,7 @@ Reset the match (Ultra96, from `comms/`):
 | Swings accepted on the hub (`action_accepted`) but no `segment_received` | Hub serial shows `[segment] undelivered`: the BLE link is losing chunks. `stream_decode_drop reason=bad_crc` on the relay: the BLE packet size is too small (see `ble_mtu_too_small_for_segments`). `segment_ignored`: the relay YAML lacks `segment_mode: true` |
 | `segment_abandoned reason=timeout` | Some chunks of a swing never arrived within 2 s; that swing is skipped. Occasional is fine, constant means a weak link |
 | Hub reboot-loops right after `[cfg] ... wifi_sleep=off` | Old hub build: re-flash `p1_hub`/`p2_hub` from the current repo (hub builds now keep Wi-Fi sleep on, which BLE requires) |
+| Hub reboot-loops with `assert failed: vQueueDelete` after `[ble] free heap before init` | Out of heap at BLE init: a Wi-Fi build of the hub. Re-flash all three boards from the current repo (BLE node link, no Wi-Fi) |
 
 ---
 

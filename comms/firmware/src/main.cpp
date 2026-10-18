@@ -18,6 +18,7 @@
 #include "gateway_config.h"
 #include "gateway_boundary.h"
 #include "gateway_segments.h"
+#include "gateway_link.h"
 #include <esp_coexist.h>
 #else
 #include "cg_config.h"
@@ -104,6 +105,17 @@ volatile uint32_t g_connection_generation = 0;
 // BLE callbacks and loop() run on different FreeRTOS tasks/cores. Protect the
 // generation check AND handshake-state store; volatile alone cannot make them atomic.
 portMUX_TYPE g_connection_mux = portMUX_INITIALIZER_UNLOCKED;
+#ifdef CG_HARDWARE_GATEWAY
+// The hub is also the central of its torso/left-wrist links, and Bluedroid reports those connections
+// to this GATT server too (BLEServer even adds them to its notify list). Only the connection where we
+// are the peripheral is the relay: track it, and notify it alone.
+volatile int g_relay_conn_id = -1;
+esp_gatt_if_t g_gatts_if = ESP_GATT_IF_NONE;
+void capture_gatts_if(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *) {
+    if (event == ESP_GATTS_REG_EVT) g_gatts_if = gatts_if;
+}
+constexpr uint8_t kLinkRolePeripheral = 1; // esp_gatts_api.h: master = 0, slave = 1
+#endif
 
 // BLECharacteristic::notify() returns void: on a controller-level failure it logs
 // "esp_ble_gatts_send_notify: rc=-1" and returns, so a caller that just calls notify() cannot tell
@@ -158,7 +170,7 @@ class WriteCallback : public BLECharacteristicCallbacks {
 };
 
 class ServerCallbacks : public BLEServerCallbacks {
-    void onConnect(BLEServer *server) override {
+    void relay_connected() {
         portENTER_CRITICAL(&g_connection_mux);
         g_connection_generation++;
         g_connected = true;
@@ -166,6 +178,9 @@ class ServerCallbacks : public BLEServerCallbacks {
         portEXIT_CRITICAL(&g_connection_mux);
         Serial.println("[ble] connected");
     }
+#ifndef CG_HARDWARE_GATEWAY
+    void onConnect(BLEServer *server) override { relay_connected(); }
+#endif
     // Windows picks the connection interval when we don't ask, and its default (~30-45ms) cannot
     // drain a 50Hz (20ms) stream — each interval carries fewer frames than we produce, Bluedroid's
     // tx buffer backs up, and notify() starts failing with rc=-1. Two peripherals sharing one
@@ -176,9 +191,12 @@ class ServerCallbacks : public BLEServerCallbacks {
     // value, hence the stall counters in send_sensor_frame() rather than trusting it took.
     void onConnect(BLEServer *server, esp_ble_gatts_cb_param_t *param) override {
 #ifdef CG_HARDWARE_GATEWAY
-        // The hub's one radio also has to receive the torso/left-wrist Wi-Fi. 7.5 ms connection
-        // events left Wi-Fi almost no airtime (nodes went unheard, LEDs stayed yellow). 15-30 ms
-        // still carries the 50 Hz stream: frames are batched per connection event.
+        if (param->connect.link_role != kLinkRolePeripheral) return; // a node link, not the relay
+        g_relay_conn_id = param->connect.conn_id;
+        relay_connected();
+        // The hub's one radio is shared with the torso/left-wrist links (BLE, or Wi-Fi in UDP
+        // builds). 7.5 ms connection events starved them (nodes went unheard, LEDs stayed yellow).
+        // 15-30 ms still carries the 50 Hz stream: frames are batched per connection event.
         server->updateConnParams(param->connect.remote_bda, 0x0C, 0x18, 0, 400);
 #else
         server->updateConnParams(param->connect.remote_bda, 0x06, 0x0C, 0, 400);
@@ -187,11 +205,12 @@ class ServerCallbacks : public BLEServerCallbacks {
 #ifdef CG_HARDWARE_GATEWAY
     // A segment chunk is 234 bytes on the wire; below a 237-byte ATT MTU notify() truncates it.
     void onMtuChanged(BLEServer *server, esp_ble_gatts_cb_param_t *param) override {
+        if (param->mtu.conn_id != g_relay_conn_id) return;
         Serial.printf("[ble] mtu=%u%s\n", (unsigned)param->mtu.mtu,
                       param->mtu.mtu < 237 ? " (too small for segment chunks)" : "");
     }
 #endif
-    void onDisconnect(BLEServer *server) override {
+    void relay_disconnected(BLEServer *server) {
         portENTER_CRITICAL(&g_connection_mux);
         g_connection_generation++;
         g_connected = false;
@@ -205,14 +224,24 @@ class ServerCallbacks : public BLEServerCallbacks {
         Serial.println("[ble] disconnected, advertising again");
         server->startAdvertising();
     }
+#ifdef CG_HARDWARE_GATEWAY
+    void onDisconnect(BLEServer *server, esp_ble_gatts_cb_param_t *param) override {
+        if (param->disconnect.link_role != kLinkRolePeripheral) return;
+        g_relay_conn_id = -1;
+        relay_disconnected(server);
+    }
+#else
+    void onDisconnect(BLEServer *server) override { relay_disconnected(server); }
+#endif
 };
 
 void ble_setup() {
     g_incoming_queue = xQueueCreate(16, sizeof(IncomingFrame));
     configASSERT(g_incoming_queue != nullptr);
 #ifdef CG_HARDWARE_GATEWAY
-    // The hub also runs Wi-Fi and the hardware algorithms; BLEDevice::createServer() ran out of heap.
-    // Only BLE is used, so hand back the Classic-BT controller memory (allowed only before init).
+    // The hub runs the hardware algorithms too (and Wi-Fi in UDP node-link builds), and
+    // BLEDevice::createServer() ran out of heap. Only BLE is used, so hand back the Classic-BT
+    // controller memory (allowed only before init).
     esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
     Serial.printf("[ble] free heap before init: %u (largest block %u)\n",
                   (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
@@ -220,6 +249,7 @@ void ble_setup() {
     BLEDevice::init(CG_DEMO_BLE_DEVICE_NAME);
 #ifdef CG_HARDWARE_GATEWAY
     BLEDevice::setMTU(247); // room for a 234-byte SEGMENT_CHUNK; the central still has to agree
+    BLEDevice::setCustomGattsHandler(capture_gatts_if); // set before createServer() registers the app
 #endif
     BLEServer *server = BLEDevice::createServer();
     server->setCallbacks(new ServerCallbacks());
@@ -238,19 +268,34 @@ void ble_setup() {
     service->start();
     BLEAdvertising *advertising = BLEDevice::getAdvertising();
     advertising->addServiceUUID(CG_DEMO_BLE_SERVICE_UUID);
-#ifdef CG_HARDWARE_GATEWAY
+#if defined(CG_HARDWARE_GATEWAY) && !CG_GATEWAY_NODE_LINK
     // One 2.4 GHz radio is time-shared between BLE and the node Wi-Fi. Keep coexistence BALANCED
     // (the IDF default): PREFER_BT starved Wi-Fi so the hub stopped hearing the torso/left wrist.
     esp_coex_preference_set(ESP_COEX_PREFER_BALANCE);
 #endif
     advertising->start();
+#ifdef CG_HARDWARE_GATEWAY
+    Serial.printf("[ble] free heap after init: %u (largest block %u)\n",
+                  (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+#if CG_GATEWAY_NODE_LINK
+    gatewayHubLinkBegin(); // central to this player's torso and left wrist, alongside the relay
+#endif
+#endif
 }
 
 // SUCCESS_NOTIFY means accepted by Bluedroid, NOT delivery over the air.
 bool notify_frame(const uint8_t *frame, size_t frame_len) {
+#ifdef CG_HARDWARE_GATEWAY
+    // Straight to the relay's connection: BLECharacteristic::notify() would also send to the nodes.
+    int conn = g_relay_conn_id;
+    g_last_notify_ok = conn >= 0 && g_gatts_if != ESP_GATT_IF_NONE &&
+                       esp_ble_gatts_send_indicate(g_gatts_if, (uint16_t)conn, g_notify_char->getHandle(),
+                                                   frame_len, (uint8_t *)frame, false) == ESP_OK;
+#else
     g_notify_char->setValue((uint8_t *)frame, frame_len);
     g_last_notify_ok = false;
     g_notify_char->notify();
+#endif
     if (!g_last_notify_ok) g_notify_dropped++;
     return g_last_notify_ok;
 }
@@ -648,6 +693,7 @@ void loop() {
     static uint32_t last_sensor_ms = 0;
     static uint32_t last_heartbeat_ms = 0;
 #ifdef CG_HARDWARE_GATEWAY
+    gatewayLinkService();
     uint8_t weapon = gatewayWeapon();
     if (weapon != g_weapon_id) {
         g_weapon_id = weapon;
