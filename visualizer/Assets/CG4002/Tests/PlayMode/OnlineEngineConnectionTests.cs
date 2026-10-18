@@ -88,6 +88,7 @@ namespace CG4002.Tests
             calibration.requireARTracking = false;
             Assert.That(calibration.ConfirmFromMarkedForwardLine(), Is.True);
             var client = root.AddComponent<OnlineEngineClient>();
+            client.loadSavedSettings = false;
             client.gameState = state;
             client.dispatcher = dispatcher;
             client.opponent = fixtures.AddComponent<AvatarController>();

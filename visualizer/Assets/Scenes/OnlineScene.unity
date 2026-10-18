@@ -3366,7 +3366,7 @@ MonoBehaviour:
   opponent: {fileID: 985002327}
   calibration: {fileID: 800000000000003}
   offlineEngine: {fileID: 557191019}
-  endpoint: wss://localhost:8443
+  endpoint: ws://127.0.0.1:8080
   player: 1
 --- !u!1660057539 &9223372036854775807
 SceneRoots:

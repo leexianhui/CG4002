@@ -261,15 +261,14 @@ socat TCP-LISTEN:8080,reuseaddr,fork OPENSSL:127.0.0.1:8443,verify=0
    **Player → Internet Access: Require.**
 6. Phone on USB with developer mode and USB debugging on, then **Build And Run**. Repeat for the second phone.
 
-In the app on each phone:
+In the app on each phone, pick **Player 1** or **Player 2** and tap **Connect**. That's all: the
+endpoint defaults to `ws://127.0.0.1:8080` (the phone's `socat`), and the engine token is built in.
+The phone remembers its player for next time.
 
-| Field | Value |
-|---|---|
-| Endpoint | `ws://127.0.0.1:8080` |
-| Bearer token | the engine token (same as in `.env.engine` / `.env.relay`) |
-| Player | **P1** on one phone, **P2** on the other |
-
-Then tap **Connect**.
+The token comes from `visualizer/Assets/CG4002/Resources/engine_token.txt` (committed). Before every
+build, and when the editor opens, Unity refreshes that file from `comms/.env.engine` (or `.env.relay`),
+so after changing the engine token just rebuild. **CG4002 → Integration → Refresh Engine Token From
+comms .env** does the same by hand. Both fields stay editable in the app if you ever need to override.
 
 ---
 

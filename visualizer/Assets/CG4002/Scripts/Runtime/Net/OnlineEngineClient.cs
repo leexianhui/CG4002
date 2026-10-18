@@ -20,8 +20,8 @@ namespace CG4002.Net
         public AvatarController opponent;
         public SharedArenaCalibration calibration;
         public GameObject offlineEngine;
-        [Tooltip("Base URL without /visualizer/id. WSS uses the platform's certificate trust.")]
-        public string endpoint = "wss://localhost:8443";
+        [Tooltip("Base URL without /visualizer/id. The phone's socat on 8080 does the TLS to the engine.")]
+        public string endpoint = "ws://127.0.0.1:8080";
         public PlayerId player = PlayerId.P1;
         [NonSerialized] public string bearerToken = "";
 
@@ -51,10 +51,26 @@ namespace CG4002.Net
         static long Now => (long)(System.Diagnostics.Stopwatch.GetTimestamp() *
             (1000.0 / System.Diagnostics.Stopwatch.Frequency));
 
+        const string PlayerPref = "cg4002.player";
+        [Tooltip("Fill the token from Resources/engine_token and the player from this phone's last choice.")]
+        public bool loadSavedSettings = true;
+
         void Awake()
         {
             if (offlineEngine != null) offlineEngine.SetActive(false);
+            if (loadSavedSettings) LoadSavedSettings();
             ConfigureIdentity();
+        }
+
+        // Token: Resources/engine_token.txt, kept in step with comms/.env.engine by EngineTokenBuildStep.
+        // Player: the last choice made on this phone. Both stay editable in the settings panel.
+        void LoadSavedSettings()
+        {
+            var baked = Resources.Load<TextAsset>("engine_token");
+            if (string.IsNullOrWhiteSpace(bearerToken) && baked != null) bearerToken = baked.text.Trim();
+            int saved = PlayerPrefs.GetInt(PlayerPref, 0);
+            if (saved == 1 || saved == 2) player = (PlayerId)saved;
+            if (!string.IsNullOrWhiteSpace(bearerToken)) Status = "Choose your player, then Connect";
         }
 
         void OnEnable()
@@ -71,13 +87,15 @@ namespace CG4002.Net
 
         public void Connect()
         {
-            if (lifetime != null || string.IsNullOrWhiteSpace(bearerToken)) return;
+            if (lifetime != null) return;
+            if (string.IsNullOrWhiteSpace(bearerToken)) { Status = "Enter the engine token"; return; }
             if (player != PlayerId.P1 && player != PlayerId.P2) { Status = "Choose P1 or P2"; return; }
             if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) ||
                 (uri.Scheme != "ws" && uri.Scheme != "wss") || uri.AbsolutePath != "/" ||
                 !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.UserInfo))
             { Status = "Use ws://host:port or wss://host:port"; return; }
             ConfigureIdentity();
+            if (loadSavedSettings) { PlayerPrefs.SetInt(PlayerPref, (int)player); PlayerPrefs.Save(); }
             lifetime = new CancellationTokenSource();
             _ = Run(lifetime, endpoint.TrimEnd('/') + "/visualizer/" + (int)player, bearerToken);
             showSettings = false;
@@ -264,7 +282,7 @@ namespace CG4002.Net
 
         void OnGUI()
         {
-            // Runtime-only token input: it is never serialized into a scene or PlayerPrefs.
+            // The token is never serialized into a scene or PlayerPrefs (only the player choice is saved).
             float scale = PanelScale;
             GUI.matrix = Matrix4x4.Scale(Vector3.one * scale);
             GUILayout.BeginArea(PanelRect, GUI.skin.box);
