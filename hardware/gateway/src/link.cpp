@@ -79,7 +79,7 @@ struct Node {
     esp_bt_uuid_t service, toHub, fromHub;
     esp_bd_addr_t bda;
     uint16_t connId, start, end, rxHandle, txHandle;
-    bool connected;
+    bool connected, searched;
     volatile bool ready;
 };
 Node nodes[2] = {{1, "torso"}, {2, "left_wrist"}};
@@ -109,12 +109,14 @@ void maybeScan() {
     }
 }
 
-void setupDone(Node &n, bool ok) {
+// `step` names the setup stage that failed and `status` its GATT status, so a serial log says why.
+void setupDone(Node &n, bool ok, const char *step = nullptr, int status = 0) {
     if (ok) {
         n.ready = true;
         Serial.printf("[link] %s connected\n", n.name);
     } else {
-        Serial.printf("[link] %s setup failed, dropping the connection\n", n.name);
+        Serial.printf("[link] %s setup failed at %s (status 0x%x), dropping the connection\n", n.name,
+                      step ? step : "?", status);
         esp_ble_gap_disconnect(n.bda); // the physical link; DISCONNECT_EVT then rescans
     }
     portENTER_CRITICAL(&linkMux);
@@ -222,8 +224,21 @@ void gattcHandler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
         n.connId = p->open.conn_id;
         n.start = n.end = n.rxHandle = n.txHandle = 0;
         n.connected = true;
-        esp_ble_gattc_send_mtu_req(gattcIf, n.connId);
-        esp_ble_gattc_search_service(gattcIf, n.connId, &n.service);
+        n.searched = false;
+        // One GATT request at a time, as in ESP-IDF's gattc_multi_connect: MTU first, and the service
+        // search only once CFG_MTU_EVT reports it done. Issuing both at once lost the search.
+        if (esp_ble_gattc_send_mtu_req(gattcIf, n.connId) != ESP_OK) {
+            n.searched = true;
+            esp_ble_gattc_search_service(gattcIf, n.connId, &n.service);
+        }
+        break;
+    }
+    case ESP_GATTC_CFG_MTU_EVT: {
+        Node *n = nodeByConn(p->cfg_mtu.conn_id);
+        if (!n || n->ready || n->searched) break;
+        n->searched = true; // whatever the MTU outcome: node packets fit the 23-byte default
+        if (esp_ble_gattc_search_service(gattcIf, n->connId, &n->service) != ESP_OK)
+            setupDone(*n, false, "service search request");
         break;
     }
     case ESP_GATTC_SEARCH_RES_EVT: {
@@ -237,7 +252,12 @@ void gattcHandler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
     }
     case ESP_GATTC_SEARCH_CMPL_EVT: {
         Node *n = nodeByConn(p->search_cmpl.conn_id);
-        if (!n) break;
+        if (!n || n->ready) break;
+        if (p->search_cmpl.status != ESP_GATT_OK || !n->start) {
+            setupDone(*n, false, n->start ? "service search" : "service search (link service not found)",
+                      p->search_cmpl.status);
+            break;
+        }
         esp_gattc_char_elem_t c;
         uint16_t count = 1;
         if (n->start && esp_ble_gattc_get_char_by_uuid(gattcIf, n->connId, n->start, n->end, n->toHub, &c,
@@ -247,8 +267,10 @@ void gattcHandler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
         if (n->start && esp_ble_gattc_get_char_by_uuid(gattcIf, n->connId, n->start, n->end, n->fromHub, &c,
                                                        &count) == ESP_GATT_OK && count)
             n->txHandle = c.char_handle;
-        if (!n->rxHandle || !n->txHandle) setupDone(*n, false);
-        else esp_ble_gattc_register_for_notify(gattcIf, n->bda, n->rxHandle);
+        if (!n->rxHandle || !n->txHandle)
+            setupDone(*n, false, !n->rxHandle ? "characteristic lookup (node->hub)" : "characteristic lookup (hub->node)");
+        else if (esp_ble_gattc_register_for_notify(gattcIf, n->bda, n->rxHandle) != ESP_OK)
+            setupDone(*n, false, "notify registration request");
         break;
     }
     case ESP_GATTC_REG_FOR_NOTIFY_EVT: {
@@ -263,20 +285,25 @@ void gattcHandler(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp_ble_ga
         cccdUuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG;
         esp_gattc_descr_elem_t d;
         uint16_t count = 1;
-        if (p->reg_for_notify.status != ESP_GATT_OK ||
-            esp_ble_gattc_get_descr_by_char_handle(gattcIf, n.connId, n.rxHandle, cccdUuid, &d, &count) !=
-                ESP_GATT_OK || !count) {
-            setupDone(n, false);
+        if (p->reg_for_notify.status != ESP_GATT_OK) {
+            setupDone(n, false, "notify registration", p->reg_for_notify.status);
+            break;
+        }
+        esp_gatt_status_t found =
+            esp_ble_gattc_get_descr_by_char_handle(gattcIf, n.connId, n.rxHandle, cccdUuid, &d, &count);
+        if (found != ESP_GATT_OK || !count) {
+            setupDone(n, false, "subscription descriptor lookup", found);
             break;
         }
         uint8_t enable[2] = {1, 0};
-        esp_ble_gattc_write_char_descr(gattcIf, n.connId, d.handle, sizeof(enable), enable,
-                                       ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        if (esp_ble_gattc_write_char_descr(gattcIf, n.connId, d.handle, sizeof(enable), enable,
+                                           ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE) != ESP_OK)
+            setupDone(n, false, "subscribe request");
         break;
     }
     case ESP_GATTC_WRITE_DESCR_EVT: {
         Node *n = nodeByConn(p->write.conn_id);
-        if (n && !n->ready) setupDone(*n, p->write.status == ESP_GATT_OK);
+        if (n && !n->ready) setupDone(*n, p->write.status == ESP_GATT_OK, "subscribe", p->write.status);
         break;
     }
     case ESP_GATTC_NOTIFY_EVT:
@@ -326,7 +353,7 @@ void gatewayLinkService() {
     int i = pending;
     bool stuck = i >= 0 && now - pendingSince > kSetupTimeoutMs;
     portEXIT_CRITICAL(&linkMux);
-    if (stuck && nodes[i].connected && !nodes[i].ready) setupDone(nodes[i], false);
+    if (stuck && nodes[i].connected && !nodes[i].ready) setupDone(nodes[i], false, "timeout (no reply in 10 s)");
     maybeScan();
 }
 
