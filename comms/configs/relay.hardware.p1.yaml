@@ -26,7 +26,7 @@ windowing:
 ultra96:
   host: "127.0.0.1"
   port: 8888
-  request_timeout_ms: 120
+  request_timeout_ms: 300 # the real AI on the Ultra96 ARM occasionally takes 120-140 ms per swing
   max_in_flight: 2
   min_confidence: 0.6
 
