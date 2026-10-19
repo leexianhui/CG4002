@@ -41,7 +41,8 @@ flashed with a player 1 sketch pairs with the wrong player.
    rejected if it is the lead-in to a swing in the same candidate.
 
    - **Accepted:** the stroke is close enough to its nearest template
-     (the locked weapon's `ACTION_LIMITS` distance) and isn't the return to guard after the strike
+     (the locked weapon's `ACTION_LIMITS` distance, with the sword/shield live-play
+     tolerances below) and isn't the return to guard after the strike
      before it. It gives a short buzz and a green flash, and the hub asks the
      torso for the same time window of its samples.
    - **Rejected:** a red flash.
@@ -55,6 +56,20 @@ flashed with a player 1 sketch pairs with the wrong player.
    sessions, including five explicitly attested grip overrides.
    Refit after changing how a board is strapped on.
    `speed_study.py` checks a model offline before you flash it.
+
+   The sword/shield hubs also apply narrow tolerances from the 2026-10-19
+   labeled player 1 captures. Horizontal and diagonal strikes allow distance
+   1.75 instead of 1.50. A missed uppercut may use a 24-degree axis spread
+   and distance 2.25 only when it rotates at least 100 degrees, peaks above
+   250 dps, and has torso ratio at least 0.070. This keeps recorded guard
+   raises from passing the wider match. Thrust allows 65 degrees of wrist
+   rotation before a penalty. Its distance limit is 1.50 for pushes peaking
+   at least 1.50 g, and 1.10 for weaker pushes (the fitted limit is 1.00).
+   A push rotating over 55 degrees must travel at least 0.65 m so a recorded
+   flick does not pass the wider thrust check. These adjustments are outside the
+   generated model block and are applied only to sword/shield. The fitter's
+   printed limits describe the generated baseline; check these live-play
+   allowances with fresh labeled captures after flashing.
 
 ## Recording and fitting weapon-specific actions
 
