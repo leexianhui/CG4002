@@ -41,13 +41,20 @@ namespace CG4002.Net
         bool showSettings = true;
         PhoneSetupStatus setupStatus;
         bool showDiagnostics;
+        // Collapsed: only a small "Online" button, so the HUD (health, weapon) is unobstructed.
+        // Collapses by itself once the match runs; tap the button to reopen.
+        bool collapsed;
+        bool autoCollapsed;
         int observedCalibration = -1;
         const float PanelWidth = 410;
-        float PanelHeight => showDiagnostics ? 540 : 350;
+        const float CollapsedWidth = 150, CollapsedHeight = 44;
+        float PanelHeight => showDiagnostics ? 560 : 370;
+        // Scale is fixed by the full panel so the collapsed button keeps the same size.
         float PanelScale => Mathf.Max(0.5f, Mathf.Min(Screen.safeArea.width / (PanelWidth + 20),
             Screen.safeArea.height / (PanelHeight + 20)));
         Rect PanelRect => new Rect(Screen.safeArea.xMin / PanelScale + 10,
-            (Screen.height - Screen.safeArea.yMax) / PanelScale + 10, PanelWidth, PanelHeight);
+            (Screen.height - Screen.safeArea.yMax) / PanelScale + 10,
+            collapsed ? CollapsedWidth : PanelWidth, collapsed ? CollapsedHeight : PanelHeight);
         static long Now => (long)(System.Diagnostics.Stopwatch.GetTimestamp() *
             (1000.0 / System.Diagnostics.Stopwatch.Frequency));
 
@@ -283,9 +290,22 @@ namespace CG4002.Net
         void OnGUI()
         {
             // The token is never serialized into a scene or PlayerPrefs (only the player choice is saved).
+            bool running = Connected && gameState.Phase == MatchPhase.Running;
+            if (running && !autoCollapsed) { collapsed = true; autoCollapsed = true; }
+            if (!running) autoCollapsed = false; // collapse again the next time the match starts
             float scale = PanelScale;
             GUI.matrix = Matrix4x4.Scale(Vector3.one * scale);
+            if (collapsed)
+            {
+                GUILayout.BeginArea(PanelRect);
+                if (GUILayout.Button("P" + (int)player + " · " + gameState.Phase, GUILayout.Height(CollapsedHeight)))
+                    collapsed = false;
+                GUILayout.EndArea();
+                GUI.matrix = Matrix4x4.identity;
+                return;
+            }
             GUILayout.BeginArea(PanelRect, GUI.skin.box);
+            if (GUILayout.Button("Hide panel")) collapsed = true;
             GUILayout.Label("Online P" + (int)player + " · " + Status);
             GUILayout.Label("Match: " + gameState.Phase + " · Move cooldown: " +
                 (gameState.Self.cooldownActionName ?? "none") + " " + gameState.Self.CooldownRemaining.ToString("0.0") + "s");

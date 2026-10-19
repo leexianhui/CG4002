@@ -10,6 +10,7 @@ namespace CG4002.Net
         public sealed class Player
         {
             public bool relayConnected, ready, hasPosition;
+            public string weapon; // null until that player's hub locks a weapon
             public Vector2 position;
             public float heading;
         }
@@ -32,6 +33,7 @@ namespace CG4002.Net
                 var p = result.players[index];
                 p.relayConnected = (bool)item["connected"];
                 p.ready = (bool)item["ready"];
+                p.weapon = item["weapon"]?.Type == JTokenType.String ? (string)item["weapon"] : null;
                 if (item["position"] is JObject position)
                 {
                     p.hasPosition = true;
@@ -49,7 +51,7 @@ namespace CG4002.Net
                 ? $"x {p.position.x:F2}, y {p.position.y:F2} m, {p.heading:F0} deg"
                 : "position unavailable";
             return $"P{index + 1}: relay {(p.relayConnected ? "on" : "off")}, " +
-                $"{(p.ready ? "ready" : "not ready")}\n{pose}";
+                $"{(p.ready ? "ready" : "not ready")}, weapon {p.weapon ?? "none"}\n{pose}";
         }
     }
 }
