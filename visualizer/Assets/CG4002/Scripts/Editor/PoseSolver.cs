@@ -31,6 +31,11 @@ namespace CG4002.EditorTools
     {
         public Vector3 hips;  // offset from the rest hip position
         public float hipsYaw, spineYaw, spinePitch, chestYaw, chestPitch, chestRoll, headPitch;
+        /// <summary>
+        /// Turns the whole pose (hips, arms, feet) about the vertical axis, e.g. for a spin.
+        /// Unlike hipsYaw, arm directions and feet turn with it, and the head doesn't counter-rotate.
+        /// </summary>
+        public float rootYaw;
         public Vector3 footL = new(-0.14f, MannequinRig.AnkleHeight, 0.1f);
         public Vector3 footR = new(0.15f, MannequinRig.AnkleHeight, -0.08f);
         public ArmPose armR = new(new Vector3(0.15f, -1f, 0.05f), new Vector3(0.1f, -1f, 0.2f), Vector3.forward);
@@ -50,6 +55,7 @@ namespace CG4002.EditorTools
                 chestPitch = Mathf.Lerp(a.chestPitch, b.chestPitch, t),
                 chestRoll = Mathf.Lerp(a.chestRoll, b.chestRoll, t),
                 headPitch = Mathf.Lerp(a.headPitch, b.headPitch, t),
+                rootYaw = Mathf.Lerp(a.rootYaw, b.rootYaw, t),
                 footL = Step(a.footL, b.footL, t),
                 footR = Step(a.footR, b.footR, t),
                 armR = Lerp(a.armR, b.armR, t),
@@ -142,7 +148,8 @@ namespace CG4002.EditorTools
         {
             var local = new Dictionary<string, Quaternion>();
 
-            Quaternion hipsW = Quaternion.Euler(0f, pose.hipsYaw, 0f);
+            Quaternion root = Quaternion.Euler(0f, pose.rootYaw, 0f);
+            Quaternion hipsW = root * Quaternion.Euler(0f, pose.hipsYaw, 0f);
             local[MannequinRig.Hips] = hipsW;
 
             Quaternion spineL = Quaternion.Euler(pose.spinePitch, pose.spineYaw, 0f);
@@ -158,15 +165,18 @@ namespace CG4002.EditorTools
             float totalPitch = pose.spinePitch + pose.chestPitch;
             local[MannequinRig.Head] = Quaternion.Euler(pose.headPitch - totalPitch * 0.6f, -totalYaw * 0.75f, -pose.chestRoll * 0.5f);
 
-            SolveArm(pose.armR, chestW, MannequinRig.UpperArmR, MannequinRig.ForearmR, local);
-            SolveArm(pose.armL, chestW, MannequinRig.UpperArmL, MannequinRig.ForearmL, local);
+            SolveArm(Turn(root, pose.armR), chestW, MannequinRig.UpperArmR, MannequinRig.ForearmR, local);
+            SolveArm(Turn(root, pose.armL), chestW, MannequinRig.UpperArmL, MannequinRig.ForearmL, local);
 
-            Vector3 hipsPos = MannequinRig.HipsRest + pose.hips;
-            SolveLeg(hipsPos, hipsW, +1f, pose.footR, MannequinRig.UpperLegR, MannequinRig.LowerLegR, MannequinRig.FootR, pose.hipsYaw, local);
-            SolveLeg(hipsPos, hipsW, -1f, pose.footL, MannequinRig.UpperLegL, MannequinRig.LowerLegL, MannequinRig.FootL, pose.hipsYaw, local);
+            Vector3 hipsPos = MannequinRig.HipsRest + root * pose.hips;
+            Quaternion feetW = root * Quaternion.Euler(0f, pose.hipsYaw * 0.5f, 0f);
+            SolveLeg(hipsPos, hipsW, +1f, root * pose.footR, MannequinRig.UpperLegR, MannequinRig.LowerLegR, MannequinRig.FootR, feetW, local);
+            SolveLeg(hipsPos, hipsW, -1f, root * pose.footL, MannequinRig.UpperLegL, MannequinRig.LowerLegL, MannequinRig.FootL, feetW, local);
 
             return new Solved { localRotations = local, hipsLocalPosition = hipsPos };
         }
+
+        static ArmPose Turn(Quaternion root, ArmPose arm) => new(root * arm.upper, root * arm.fore, root * arm.facing);
 
         static void SolveArm(ArmPose arm, Quaternion chestW, string upperPath, string forePath, Dictionary<string, Quaternion> local)
         {
@@ -178,7 +188,7 @@ namespace CG4002.EditorTools
         }
 
         static void SolveLeg(Vector3 hipsPos, Quaternion hipsW, float side, Vector3 foot,
-            string thighPath, string shinPath, string footPath, float hipsYaw, Dictionary<string, Quaternion> local)
+            string thighPath, string shinPath, string footPath, Quaternion footW, Dictionary<string, Quaternion> local)
         {
             float a = MannequinRig.ThighLength;
             float b = MannequinRig.ShinLength;
@@ -199,7 +209,6 @@ namespace CG4002.EditorTools
 
             Quaternion thighW = Aim(knee - hip, pole, Vector3.forward);
             Quaternion shinW = Aim(ankle - knee, pole, Vector3.forward);
-            Quaternion footW = Quaternion.Euler(0f, hipsYaw * 0.5f, 0f);
 
             local[thighPath] = Quaternion.Inverse(hipsW) * thighW;
             local[shinPath] = Quaternion.Inverse(thighW) * shinW;

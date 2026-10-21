@@ -32,6 +32,9 @@ namespace CG4002.Offline
         [SerializeField] bool dummyAttacks;
         [SerializeField] float attackInterval = 5f;
 
+        // The opponent has always chosen already, so only the local player sees weapon selection.
+        void Start() => rules.LockWeapon(dummy, WeaponType.SwordAndShield);
+
         void OnEnable()
         {
             if (dummyGuards) StartCoroutine(GuardRoutine());
@@ -73,7 +76,8 @@ namespace CG4002.Offline
         }
 
         // Editor testing: H = my sword hits the dummy, G = toggle the dummy's guard,
-        // C = the dummy attacks me, R = restart the match.
+        // C = the dummy attacks me, R = restart the match,
+        // 1 = I hold the sword stance until the hub locks it (with Require Weapon Selection on).
         void Update()
         {
             var keyboard = Keyboard.current;
@@ -84,6 +88,7 @@ namespace CG4002.Offline
             if (keyboard.gKey.wasPressedThisFrame) rules.SetGuard(dummy, !rules.IsGuarding(dummy));
             if (keyboard.cKey.wasPressedThisFrame) rules.Attack(dummy, ActionType.HorizontalSwing);
             if (keyboard.rKey.wasPressedThisFrame) rules.StartMatch();
+            if (keyboard.digit1Key.wasPressedThisFrame) rules.LockWeapon(localPlayer, WeaponType.SwordAndShield);
         }
     }
 }

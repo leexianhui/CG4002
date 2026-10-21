@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using CG4002.Combat;
 using CG4002.FX;
 using CG4002.Models;
 using UnityEditor;
@@ -17,12 +18,15 @@ namespace CG4002.EditorTools
     /// <summary>
     /// Renders contact sheets of each weapon's key poses (with trails and charge glow) without
     /// entering Play mode. Useful for checking a pose change, or for report screenshots.
-    /// Each sheet: columns Idle, Guard, Light wind-up, Light strike, Charged hold, Charged strike;
-    /// top row three-quarter front view, bottom row side view.
+    /// Each sheet: columns Idle, Guard, Horizontal wind-up, Horizontal strike, Charged hold, Charged strike;
+    /// top row three-quarter front view, bottom row side view. A second sheet per weapon shows
+    /// every attack as a film strip: one row per attack, from start to the end of its strike.
     /// </summary>
     public static class PreviewSheetRenderer
     {
         const int CellSize = 420;
+        const int StripCell = 260;
+        const int StripFrames = 7;
         static readonly int EmissionId = Shader.PropertyToID("_EmissionColor");
 
         [MenuItem("CG4002/Render Preview Sheets")]
@@ -80,16 +84,18 @@ namespace CG4002.EditorTools
             {
                 avatar.Equip(definition);
                 var clips = ClipsByState(definition.animations);
+                var horizontal = clips[C.AttackState(AttackSlot.Horizontal)];
+                var charged = clips[C.AttackState(AttackSlot.Charged)];
                 var sheet = new Texture2D(CellSize * 6, CellSize * 2, TextureFormat.RGB24, false);
 
                 var poses = new List<Action>
                 {
                     () => Pose(avatarObject, clips[C.IdleState], 0f),
                     () => { Pose(avatarObject, clips[C.IdleState], 0f); Pose(avatarObject, clips[C.GuardState], 0f); },
-                    () => Pose(avatarObject, clips[C.LightState], EventTime(clips[C.LightState], C.StrikeOpenEvent) - 0.02f),
-                    () => Strike(avatarObject, avatar, trail, clips[C.LightState], 0.12f, 1.2f),
-                    () => { Pose(avatarObject, clips[C.ChargedState], EventTime(clips[C.ChargedState], C.StrikeOpenEvent) - 0.03f); SetGlow(avatar, 4f); },
-                    () => { SetGlow(avatar, 4f); Strike(avatarObject, avatar, trail, clips[C.ChargedState], 0.28f, 2.2f); },
+                    () => Pose(avatarObject, horizontal, EventTime(horizontal, C.StrikeOpenEvent) - 0.02f),
+                    () => Strike(avatarObject, avatar, trail, horizontal, 0.12f, 1.2f),
+                    () => { Pose(avatarObject, charged, EventTime(charged, C.StrikeOpenEvent) - 0.03f); SetGlow(avatar, 4f); },
+                    () => { SetGlow(avatar, 4f); Strike(avatarObject, avatar, trail, charged, 0.28f, 2.2f); },
                 };
 
                 for (int column = 0; column < poses.Count; column++)
@@ -104,11 +110,44 @@ namespace CG4002.EditorTools
                 Save(sheet, Path.Combine(folder, $"Preview_{definition.type}.png"));
                 trail.Clear();
                 SetGlow(avatar, 1f);
+                RenderAttackStrips(camera, avatarObject, clips, Path.Combine(folder, $"Preview_{definition.type}_Attacks.png"));
             }
 
             UnityEngine.Object.DestroyImmediate(avatarObject);
             RenderModelLineup(camera, catalog, folder);
             Debug.Log($"[CG4002] Preview sheets written to {Path.GetFullPath(folder)}");
+        }
+
+        /// <summary>One row per attack slot, StripFrames poses from the clip's start to its StrikeClose.</summary>
+        static void RenderAttackStrips(Camera camera, GameObject avatarObject, Dictionary<string, AnimationClip> clips, string path)
+        {
+            var slots = C.AttackSlots;
+            var sheet = new Texture2D(StripCell * StripFrames, StripCell * slots.Length, TextureFormat.RGB24, false);
+            var cell = new Texture2D(CellSize, CellSize, TextureFormat.RGB24, false);
+            for (int row = 0; row < slots.Length; row++)
+            {
+                var clip = clips[C.AttackState(slots[row])];
+                float end = EventTime(clip, C.StrikeCloseEvent);
+                for (int column = 0; column < StripFrames; column++)
+                {
+                    Pose(avatarObject, clip, end * column / (StripFrames - 1));
+                    Capture(camera, cell, 0, 0, yaw: 205f);
+                    var scaled = Downscale(cell, StripCell);
+                    // Rows run top to bottom in slot order; texture rows start at the bottom.
+                    sheet.SetPixels(column * StripCell, (slots.Length - 1 - row) * StripCell, StripCell, StripCell, scaled);
+                }
+            }
+            UnityEngine.Object.DestroyImmediate(cell);
+            Save(sheet, path);
+        }
+
+        static Color[] Downscale(Texture2D source, int size)
+        {
+            var pixels = new Color[size * size];
+            for (int y = 0; y < size; y++)
+                for (int x = 0; x < size; x++)
+                    pixels[y * size + x] = source.GetPixelBilinear((x + 0.5f) / size, (y + 0.5f) / size);
+            return pixels;
         }
 
         static Camera BuildStage()

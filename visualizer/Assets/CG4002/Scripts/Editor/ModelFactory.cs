@@ -26,6 +26,7 @@ namespace CG4002.EditorTools
             public Material swordGlow, spearGlow, maceGlow;
             public Material ground;
             public Material fxTrail, fxParticle;
+            public Material hologram;
         }
 
         public static Materials CreateMaterials()
@@ -45,6 +46,7 @@ namespace CG4002.EditorTools
                 ground = Lit("M_Showcase_Ground", new Color(0.2f, 0.21f, 0.24f), 0.2f, 0f),
                 fxTrail = Fx("M_FX_Trail", Color.white, radial: false),
                 fxParticle = Fx("M_FX_Particle", Color.white * 3f, radial: true),
+                hologram = Hologram("M_Hologram"),
             };
         }
 
@@ -68,6 +70,14 @@ namespace CG4002.EditorTools
             var material = new Material(Shader.Find("CG4002/FX Additive"));
             material.SetColor("_TintColor", tint);
             material.SetFloat("_Radial", radial ? 1f : 0f);
+            material.renderQueue = (int)RenderQueue.Transparent;
+            return AssetIO.Save(material, $"{MaterialDir}/{name}.mat");
+        }
+
+        /// <summary>The weapon-selection dummies' look; WeaponSelectScreen tints it per weapon.</summary>
+        static Material Hologram(string name)
+        {
+            var material = new Material(Shader.Find("CG4002/Hologram"));
             material.renderQueue = (int)RenderQueue.Transparent;
             return AssetIO.Save(material, $"{MaterialDir}/{name}.mat");
         }

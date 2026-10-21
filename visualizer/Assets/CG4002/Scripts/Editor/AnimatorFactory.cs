@@ -12,9 +12,9 @@ namespace CG4002.EditorTools
     /// <summary>
     /// One base state machine shared by all weapons, plus an override controller per weapon.
     ///
-    ///   Layer 0 "Body":  Idle ── Attack & AttackSlot==0 ──▶ Light ──(clip ends)──▶ Idle
-    ///                         └─ Attack & AttackSlot==1 ──▶ Charged ─(clip ends)──▶ Idle
-    ///                    (attack transitions come from Any State, so a new attack interrupts)
+    ///   Layer 0 "Body":  Idle ── Attack & AttackSlot==n ──▶ state named after slot n ──(clip ends)──▶ Idle
+    ///                    one state per AttackSlot (Horizontal, Charged, Vertical, ...);
+    ///                    attack transitions come from Any State, so a new attack interrupts
     ///   Layer 1 "Guard": masked to the left arm, always playing Guard; AvatarView fades its weight.
     /// </summary>
     static class AnimatorFactory
@@ -37,7 +37,8 @@ namespace CG4002.EditorTools
         public class BaseController
         {
             public AnimatorController controller;
-            public AnimationClip idle, light, charged, guard;
+            public AnimationClip idle, guard;
+            public readonly Dictionary<AttackSlot, AnimationClip> attacks = new();
         }
 
         public static BaseController CreateBaseController(AvatarMask guardMask)
@@ -46,10 +47,10 @@ namespace CG4002.EditorTools
             var result = new BaseController
             {
                 idle = AssetIO.Save(new AnimationClip(), $"{AnimationDir}/Base/Base_Idle.anim"),
-                light = AssetIO.Save(new AnimationClip(), $"{AnimationDir}/Base/Base_Light.anim"),
-                charged = AssetIO.Save(new AnimationClip(), $"{AnimationDir}/Base/Base_Charged.anim"),
                 guard = AssetIO.Save(new AnimationClip(), $"{AnimationDir}/Base/Base_Guard.anim"),
             };
+            foreach (var slot in C.AttackSlots)
+                result.attacks[slot] = AssetIO.Save(new AnimationClip(), $"{AnimationDir}/Base/Base_{slot}.anim");
 
             // State machines are sub-assets, so rebuild the controller rather than copy it in place.
             string path = $"{AnimationDir}/Avatar_Base.controller";
@@ -67,15 +68,14 @@ namespace CG4002.EditorTools
             idle.motion = result.idle;
             body.defaultState = idle;
 
-            var light = body.AddState(C.LightState, new Vector3(550, -80));
-            light.motion = result.light;
-            var charged = body.AddState(C.ChargedState, new Vector3(550, 80));
-            charged.motion = result.charged;
-
-            AddAttackTransition(body, light, AttackSlot.Light);
-            AddAttackTransition(body, charged, AttackSlot.Charged);
-            AddReturnTransition(light, idle);
-            AddReturnTransition(charged, idle);
+            for (int i = 0; i < C.AttackSlots.Length; i++)
+            {
+                var slot = C.AttackSlots[i];
+                var attack = body.AddState(C.AttackState(slot), new Vector3(600, -240 + 80 * i));
+                attack.motion = result.attacks[slot];
+                AddAttackTransition(body, attack, slot);
+                AddReturnTransition(attack, idle);
+            }
 
             controller.AddLayer("Guard");
             layers = controller.layers;
@@ -114,16 +114,16 @@ namespace CG4002.EditorTools
         }
 
         public static AnimatorOverrideController CreateOverride(BaseController baseController, WeaponType weapon,
-            AnimationClip idle, AnimationClip light, AnimationClip charged, AnimationClip guard)
+            AnimationClip idle, AnimationClip guard, IReadOnlyDictionary<AttackSlot, AnimationClip> attacks)
         {
             var overrides = new AnimatorOverrideController(baseController.controller);
             var pairs = new List<KeyValuePair<AnimationClip, AnimationClip>>
             {
                 new(baseController.idle, idle),
-                new(baseController.light, light),
-                new(baseController.charged, charged),
                 new(baseController.guard, guard),
             };
+            foreach (var slot in C.AttackSlots)
+                pairs.Add(new(baseController.attacks[slot], attacks[slot]));
             overrides.ApplyOverrides(pairs);
             return AssetIO.Save(overrides, $"{AnimationDir}/{weapon}/Avatar_{weapon}.overrideController");
         }

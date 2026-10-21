@@ -19,15 +19,19 @@ MonoBehaviour:
   animations: {fileID: 22100000, guid: c0b1b452020e4417dae95e34ee379bbc, type: 2}
   accentColor: {r: 1.5, g: 0.90000004, b: 0.22500001, a: 1.5}
   moves:
-  - action: 4
+  - action: 1
     slot: 0
+  - action: 2
+    slot: 2
+  - action: 3
+    slot: 3
+  - action: 4
+    slot: 4
+  - action: 6
+    slot: 5
+  - action: 11
+    slot: 6
   - action: 7
     slot: 1
   - action: 8
-    slot: 0
-  - action: 9
-    slot: 0
-  - action: 10
-    slot: 0
-  - action: 6
     slot: 0

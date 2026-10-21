@@ -22,12 +22,14 @@ MonoBehaviour:
   - action: 1
     slot: 0
   - action: 2
-    slot: 0
+    slot: 2
   - action: 3
-    slot: 0
+    slot: 3
   - action: 4
-    slot: 0
+    slot: 4
+  - action: 6
+    slot: 5
+  - action: 11
+    slot: 6
   - action: 5
     slot: 1
-  - action: 6
-    slot: 0

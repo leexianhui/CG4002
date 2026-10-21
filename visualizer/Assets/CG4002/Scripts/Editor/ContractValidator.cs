@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using CG4002.Combat;
 using CG4002.Models;
 using UnityEditor;
 using UnityEditor.Animations;
@@ -144,8 +145,13 @@ namespace CG4002.EditorTools
                 }
             }
 
-            RequireEvents(clipsByState, C.LightState, who, errors, C.StrikeOpenEvent, C.StrikeCloseEvent);
-            RequireEvents(clipsByState, C.ChargedState, who, errors, C.ChargeStartEvent, C.StrikeOpenEvent, C.StrikeCloseEvent);
+            foreach (var slot in C.AttackSlots)
+            {
+                if (slot == AttackSlot.Charged)
+                    RequireEvents(clipsByState, C.AttackState(slot), who, errors, C.ChargeStartEvent, C.StrikeOpenEvent, C.StrikeCloseEvent);
+                else
+                    RequireEvents(clipsByState, C.AttackState(slot), who, errors, C.StrikeOpenEvent, C.StrikeCloseEvent);
+            }
         }
 
         static void RequireEvents(Dictionary<string, AnimationClip> clipsByState, string state, string who, List<string> errors, params string[] required)

@@ -1,6 +1,7 @@
 #if UNITY_EDITOR
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using CG4002.Combat;
 using CG4002.FX;
 using CG4002.Models;
@@ -54,6 +55,7 @@ namespace CG4002.Tests
         }
 
         static IEnumerable<WeaponType> AllWeapons => new[] { WeaponType.SwordAndShield, WeaponType.Spear, WeaponType.Mace };
+        static IEnumerable<AttackSlot> UnchargedSlots => AvatarContract.AttackSlots.Where(slot => slot != AttackSlot.Charged);
 
         [UnityTest]
         public IEnumerator Equip_AttachesModelsToSocketsAndSwapsAnimations([ValueSource(nameof(AllWeapons))] WeaponType weapon)
@@ -83,13 +85,14 @@ namespace CG4002.Tests
         }
 
         [UnityTest]
-        public IEnumerator LightAttack_OpensAndClosesStrikeWindow([ValueSource(nameof(AllWeapons))] WeaponType weapon)
+        public IEnumerator Attack_OpensAndClosesStrikeWindow(
+            [ValueSource(nameof(AllWeapons))] WeaponType weapon, [ValueSource(nameof(UnchargedSlots))] AttackSlot slot)
         {
             yield return EquipAndSettle(weapon);
-            avatar.PlayAttack(AttackSlot.Light);
+            avatar.PlayAttack(slot);
             yield return new WaitForSeconds(1f);
 
-            CollectionAssert.AreEqual(new[] { "AttackStarted:Light", "StrikeOpen", "StrikeClose" }, events);
+            CollectionAssert.AreEqual(new[] { $"AttackStarted:{slot}", "StrikeOpen", "StrikeClose" }, events);
         }
 
         [UnityTest]
@@ -103,20 +106,24 @@ namespace CG4002.Tests
         }
 
         [UnityTest]
-        public IEnumerator Attack_ReturnsToIdleAfterClipEnds()
+        public IEnumerator Attack_ReturnsToIdleAfterClipEnds([Values(AttackSlot.Charged, AttackSlot.Spin)] AttackSlot slot)
         {
             yield return EquipAndSettle(WeaponType.SwordAndShield);
-            avatar.PlayAttack(AttackSlot.Charged);
+            avatar.PlayAttack(slot);
             yield return new WaitForSeconds(1.5f);
 
             Assert.That(avatar.Animator.GetCurrentAnimatorStateInfo(AvatarContract.BodyLayer).IsName(AvatarContract.IdleState));
+            // The spin turns a full circle, so the body must end facing the opponent again
+            // (within the stance's own slight hip turn).
+            var hips = avatar.transform.Find("Hips");
+            Assert.That(Vector3.Angle(hips.forward, avatar.transform.forward), Is.LessThan(30f));
         }
 
         [UnityTest]
         public IEnumerator NewAttack_InterruptsAndClosesOpenStrike()
         {
             yield return EquipAndSettle(WeaponType.SwordAndShield);
-            avatar.PlayAttack(AttackSlot.Light);
+            avatar.PlayAttack(AttackSlot.Horizontal);
             yield return WaitFor(() => events.Contains("StrikeOpen"), 1f);
 
             avatar.PlayAttack(AttackSlot.Charged);
@@ -148,7 +155,7 @@ namespace CG4002.Tests
             yield return EquipAndSettle(WeaponType.SwordAndShield);
             var trail = GameObject.Find($"{avatar.name} Trail").GetComponent<MeshFilter>();
 
-            avatar.PlayAttack(AttackSlot.Light);
+            avatar.PlayAttack(AttackSlot.Horizontal);
             yield return WaitFor(() => events.Contains("StrikeOpen"), 1f);
             for (int i = 0; i < 4; i++)
                 yield return null;
@@ -156,22 +163,24 @@ namespace CG4002.Tests
             Assert.That(trail.sharedMesh.vertexCount, Is.GreaterThan(0));
         }
 
-        [UnityTest]
-        public IEnumerator EveryWeapon_MapsChargedActionToChargedSlot()
+        [Test]
+        public void EveryWeapon_GivesEachClassifierActionItsOwnSlot([ValueSource(nameof(AllWeapons))] WeaponType weapon)
         {
-            var charged = new Dictionary<WeaponType, ActionType>
+            var expected = new Dictionary<ActionType, AttackSlot>
             {
-                [WeaponType.SwordAndShield] = ActionType.ChargedAttack,
-                [WeaponType.Spear] = ActionType.ChargedThrust,
-                [WeaponType.Mace] = ActionType.ChargedAttack,
+                [ActionType.HorizontalSwing] = AttackSlot.Horizontal,
+                [ActionType.VerticalSwing] = AttackSlot.Vertical,
+                [ActionType.DiagonalSwing] = AttackSlot.Diagonal,
+                [ActionType.Thrust] = AttackSlot.Thrust,
+                [ActionType.SpinAttack] = AttackSlot.Spin,
+                [ActionType.Uppercut] = AttackSlot.Uppercut,
+                [weapon == WeaponType.Spear ? ActionType.ChargedThrust : ActionType.ChargedAttack] = AttackSlot.Charged,
             };
-            foreach (var (weapon, action) in charged)
+            foreach (var (action, slot) in expected)
             {
-                Assert.That(catalog.Get(weapon).TryGetSlot(action, out var slot), Is.True, $"{weapon} lacks {action}");
-                Assert.That(slot, Is.EqualTo(AttackSlot.Charged));
-                Assert.That(catalog.Get(weapon).moves.Length, Is.EqualTo(6), $"{weapon} should list all six classifier moves");
+                Assert.That(catalog.Get(weapon).TryGetSlot(action, out var actual), Is.True, $"{weapon} lacks {action}");
+                Assert.That(actual, Is.EqualTo(slot), $"{weapon} {action}");
             }
-            yield break;
         }
 
         IEnumerator EquipAndSettle(WeaponType weapon)

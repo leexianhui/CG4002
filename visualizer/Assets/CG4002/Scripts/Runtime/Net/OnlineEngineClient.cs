@@ -19,6 +19,8 @@ namespace CG4002.Net
         public GameState gameState;
         public AvatarController opponent;
         public SharedArenaCalibration calibration;
+        [Tooltip("Optional. While it is open, calibration waits: the weapon is chosen first.")]
+        public CG4002.UI.WeaponSelectScreen weaponSelect;
         public GameObject offlineEngine;
         [Tooltip("Base URL without /visualizer/id. The phone's socat on 8080 does the TLS to the engine.")]
         public string endpoint = "ws://127.0.0.1:8080";
@@ -317,10 +319,15 @@ namespace CG4002.Net
                 if (GUILayout.Button("Connect")) Connect();
             }
             else if (GUILayout.Button("Disconnect / settings")) { Disconnect(); showSettings = true; }
-            GUILayout.Label("Tap the shared floor origin, then stand on the marked +Z line.");
-            GUILayout.Label("Calibration: " + calibration.Status);
-            if (GUILayout.Button(calibration.IsReady ? "Calibrated — reconfirm direction" : "Confirm shared +Z direction"))
-                Status = calibration.ConfirmFromMarkedForwardLine() ? "Calibration confirmed" : "Place arena; stand at least 0.3 m from origin";
+            if (weaponSelect != null && weaponSelect.IsSelecting)
+                GUILayout.Label("Choose your weapon first: copy the pose in front of you. Calibration follows.");
+            else
+            {
+                GUILayout.Label("Tap the shared floor origin, then stand on the marked +Z line.");
+                GUILayout.Label("Calibration: " + calibration.Status);
+                if (GUILayout.Button(calibration.IsReady ? "Calibrated — reconfirm direction" : "Confirm shared +Z direction"))
+                    Status = calibration.ConfirmFromMarkedForwardLine() ? "Calibration confirmed" : "Place arena; stand at least 0.3 m from origin";
+            }
             if (GUILayout.Button(showDiagnostics ? "Hide setup readings" : "Show setup readings"))
                 showDiagnostics = !showDiagnostics;
             if (showDiagnostics)

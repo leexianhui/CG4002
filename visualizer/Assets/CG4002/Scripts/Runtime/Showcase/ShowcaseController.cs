@@ -58,7 +58,7 @@ namespace CG4002.Showcase
             if (keyboard.digit2Key.wasPressedThisFrame) Equip(1);
             if (keyboard.digit3Key.wasPressedThisFrame) Equip(2);
 
-            if (keyboard.lKey.wasPressedThisFrame) PerformFirstMoveIn(AttackSlot.Light);
+            if (keyboard.lKey.wasPressedThisFrame) PerformNextMove();
             if (keyboard.cKey.wasPressedThisFrame) PerformFirstMoveIn(AttackSlot.Charged);
             if (keyboard.gKey.wasPressedThisFrame) ToggleGuard();
             if (keyboard.hKey.wasPressedThisFrame) Hit();
@@ -95,6 +95,13 @@ namespace CG4002.Showcase
             }
             avatar.PlayAttack(slot);
             Log($"ACTION {action} -> {slot}");
+        }
+
+        /// <summary>Steps through the weapon's moves, so repeated presses show every attack.</summary>
+        void PerformNextMove()
+        {
+            SelectMove(+1);
+            Perform(Current.moves[moveIndex].action);
         }
 
         void PerformFirstMoveIn(AttackSlot slot)
@@ -142,7 +149,7 @@ namespace CG4002.Showcase
 
             switch (autoStep % 6)
             {
-                case 0: PerformFirstMoveIn(AttackSlot.Light); break;
+                case 0: PerformNextMove(); break;
                 case 1: PerformFirstMoveIn(AttackSlot.Charged); break;
                 case 2: ToggleGuard(); break;
                 case 3: Hit(); break;
@@ -178,7 +185,7 @@ namespace CG4002.Showcase
                 $"<b>{Current.displayName}</b>   guard: {(avatar.IsGuarding ? "<color=#7CFC00>ON</color>" : "off")}" +
                 $"   speed: {(slowMotion ? "0.25x" : "1x")}   auto: {(autoDemo ? "on" : "off")}\n" +
                 $"selected move: <b>{move.action}</b> -> {move.slot}\n\n" +
-                "1/2/3 weapon   L light   C charged   G guard   H hit\n" +
+                "1/2/3 weapon   L next move   C charged   G guard   H hit\n" +
                 "<-/-> pick move   Space perform   T slow-mo   P auto demo\n" +
                 "right-drag orbit   scroll zoom\n\n" +
                 string.Join("\n", log);

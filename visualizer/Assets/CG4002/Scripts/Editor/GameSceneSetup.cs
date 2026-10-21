@@ -27,6 +27,7 @@ namespace CG4002.EditorTools
     ///                  local positions under it
     ///     OpponentAvatar   AvatarView + AvatarController
     ///   HUD            Canvas + HudController + DebugPanel (layout from HudBuilder)
+    ///   WeaponSelect   Canvas + WeaponSelectScreen (shown while the engine reports no weapon)
     ///
     /// Game, OfflineEngine and HUD are rebuilt from scratch each run. Run CG4002 > Setup Image
     /// Tracking first. Safe to re-run: CG4002 > Setup Game Scene.
@@ -151,6 +152,7 @@ namespace CG4002.EditorTools
             fxSettings.ApplyModifiedPropertiesWithoutUndo();
 
             HudBuilder.Build(gameState, dispatcher, placer, trackingOverlay);
+            HudBuilder.BuildWeaponSelect();
 
             EditorSceneManager.MarkSceneDirty(scene);
             EditorSceneManager.SaveScene(scene);

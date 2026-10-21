@@ -20,12 +20,15 @@ namespace CG4002.Offline
             public int health;
             public bool guarding;
             public float cooldownEndsAt;
+            public bool weaponLocked;
         }
 
         [SerializeField] MessageDispatcher dispatcher;
 
         [Header("Rules")]
         [SerializeField] WeaponType startingWeapon = WeaponType.SwordAndShield;
+        [Tooltip("Start each player with no weapon, as the hub does until a stance is held; LockWeapon then selects one.")]
+        [SerializeField] bool requireWeaponSelection;
         [SerializeField] int maxHealth = 100;
         [SerializeField] int damagePerHit = 10;
         [Tooltip("Seconds after an attack before the same player can attack again. Also stops one swing counting as several hits.")]
@@ -68,7 +71,8 @@ namespace CG4002.Offline
                 fighter.health = maxHealth;
                 fighter.guarding = false;
                 fighter.cooldownEndsAt = 0f;
-                Send(new WeaponChangedMessage { player = id, weapon = startingWeapon });
+                Send(new WeaponChangedMessage { player = id, weapon = startingWeapon,
+                    selected = !requireWeaponSelection || fighter.weaponLocked });
                 Send(new HealthMessage { player = id, health = maxHealth, maxHealth = maxHealth });
                 Send(new GuardMessage { player = id, guarding = false });
             }
@@ -111,6 +115,13 @@ namespace CG4002.Offline
             if (defenderState.health == 0)
                 EndMatch(winner: attacker);
             return true;
+        }
+
+        /// <summary>What the hub reports once a stance has been held: this player's weapon is chosen.</summary>
+        public void LockWeapon(PlayerId player, WeaponType weapon)
+        {
+            Get(player).weaponLocked = true;
+            Send(new WeaponChangedMessage { player = player, weapon = weapon });
         }
 
         public void SetGuard(PlayerId player, bool guarding)

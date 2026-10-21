@@ -20,6 +20,8 @@ namespace CG4002.EditorTools
     ///   ├─ Outcome      centre:    "HIT -10" / "BLOCKED", shown briefly
     ///   ├─ Result       centre:    "DUMMY DEFEATED"
     ///   └─ Debug        bottom-right: RESET, MOVE DUMMY, TRACKING buttons (DebugPanel)
+    ///   WeaponSelect (Canvas + WeaponSelectScreen): title and instruction, top centre; the
+    ///                   dummies themselves are spawned in the world at runtime
     ///   EventSystem     routes taps to the buttons
     /// </summary>
     static class HudBuilder
@@ -87,6 +89,61 @@ namespace CG4002.EditorTools
 
             BuildDebugPanel(root, gameState, dispatcher, placer, trackingOverlay);
         }
+
+        /// <summary>
+        /// The weapon-selection screen, wired to what's already in the open scene (GameState,
+        /// DummyPlacer and its camera and planes, the HUD). Rebuilt from scratch each time.
+        /// </summary>
+        public static WeaponSelectScreen BuildWeaponSelect()
+        {
+            var existing = GameObject.Find("WeaponSelect");
+            if (existing != null)
+                Object.DestroyImmediate(existing);
+
+            var gameState = Object.FindAnyObjectByType<GameState>();
+            var placer = Object.FindAnyObjectByType<DummyPlacer>();
+            var hud = Object.FindAnyObjectByType<HudController>();
+            if (gameState == null || placer == null || hud == null)
+                throw new System.InvalidOperationException("Run CG4002 > Setup Game Scene first: no GameState, DummyPlacer or HUD in the scene.");
+            var placement = new SerializedObject(placer);
+
+            var canvasObject = new GameObject("WeaponSelect", typeof(Canvas), typeof(CanvasScaler));
+            var canvas = canvasObject.GetComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 1;
+            var scaler = canvasObject.GetComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920f, 1080f);
+            scaler.matchWidthOrHeight = 0.5f;
+
+            var title = CentreText(canvasObject.transform, "Title", 72, y: 0f);
+            var instruction = CentreText(canvasObject.transform, "Instruction", 40, y: 0f);
+            foreach (var (text, y) in new[] { (title, -Margin), (instruction, -Margin - 100f) })
+            {
+                var rect = text.rectTransform;
+                rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 1f);
+                rect.anchoredPosition = new Vector2(0f, y);
+            }
+
+            var screen = canvasObject.AddComponent<WeaponSelectScreen>();
+            var settings = new SerializedObject(screen);
+            settings.FindProperty("gameState").objectReferenceValue = gameState;
+            settings.FindProperty("catalog").objectReferenceValue = LoadGenerated<CG4002.Models.WeaponCatalog>("Definitions/WeaponCatalog.asset");
+            settings.FindProperty("dummyPrefab").objectReferenceValue = LoadGenerated<CG4002.Models.AvatarView>("Prefabs/OpponentAvatar.prefab");
+            settings.FindProperty("hologram").objectReferenceValue = LoadGenerated<Material>("Materials/M_Hologram.mat");
+            settings.FindProperty("arCamera").objectReferenceValue = placement.FindProperty("arCamera").objectReferenceValue;
+            settings.FindProperty("planeManager").objectReferenceValue = placement.FindProperty("planeManager").objectReferenceValue;
+            settings.FindProperty("placer").objectReferenceValue = placer;
+            settings.FindProperty("hud").objectReferenceValue = hud.GetComponent<Canvas>();
+            settings.FindProperty("title").objectReferenceValue = title;
+            settings.FindProperty("instruction").objectReferenceValue = instruction;
+            settings.ApplyModifiedPropertiesWithoutUndo();
+            return screen;
+        }
+
+        static T LoadGenerated<T>(string path) where T : Object =>
+            AssetDatabase.LoadAssetAtPath<T>($"{AssetIO.Root}/{path}")
+            ?? throw new System.InvalidOperationException($"Missing {AssetIO.Root}/{path}: run CG4002 > Generate Models.");
 
         /// <summary>Three stacked buttons in the bottom-right corner.</summary>
         static void BuildDebugPanel(Transform root, GameState gameState, MessageDispatcher dispatcher,

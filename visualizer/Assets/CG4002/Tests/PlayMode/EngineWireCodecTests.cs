@@ -26,7 +26,9 @@ namespace CG4002.Tests
             Assert.That(EngineWireCodec.Weapon("SPEAR"), Is.EqualTo(WeaponType.Spear));
             Assert.That(EngineWireCodec.Action("CHARGED_THRUST"), Is.EqualTo(ActionType.ChargedThrust));
             Assert.That((int)EngineWireCodec.Action("CHARGED_THRUST"), Is.EqualTo(7));
-            Assert.Throws<FormatException>(() => EngineWireCodec.Action("SPIN_ATTACK"));
+            Assert.That(EngineWireCodec.Action("SPIN_ATTACK"), Is.EqualTo(ActionType.SpinAttack));
+            Assert.That(EngineWireCodec.Action("UPPERCUT"), Is.EqualTo(ActionType.Uppercut));
+            Assert.Throws<FormatException>(() => EngineWireCodec.Action("SOMETHING_NEW"));
         }
 
         [Test]

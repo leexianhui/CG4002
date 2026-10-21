@@ -31,12 +31,18 @@ namespace CG4002.Combat
     }
 
     /// <summary>
-    /// Animator attack states. Several actions can share a slot until they get
-    /// their own animation; adding a slot means adding a state to the base controller.
+    /// Animator attack states: one per motion, each weapon supplying its own clip for every
+    /// state. Several actions may share a slot (e.g. the spear's SWING plays Horizontal). The
+    /// state is named after the member, so adding one means regenerating the models.
     /// </summary>
     public enum AttackSlot
     {
-        Light = 0,
+        Horizontal = 0,
         Charged = 1,
+        Vertical = 2,
+        Diagonal = 3,
+        Thrust = 4,
+        Spin = 5,
+        Uppercut = 6,
     }
 }

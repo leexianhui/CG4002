@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using CG4002.Combat;
 using CG4002.Models;
 using UnityEditor;
@@ -61,29 +62,16 @@ namespace CG4002.EditorTools
             var spearAnimations = BakeWeapon(baseController, WeaponType.Spear);
             var maceAnimations = BakeWeapon(baseController, WeaponType.Mace);
 
+            // The AI classifies the same six attacks for every weapon (ai/config.py MOVE_CLASSES), so every
+            // weapon animates all six; the engine's weapons.yaml decides which of them can land.
             var swordDefinition = DefinitionFactory.Create(WeaponType.SwordAndShield, "Sword & Shield", sword, shield, swordAnimations, ModelFactory.SwordAccent,
-                (ActionType.HorizontalSwing, AttackSlot.Light),
-                (ActionType.VerticalSwing, AttackSlot.Light),
-                (ActionType.DiagonalSwing, AttackSlot.Light),
-                (ActionType.Thrust, AttackSlot.Light),
-                (ActionType.ChargedAttack, AttackSlot.Charged),
-                (ActionType.SpinAttack, AttackSlot.Light));
+                ClassifierMoves((ActionType.ChargedAttack, AttackSlot.Charged)));
 
             var spearDefinition = DefinitionFactory.Create(WeaponType.Spear, "Spear", spear, null, spearAnimations, ModelFactory.SpearAccent,
-                (ActionType.Thrust, AttackSlot.Light),
-                (ActionType.ChargedThrust, AttackSlot.Charged),
-                (ActionType.Swing, AttackSlot.Light),
-                (ActionType.OverheadStrike, AttackSlot.Light),
-                (ActionType.BackStrike, AttackSlot.Light),
-                (ActionType.SpinAttack, AttackSlot.Light));
+                ClassifierMoves((ActionType.ChargedThrust, AttackSlot.Charged), (ActionType.Swing, AttackSlot.Horizontal)));
 
             var maceDefinition = DefinitionFactory.Create(WeaponType.Mace, "Mace", mace, null, maceAnimations, ModelFactory.MaceAccent,
-                (ActionType.VerticalSwing, AttackSlot.Light),
-                (ActionType.DiagonalSwing, AttackSlot.Light),
-                (ActionType.ChargedAttack, AttackSlot.Charged),
-                (ActionType.HorizontalSwing, AttackSlot.Light),
-                (ActionType.SpinAttack, AttackSlot.Light),
-                (ActionType.Uppercut, AttackSlot.Light));
+                ClassifierMoves((ActionType.ChargedAttack, AttackSlot.Charged)));
 
             var catalog = DefinitionFactory.CreateCatalog(swordDefinition, spearDefinition, maceDefinition);
 
@@ -105,14 +93,25 @@ namespace CG4002.EditorTools
                 : $"[CG4002] Generation complete with {errors.Count} contract error(s).");
         }
 
+        /// <summary>The six classifier attacks, each on its own slot, plus the weapon's engine-only moves.</summary>
+        static (ActionType, AttackSlot)[] ClassifierMoves(params (ActionType, AttackSlot)[] extra) => new[]
+        {
+            (ActionType.HorizontalSwing, AttackSlot.Horizontal),
+            (ActionType.VerticalSwing, AttackSlot.Vertical),
+            (ActionType.DiagonalSwing, AttackSlot.Diagonal),
+            (ActionType.Thrust, AttackSlot.Thrust),
+            (ActionType.SpinAttack, AttackSlot.Spin),
+            (ActionType.Uppercut, AttackSlot.Uppercut),
+        }.Concat(extra).ToArray();
+
         static AnimatorOverrideController BakeWeapon(AnimatorFactory.BaseController baseController, WeaponType weapon)
         {
             var clips = AnimationLibrary.For(weapon);
+            var attacks = clips.attacks.ToDictionary(pair => pair.Key, pair => AnimatorFactory.SaveClip(PoseSolver.Bake(pair.Value), weapon));
             return AnimatorFactory.CreateOverride(baseController, weapon,
                 AnimatorFactory.SaveClip(PoseSolver.Bake(clips.idle), weapon),
-                AnimatorFactory.SaveClip(PoseSolver.Bake(clips.light), weapon),
-                AnimatorFactory.SaveClip(PoseSolver.Bake(clips.charged), weapon),
-                AnimatorFactory.SaveClip(PoseSolver.Bake(clips.guard), weapon));
+                AnimatorFactory.SaveClip(PoseSolver.Bake(clips.guard), weapon),
+                attacks);
         }
     }
 }
