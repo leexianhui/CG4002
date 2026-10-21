@@ -1784,6 +1784,25 @@ const unsigned long THRUST_REPEAT_GUARD_MS = 700;
 const float UPPERCUT_TORSO_GATE_PEAK_DPS = 250.0f;
 const float UPPERCUT_MIN_TORSO_RATIO = 0.045f;
 
+// Small live-play tolerances for the sword/shield grip. Keep these outside
+// the fitted block so a model refit does not silently remove them.
+const float SWORD_CUT_MAX_DIST = 1.75f;
+const float SWORD_UPPERCUT_MAX_DIST = 2.25f;
+const float SWORD_UPPERCUT_AXIS_SPREAD_DEG = 24.0f;
+const float SWORD_UPPERCUT_RELAX_MIN_PEAK_DPS = 250.0f;
+const float SWORD_UPPERCUT_RELAX_MIN_ROT_DEG = 100.0f;
+const float SWORD_UPPERCUT_RELAX_MIN_TORSO_RATIO = 0.070f;
+// P2's second uppercut grip in the 2026-10-21 labeled capture rotates around
+// (0.70, 0, 0.71). Require a full strike before considering this pose.
+const float P2_UPPERCUT_MAX_DIST = 1.50f;
+const float SWORD_THRUST_MAX_DIST = 1.50f;
+const float SWORD_THRUST_WEAK_MAX_DIST = 1.10f;
+const float SWORD_THRUST_RELAX_MIN_PEAK_G = 1.50f;
+const float SWORD_THRUST_ROT_REF_DEG = 65.0f;
+const float SWORD_THRUST_ROT_SPREAD_DEG = 16.25f;
+const float SWORD_THRUST_HIGH_ROT_DEG = 55.0f;
+const float SWORD_THRUST_HIGH_ROT_MIN_REACH_M = 0.65f;
+
 // A spin is a full-body rotation, not an ordinary ~110-200 degree swing
 // whose axis happens to resemble the spin axis. Keep this outside the
 // generated model block so fit_strike_model.py cannot overwrite it.
@@ -1820,6 +1839,75 @@ TemplateMatch nearestTemplate(const Stroke &s)
             best = {k, d, dA, dP, dR, dT};
     }
     return best;
+}
+
+// The October live capture's faster uppercuts tilt the wrist axis about
+// 20-30 degrees from the fitted row. Require a full stroke and torso motion
+// before using the wider axis spread: guard raises in the training logs have
+// a similar axis but little torso involvement.
+TemplateMatch relaxedSwordUppercut(const Stroke &s)
+{
+    TemplateMatch best = {-1, 1e9f, 0, 0, 0, 0};
+    if (lockedWeapon != WEAPON_SWORD_SHIELD ||
+        s.peakDps < SWORD_UPPERCUT_RELAX_MIN_PEAK_DPS ||
+        s.rotDeg < SWORD_UPPERCUT_RELAX_MIN_ROT_DEG ||
+        s.torsoRatio < SWORD_UPPERCUT_RELAX_MIN_TORSO_RATIO)
+        return best;
+    bool noPush = s.hx == 0 && s.hy == 0 && s.hz == 0;
+    for (int k = 0; k < STRIKE_MODEL_COUNT; k++)
+    {
+        const StrikeTemplate &m = STRIKE_MODEL[k];
+        if (m.weapon != WEAPON_SWORD_SHIELD || strcmp(m.action, "uppercut") != 0)
+            continue;
+        float dA = angleBetweenDeg(s.ux, s.uy, s.uz, m.ux, m.uy, m.uz, false) /
+                   SWORD_UPPERCUT_AXIS_SPREAD_DEG;
+        float dP = (noPush ? 180.0f : angleBetweenDeg(s.hx, s.hy, s.hz, m.px, m.py, m.pz, false)) /
+                   m.pushSpreadDeg;
+        float dR = (s.rotDeg - m.rotMeanDeg) / m.rotSpreadDeg;
+        float dT = max(0.0f, s.torsoRatio - m.torsoRef) / m.torsoSpread;
+        float d = sqrt(dA * dA + dP * dP + dR * dR + dT * dT);
+        if (d < best.dist)
+            best = {k, d, dA, dP, dR, dT};
+    }
+    return best;
+}
+
+TemplateMatch playerTwoUppercut(const Stroke &s)
+{
+    TemplateMatch miss = {-1, 1e9f, 0, 0, 0, 0};
+    if (PLAYER_ID != 2 || lockedWeapon != WEAPON_SWORD_SHIELD ||
+        s.peakDps < 350.0f || s.rotDeg < 90.0f ||
+        s.torsoRatio < SWORD_UPPERCUT_RELAX_MIN_TORSO_RATIO)
+        return miss;
+    for (int k = 0; k < STRIKE_MODEL_COUNT; k++)
+    {
+        const StrikeTemplate &m = STRIKE_MODEL[k];
+        if (m.weapon != WEAPON_SWORD_SHIELD || strcmp(m.action, "uppercut") != 0)
+            continue;
+        float dA = angleBetweenDeg(s.ux, s.uy, s.uz, 0.702f, 0.0f, 0.712f, false) / 16.0f;
+        float dP = angleBetweenDeg(s.hx, s.hy, s.hz, 0.655f, 0.504f, -0.554f, false) / 30.0f;
+        float dR = (s.rotDeg - 115.0f) / 28.0f;
+        float dT = max(0.0f, s.torsoRatio - m.torsoRef) / m.torsoSpread;
+        float d = sqrt(dA * dA + dP * dP + dR * dR + dT * dT);
+        return {k, d, dA, dP, dR, dT};
+    }
+    return miss;
+}
+
+float strikeDistanceLimit(const TemplateMatch &m, bool relaxedUppercut)
+{
+    const WeaponActionLimits *limits = activeActionLimits();
+    if (!limits || m.idx < 0)
+        return 0;
+    if (lockedWeapon == WEAPON_SWORD_SHIELD)
+    {
+        if (relaxedUppercut)
+            return SWORD_UPPERCUT_MAX_DIST;
+        const char *action = STRIKE_MODEL[m.idx].action;
+        if (strcmp(action, "horizontal") == 0 || strcmp(action, "diagonal") == 0)
+            return SWORD_CUT_MAX_DIST;
+    }
+    return limits->strikeMaxDist;
 }
 
 // ---------------- Push strokes (thrust) ----------------
@@ -1979,9 +2067,16 @@ float thrustDistance(const PushStroke &p, float &dDir, float &dReach, float &dRo
         return 1e9f;
     }
     const ThrustTemplate &m = *selected;
+    float rotRef = m.rotRefDeg;
+    float rotSpread = m.rotSpreadDeg;
+    if (lockedWeapon == WEAPON_SWORD_SHIELD)
+    {
+        rotRef = max(rotRef, SWORD_THRUST_ROT_REF_DEG);
+        rotSpread = max(rotSpread, SWORD_THRUST_ROT_SPREAD_DEG);
+    }
     dDir = angleBetweenDeg(p.ux, p.uy, p.uz, m.ux, m.uy, m.uz, false) / m.dirSpreadDeg;
     dReach = (p.reachM - m.reachMeanM) / m.reachSpreadM;
-    dRot = max(0.0f, p.rotDeg - m.rotRefDeg) / m.rotSpreadDeg;
+    dRot = max(0.0f, p.rotDeg - rotRef) / rotSpread;
     return sqrt(dDir * dDir + dReach * dReach + dRot * dRot);
 }
 
@@ -2159,6 +2254,22 @@ void onMotionEnd(const char *closeReason)
         Stroke &s = strokes[k];
         computeStrokeFeatures(s, closeMs);
         TemplateMatch m = nearestTemplate(s);
+        bool relaxedUppercut = false;
+        if (lockedWeapon == WEAPON_SWORD_SHIELD && m.dist > strikeDistanceLimit(m, false))
+        {
+            TemplateMatch alt = relaxedSwordUppercut(s);
+            if (alt.idx >= 0 && alt.dist <= SWORD_UPPERCUT_MAX_DIST && alt.dist < m.dist)
+            {
+                m = alt;
+                relaxedUppercut = true;
+            }
+            alt = playerTwoUppercut(s);
+            if (alt.idx >= 0 && alt.dist <= P2_UPPERCUT_MAX_DIST && alt.dist < m.dist)
+            {
+                m = alt;
+                relaxedUppercut = true;
+            }
+        }
 
         const char *reason;
         if (s.torsoBeacons == 0)
@@ -2168,7 +2279,7 @@ void onMotionEnd(const char *closeReason)
         else if (m.idx >= 0 && strcmp(STRIKE_MODEL[m.idx].action, "uppercut") == 0 &&
                  s.peakDps >= UPPERCUT_TORSO_GATE_PEAK_DPS && s.torsoRatio < UPPERCUT_MIN_TORSO_RATIO)
             reason = "torso_quiet";
-        else if (m.idx < 0 || !activeActionLimits() || m.dist > activeActionLimits()->strikeMaxDist)
+        else if (m.idx < 0 || m.dist > strikeDistanceLimit(m, relaxedUppercut))
             reason = "far";
         else
             reason = "ok";
@@ -2203,10 +2314,17 @@ void onMotionEnd(const char *closeReason)
             reason = "torso_data";
         if (!reason)
             reason = pushContextReject(p);
-        if (!reason && (!activeActionLimits() || p.reachM < activeActionLimits()->minThrustReachM))
+        if (!reason && (!activeActionLimits() || p.reachM < activeActionLimits()->minThrustReachM ||
+                        (lockedWeapon == WEAPON_SWORD_SHIELD && p.rotDeg > SWORD_THRUST_HIGH_ROT_DEG &&
+                         p.reachM < SWORD_THRUST_HIGH_ROT_MIN_REACH_M)))
             reason = "short";
         if (!reason)
-            reason = !activeActionLimits() || d > activeActionLimits()->thrustMaxDist ? "far" : "ok";
+        {
+            float maxDist = activeActionLimits()->thrustMaxDist;
+            if (lockedWeapon == WEAPON_SWORD_SHIELD)
+                maxDist = p.peakG >= SWORD_THRUST_RELAX_MIN_PEAK_G ? SWORD_THRUST_MAX_DIST : SWORD_THRUST_WEAK_MAX_DIST;
+            reason = d > maxDist ? "far" : "ok";
+        }
         bool ok = strcmp(reason, "ok") == 0;
 
         debugLog("Stroke i=" + String(k) + " kind=push t0=" + String(buffer[p.a].t) + " t1=" + String(buffer[p.e].t) +
