@@ -71,6 +71,13 @@ flashed with a player 1 sketch pairs with the wrong player.
    printed limits describe the generated baseline; check these live-play
    allowances with fresh labeled captures after flashing.
 
+   Player 2 also accepts a second sword/shield uppercut wrist orientation seen
+   in the 2026-10-21 `uppercut` capture. It requires a full swing (at least
+   350 dps and 90 degrees of rotation), torso participation, and a close
+   match to that capture's axis and push direction. The same conditional code
+   is in both hub sketches, but activates only for `PLAYER_ID=2`. Recheck
+   uppercuts and accidental accepts on the physical boards after flashing.
+
 ## Recording and fitting weapon-specific actions
 
 Use the same sensor mounting for both players. Record one player at a time so

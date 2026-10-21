@@ -1792,6 +1792,9 @@ const float SWORD_UPPERCUT_AXIS_SPREAD_DEG = 24.0f;
 const float SWORD_UPPERCUT_RELAX_MIN_PEAK_DPS = 250.0f;
 const float SWORD_UPPERCUT_RELAX_MIN_ROT_DEG = 100.0f;
 const float SWORD_UPPERCUT_RELAX_MIN_TORSO_RATIO = 0.070f;
+// P2's second uppercut grip in the 2026-10-21 labeled capture rotates around
+// (0.70, 0, 0.71). Require a full strike before considering this pose.
+const float P2_UPPERCUT_MAX_DIST = 1.50f;
 const float SWORD_THRUST_MAX_DIST = 1.50f;
 const float SWORD_THRUST_WEAK_MAX_DIST = 1.10f;
 const float SWORD_THRUST_RELAX_MIN_PEAK_G = 1.50f;
@@ -1867,6 +1870,28 @@ TemplateMatch relaxedSwordUppercut(const Stroke &s)
             best = {k, d, dA, dP, dR, dT};
     }
     return best;
+}
+
+TemplateMatch playerTwoUppercut(const Stroke &s)
+{
+    TemplateMatch miss = {-1, 1e9f, 0, 0, 0, 0};
+    if (PLAYER_ID != 2 || lockedWeapon != WEAPON_SWORD_SHIELD ||
+        s.peakDps < 350.0f || s.rotDeg < 90.0f ||
+        s.torsoRatio < SWORD_UPPERCUT_RELAX_MIN_TORSO_RATIO)
+        return miss;
+    for (int k = 0; k < STRIKE_MODEL_COUNT; k++)
+    {
+        const StrikeTemplate &m = STRIKE_MODEL[k];
+        if (m.weapon != WEAPON_SWORD_SHIELD || strcmp(m.action, "uppercut") != 0)
+            continue;
+        float dA = angleBetweenDeg(s.ux, s.uy, s.uz, 0.702f, 0.0f, 0.712f, false) / 16.0f;
+        float dP = angleBetweenDeg(s.hx, s.hy, s.hz, 0.655f, 0.504f, -0.554f, false) / 30.0f;
+        float dR = (s.rotDeg - 115.0f) / 28.0f;
+        float dT = max(0.0f, s.torsoRatio - m.torsoRef) / m.torsoSpread;
+        float d = sqrt(dA * dA + dP * dP + dR * dR + dT * dT);
+        return {k, d, dA, dP, dR, dT};
+    }
+    return miss;
 }
 
 float strikeDistanceLimit(const TemplateMatch &m, bool relaxedUppercut)
@@ -2234,6 +2259,12 @@ void onMotionEnd(const char *closeReason)
         {
             TemplateMatch alt = relaxedSwordUppercut(s);
             if (alt.idx >= 0 && alt.dist <= SWORD_UPPERCUT_MAX_DIST && alt.dist < m.dist)
+            {
+                m = alt;
+                relaxedUppercut = true;
+            }
+            alt = playerTwoUppercut(s);
+            if (alt.idx >= 0 && alt.dist <= P2_UPPERCUT_MAX_DIST && alt.dist < m.dist)
             {
                 m = alt;
                 relaxedUppercut = true;
