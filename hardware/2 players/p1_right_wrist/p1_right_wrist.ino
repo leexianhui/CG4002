@@ -265,6 +265,71 @@ WiFiUDP linkUdp;
 WiFiUDP poseUdp;
 #endif
 
+// ===== ACTION QUALITY BEGIN =====
+// Conservative starting values; tune against valid attacks and non-actions
+// from several players. None of these checks uses wrist rotation angle.
+struct ActionQuality
+{
+static constexpr uint32_t MIN_STROKE_MS = 100;
+static constexpr float MIN_LINEAR_G = 0.15f;
+static constexpr uint32_t MIN_LINEAR_RUN_MS = 40;
+static constexpr float MIN_SPIN_TORSO_DPS = 35.0f;
+static constexpr uint32_t MIN_SPIN_TORSO_RUN_MS = 100;
+static constexpr uint32_t MAX_WRIST_GAP_MS = 30;
+static constexpr uint32_t MAX_TORSO_GAP_MS = 45;
+
+// Time between consecutive above-threshold observations. Missing samples do
+// not extend a run. Unsigned subtraction also handles millis() rollover.
+struct ActivityRun
+{
+    uint32_t startMs = 0, lastMs = 0, longestMs = 0;
+    bool active = false;
+
+    constexpr void update(uint32_t t, bool above, uint32_t maxGapMs)
+    {
+        if (!above)
+            active = false;
+        else
+        {
+            if (!active || t - lastMs > maxGapMs)
+                startMs = t;
+            active = true;
+            if (t - startMs > longestMs)
+                longestMs = t - startMs;
+        }
+        lastMs = t;
+    }
+};
+
+enum class Rejection { NONE, TOO_SHORT, WEAK_HAND, QUIET_SPIN_TORSO };
+
+static constexpr bool templateEligible(bool spin, uint32_t torsoRunMs)
+{
+    return !spin || torsoRunMs >= MIN_SPIN_TORSO_RUN_MS;
+}
+
+static constexpr Rejection evaluate(uint32_t durationMs, uint32_t linearRunMs,
+                             bool spin, uint32_t torsoRunMs)
+{
+    return durationMs < MIN_STROKE_MS ? Rejection::TOO_SHORT :
+           linearRunMs < MIN_LINEAR_RUN_MS ? Rejection::WEAK_HAND :
+           !templateEligible(spin, torsoRunMs) ? Rejection::QUIET_SPIN_TORSO :
+           Rejection::NONE;
+}
+
+static inline const char *reasonName(Rejection reason)
+{
+    switch (reason)
+    {
+    case Rejection::TOO_SHORT: return "too_short";
+    case Rejection::WEAK_HAND: return "weak_hand";
+    case Rejection::QUIET_SPIN_TORSO: return "spin_torso_quiet";
+    default: return nullptr;
+    }
+}
+};
+// ===== ACTION QUALITY END =====
+
 // ---------------- Local types ----------------
 // Every type a function takes or returns is declared here, before any
 // function: the Arduino IDE inserts auto-generated prototypes right after the
@@ -287,6 +352,8 @@ struct Stroke
     float torsoRotDeg; // torso rotation around the stroke (beacons)
     float torsoRatio;  // torsoRotDeg / pathDeg
     int torsoBeacons;  // beacons found for it (0 = no torso data)
+    uint32_t linearActiveMs; // longest sustained linear-acceleration run
+    uint32_t torsoActiveMs;  // longest sustained torso-speed run inside the stroke
 };
 
 // One action's strike template — see STRIKE_MODEL.
@@ -296,7 +363,7 @@ struct StrikeTemplate
     const char *action; // logged as a hint only; the AI classifies
     float ux, uy, uz, axisSpreadDeg;
     float px, py, pz, pushSpreadDeg;
-    float rotMeanDeg, rotSpreadDeg;
+    float rotMeanDeg, rotSpreadDeg; // fitted metadata only; angle is not scored
     float torsoRef, torsoSpread;
     bool bidirectional; // v and -v count as the same direction (spin)
 };
@@ -318,6 +385,7 @@ struct PushStroke
     float reachM;     // distance the hand travels along the push, a..e
     float rotDeg;     // wrist rotation (integral of |omega|) over a..e
     int torsoBeacons; // beacons found around it (0 = no torso data)
+    uint32_t linearActiveMs; // longest sustained linear-acceleration run in a..b
 };
 
 // The thrust template — see THRUST_MODEL.
@@ -325,7 +393,7 @@ struct ThrustTemplate
 {
     float ux, uy, uz, dirSpreadDeg;
     float reachMeanM, reachSpreadM;
-    float rotRefDeg, rotSpreadDeg; // one-sided: only rotation above rotRefDeg counts
+    float rotRefDeg, rotSpreadDeg; // fitted metadata only; angle is not scored
 };
 
 struct WeaponThrustTemplate
@@ -1234,6 +1302,23 @@ float torsoRotationInWindow(uint32_t startTorsoMs, uint32_t endTorsoMs, int &cou
     return sum * TORSO_BEACON_INTERVAL_S;
 }
 
+// Walk the ring oldest-first, so missing/quiet beacons break a sustained run.
+// Use only the stroke itself: motion in the padded context must not qualify it.
+uint32_t torsoActivityInWindow(uint32_t startTorsoMs, uint32_t endTorsoMs)
+{
+    ActionQuality::ActivityRun run;
+    for (int n = 0; n < TORSO_BEACON_BUF; n++)
+    {
+        int i = (torsoBufHead + n) % TORSO_BEACON_BUF;
+        if (torsoBuf[i].valid &&
+            torsoBuf[i].torsoMs - startTorsoMs <= endTorsoMs - startTorsoMs)
+            run.update(torsoBuf[i].torsoMs,
+                       torsoBuf[i].gyroMag >= ActionQuality::MIN_SPIN_TORSO_DPS,
+                       ActionQuality::MAX_TORSO_GAP_MS);
+    }
+    return run.longestMs;
+}
+
 void checkIncomingLink()
 {
     uint8_t buf[32];
@@ -1535,7 +1620,6 @@ void seedSegmentFromPretrigger()
 const int STROKE_SMOOTH = 5;                   // moving-average length, samples (odd)
 const float STROKE_FRAC = 0.15;                // stroke = rotation about the peak axis > this x peak
 const float STROKE_MIN_PEAK_DPS = 80.0;        // only absolute limit: above hand tremor (20-60, peaks ~75)
-const float STROKE_MIN_ROT_DEG = 20.0;         // drop twitches
 const unsigned long STROKE_MAX_HALF_MS = 3000; // grow at most this far either side of the peak
 #define MAX_STROKES 8
 
@@ -1612,13 +1696,6 @@ void findStrokes()
         if (overlaps)
             continue; // a smaller peak inside a bigger stroke is part of it
 
-        float rot = 0;
-        for (int i = a + 1; i <= b; i++)
-            rot += 0.5f * (smoothAbout(i, ux, uy, uz) + smoothAbout(i - 1, ux, uy, uz)) *
-                   (buffer[i].t - buffer[i - 1].t) / 1000.0f;
-        if (rot < STROKE_MIN_ROT_DEG)
-            continue;
-
         Stroke &s = strokes[strokeCount++];
         s = {};
         s.a = a;
@@ -1666,16 +1743,25 @@ void pushDirection(Stroke &s)
 
     int nHalf = max(1, (s.b - s.a + 1) / 2);
     float sx = 0, sy = 0, sz = 0;
-    for (int i = s.a; i < s.a + nHalf; i++)
+    ActionQuality::ActivityRun linearRun;
+    for (int i = s.a; i <= s.b; i++)
     {
         float dt = (i > 0) ? (buffer[i].t - buffer[i - 1].t) / 1000.0f : 0.01f;
         float wx = buffer[i].gx * DEG_TO_RAD, wy = buffer[i].gy * DEG_TO_RAD, wz = buffer[i].gz * DEG_TO_RAD;
         float cx = wy * gz - wz * gy, cy = wz * gx - wx * gz, cz = wx * gy - wy * gx; // omega x g
         gx -= cx * dt, gy -= cy * dt, gz -= cz * dt;
-        sx += buffer[i].ax - gx;
-        sy += buffer[i].ay - gy;
-        sz += buffer[i].az - gz;
+        float lx = buffer[i].ax - gx, ly = buffer[i].ay - gy, lz = buffer[i].az - gz;
+        linearRun.update(buffer[i].t,
+                         vecMagnitude(lx, ly, lz) >= ActionQuality::MIN_LINEAR_G,
+                         ActionQuality::MAX_WRIST_GAP_MS);
+        if (i < s.a + nHalf)
+        {
+            sx += lx;
+            sy += ly;
+            sz += lz;
+        }
     }
+    s.linearActiveMs = linearRun.longestMs;
     float m = vecMagnitude(sx, sy, sz);
     if (m > 1e-9f)
         s.hx = sx / m, s.hy = sy / m, s.hz = sz / m;
@@ -1712,13 +1798,16 @@ void computeStrokeFeatures(Stroke &s, uint32_t closeMs)
     uint32_t to = min(buffer[s.b].t + (uint32_t)pad, closeMs);
     s.torsoRotDeg = torsoRotationInWindow(toTorsoClock(from), toTorsoClock(to), s.torsoBeacons);
     s.torsoRatio = s.pathDeg > 0 ? s.torsoRotDeg / s.pathDeg : 0;
+    s.torsoActiveMs = torsoActivityInWindow(toTorsoClock(buffer[s.a].t),
+                                          toTorsoClock(buffer[s.b].t));
 }
 
 // ---------------- Strike templates ----------------
 // Each action's strike is a template: which way the arm rotates (axis), which
-// way the hand is pushed (push direction), how far it turns (rotation) and how
-// much the torso turns with it. A stroke's distance to a template is
-//   sqrt(dAxis^2 + dPush^2 + dRot^2 + dTorso^2)
+// way the hand is pushed (push direction), and how much the torso turns with it.
+// Rotation angle is logged but has no acceptance penalty or minimum gate.
+// A stroke's distance to a template is
+//   sqrt(dAxis^2 + dPush^2 + dTorso^2)
 // with each term scaled by that action's own spread in the recordings, and
 // the stroke is valid if its nearest template is within the locked weapon's
 // ACTION_LIMITS strike distance. One
@@ -1784,18 +1873,9 @@ const unsigned long THRUST_REPEAT_GUARD_MS = 700;
 const float UPPERCUT_TORSO_GATE_PEAK_DPS = 250.0f;
 const float UPPERCUT_MIN_TORSO_RATIO = 0.045f;
 
-// Different players use different swing sizes. Cap the normalised rotation
-// error so angle mismatch alone cannot reject a strike. Spins still require
-// SPIN_MIN_ROT_DEG before their template is considered.
-// Keep outside the generated model block so refitting preserves this policy.
-const float STRIKE_ROT_ERROR_CAP = 0.75f;
-// Broad live-play reference ranges, rather than one player's swing size.
-// Outside each range, retain a small capped penalty instead of a hard reject.
-const float UPPERCUT_ROT_MIN_DEG = 60.0f;
-const float UPPERCUT_ROT_MAX_DEG = 220.0f;
-const float UPPERCUT_ROT_SPREAD_DEG = 45.0f;
+// Direction tolerances remain outside the generated model block so refitting
+// preserves the live-play policy. Wrist rotation angle is not an acceptance gate.
 const float UPPERCUT_AXIS_SPREAD_DEG = 35.0f;
-const float SPIN_ROT_MAX_DEG = 720.0f;
 const float SPIN_AXIS_SPREAD_DEG = 45.0f;
 const float SPIN_PUSH_SPREAD_DEG = 60.0f;
 const float SPIN_MAX_DIST = 2.25f;
@@ -1806,7 +1886,6 @@ const float SWORD_CUT_MAX_DIST = 1.75f;
 const float SWORD_UPPERCUT_MAX_DIST = 2.25f;
 const float SWORD_UPPERCUT_AXIS_SPREAD_DEG = UPPERCUT_AXIS_SPREAD_DEG;
 const float SWORD_UPPERCUT_RELAX_MIN_PEAK_DPS = 250.0f;
-const float SWORD_UPPERCUT_RELAX_MIN_ROT_DEG = UPPERCUT_ROT_MIN_DEG;
 const float SWORD_UPPERCUT_RELAX_MIN_TORSO_RATIO = 0.070f;
 // P2's second uppercut grip in the 2026-10-21 labeled capture rotates around
 // (0.70, 0, 0.71). Require a full strike before considering this pose.
@@ -1814,30 +1893,6 @@ const float P2_UPPERCUT_MAX_DIST = 1.50f;
 const float SWORD_THRUST_MAX_DIST = 1.50f;
 const float SWORD_THRUST_WEAK_MAX_DIST = 1.10f;
 const float SWORD_THRUST_RELAX_MIN_PEAK_G = 1.50f;
-const float SWORD_THRUST_ROT_REF_DEG = 65.0f;
-const float SWORD_THRUST_ROT_SPREAD_DEG = 16.25f;
-const float SWORD_THRUST_HIGH_ROT_DEG = 55.0f;
-const float SWORD_THRUST_HIGH_ROT_MIN_REACH_M = 0.65f;
-
-// A spin is a full-body rotation, not an ordinary ~110-200 degree swing
-// whose axis happens to resemble the spin axis. Keep this outside the
-// generated model block so fit_strike_model.py cannot overwrite it.
-const float SPIN_MIN_ROT_DEG = 250.0;
-
-// Used by normal matching and both uppercut fallback grips. Keeping the policy
-// shared prevents a fallback from silently restoring a narrow rotation target.
-float strikeRotationError(float rotDeg, const StrikeTemplate &m)
-{
-    float error;
-    if (strcmp(m.action, "uppercut") == 0)
-        error = (rotDeg - constrain(rotDeg, UPPERCUT_ROT_MIN_DEG, UPPERCUT_ROT_MAX_DEG)) /
-                UPPERCUT_ROT_SPREAD_DEG;
-    else if (strcmp(m.action, "spin") == 0)
-        error = (rotDeg - constrain(rotDeg, SPIN_MIN_ROT_DEG, SPIN_ROT_MAX_DEG)) / m.rotSpreadDeg;
-    else
-        error = (rotDeg - m.rotMeanDeg) / m.rotSpreadDeg;
-    return constrain(error, -STRIKE_ROT_ERROR_CAP, STRIKE_ROT_ERROR_CAP);
-}
 
 float angleBetweenDeg(float ax, float ay, float az, float bx, float by, float bz, bool signFree)
 {
@@ -1858,7 +1913,9 @@ TemplateMatch nearestTemplate(const Stroke &s)
         const StrikeTemplate &m = STRIKE_MODEL[k];
         if (m.weapon != WEAPON_UNKNOWN && m.weapon != lockedWeapon)
             continue;
-        if (strcmp(m.action, "spin") == 0 && fabs(s.rotDeg) < SPIN_MIN_ROT_DEG)
+        // An ineligible spin must not hide a valid cut/uppercut. Its wide,
+        // bidirectional template can otherwise win before the torso gate runs.
+        if (!ActionQuality::templateEligible(m.bidirectional, s.torsoActiveMs))
             continue;
         float axisSpread = m.axisSpreadDeg;
         float pushSpread = m.pushSpreadDeg;
@@ -1872,7 +1929,7 @@ TemplateMatch nearestTemplate(const Stroke &s)
         float dA = angleBetweenDeg(s.ux, s.uy, s.uz, m.ux, m.uy, m.uz, m.bidirectional) / axisSpread;
         float dP = (noPush ? 180.0f : angleBetweenDeg(s.hx, s.hy, s.hz, m.px, m.py, m.pz, m.bidirectional)) /
                    pushSpread;
-        float dR = strikeRotationError(s.rotDeg, m);
+        float dR = 0.0f; // preserve the debug field; rotation angle is not scored
         float dT = max(0.0f, s.torsoRatio - m.torsoRef) / m.torsoSpread;
         float d = sqrt(dA * dA + dP * dP + dR * dR + dT * dT);
         if (d < best.dist)
@@ -1882,7 +1939,7 @@ TemplateMatch nearestTemplate(const Stroke &s)
 }
 
 // The October live capture's faster uppercuts tilt the wrist axis about
-// 20-30 degrees from the fitted row. Require a full stroke and torso motion
+// 20-30 degrees from the fitted row. Require peak speed and torso motion
 // before using the wider axis spread: guard raises in the training logs have
 // a similar axis but little torso involvement.
 TemplateMatch relaxedSwordUppercut(const Stroke &s)
@@ -1890,7 +1947,6 @@ TemplateMatch relaxedSwordUppercut(const Stroke &s)
     TemplateMatch best = {-1, 1e9f, 0, 0, 0, 0};
     if (lockedWeapon != WEAPON_SWORD_SHIELD ||
         s.peakDps < SWORD_UPPERCUT_RELAX_MIN_PEAK_DPS ||
-        s.rotDeg < SWORD_UPPERCUT_RELAX_MIN_ROT_DEG ||
         s.torsoRatio < SWORD_UPPERCUT_RELAX_MIN_TORSO_RATIO)
         return best;
     bool noPush = s.hx == 0 && s.hy == 0 && s.hz == 0;
@@ -1903,7 +1959,7 @@ TemplateMatch relaxedSwordUppercut(const Stroke &s)
                    SWORD_UPPERCUT_AXIS_SPREAD_DEG;
         float dP = (noPush ? 180.0f : angleBetweenDeg(s.hx, s.hy, s.hz, m.px, m.py, m.pz, false)) /
                    m.pushSpreadDeg;
-        float dR = strikeRotationError(s.rotDeg, m);
+        float dR = 0.0f; // rotation angle is not scored
         float dT = max(0.0f, s.torsoRatio - m.torsoRef) / m.torsoSpread;
         float d = sqrt(dA * dA + dP * dP + dR * dR + dT * dT);
         if (d < best.dist)
@@ -1916,7 +1972,7 @@ TemplateMatch playerTwoUppercut(const Stroke &s)
 {
     TemplateMatch miss = {-1, 1e9f, 0, 0, 0, 0};
     if (PLAYER_ID != 2 || lockedWeapon != WEAPON_SWORD_SHIELD ||
-        s.peakDps < 350.0f || s.rotDeg < UPPERCUT_ROT_MIN_DEG ||
+        s.peakDps < 350.0f ||
         s.torsoRatio < SWORD_UPPERCUT_RELAX_MIN_TORSO_RATIO)
         return miss;
     for (int k = 0; k < STRIKE_MODEL_COUNT; k++)
@@ -1926,7 +1982,7 @@ TemplateMatch playerTwoUppercut(const Stroke &s)
             continue;
         float dA = angleBetweenDeg(s.ux, s.uy, s.uz, 0.702f, 0.0f, 0.712f, false) / UPPERCUT_AXIS_SPREAD_DEG;
         float dP = angleBetweenDeg(s.hx, s.hy, s.hz, 0.655f, 0.504f, -0.554f, false) / 30.0f;
-        float dR = strikeRotationError(s.rotDeg, m);
+        float dR = 0.0f; // rotation angle is not scored
         float dT = max(0.0f, s.torsoRatio - m.torsoRef) / m.torsoSpread;
         float d = sqrt(dA * dA + dP * dP + dR * dR + dT * dT);
         return {k, d, dA, dP, dR, dT};
@@ -1951,6 +2007,32 @@ float strikeDistanceLimit(const TemplateMatch &m, bool relaxedUppercut)
     }
     return limits->strikeMaxDist;
 }
+
+// ===== STRIKE SELECTION BEGIN =====
+// Compare alternate grips even when the base match is already in range.
+// A broad spin match must not prevent a closer uppercut grip from competing.
+TemplateMatch chooseStrikeTemplate(const Stroke &s, bool &relaxedUppercut)
+{
+    TemplateMatch m = nearestTemplate(s);
+    relaxedUppercut = false;
+    if (lockedWeapon == WEAPON_SWORD_SHIELD)
+    {
+        TemplateMatch alt = relaxedSwordUppercut(s);
+        if (alt.idx >= 0 && alt.dist <= SWORD_UPPERCUT_MAX_DIST && alt.dist < m.dist)
+        {
+            m = alt;
+            relaxedUppercut = true;
+        }
+        alt = playerTwoUppercut(s);
+        if (alt.idx >= 0 && alt.dist <= P2_UPPERCUT_MAX_DIST && alt.dist < m.dist)
+        {
+            m = alt;
+            relaxedUppercut = true;
+        }
+    }
+    return m;
+}
+// ===== STRIKE SELECTION END =====
 
 // ---------------- Push strokes (thrust) ----------------
 // A thrust barely rotates, so with no wrist twist it never makes a rotation
@@ -2081,7 +2163,12 @@ void findPushStrokes(uint32_t closeMs)
                    (buffer[i].t - buffer[i - 1].t) / 1000.0f;
 
         PushStroke &p = pushes[pushCount++];
-        p = {a, b, e, ux, uy, uz, peak, x, rot, 0};
+        p = {a, b, e, ux, uy, uz, peak, x, rot, 0, 0};
+        ActionQuality::ActivityRun linearRun;
+        for (int i = a; i <= b; i++)
+            linearRun.update(buffer[i].t, linMag(i) >= ActionQuality::MIN_LINEAR_G,
+                             ActionQuality::MAX_WRIST_GAP_MS);
+        p.linearActiveMs = linearRun.longestMs;
         float dur = buffer[e].t - buffer[a].t;
         float pad = TORSO_PAD_FRAC * max(dur, 100.0f);
         uint32_t from = buffer[a].t - (uint32_t)pad;
@@ -2098,28 +2185,21 @@ void findPushStrokes(uint32_t closeMs)
         }
 }
 
-// Distance to the thrust template: sqrt(dDir^2 + dReach^2 + dRot^2), each
-// scaled by the thrusts' own spread; rotation only counts above rotRefDeg.
+// Distance to the thrust template: sqrt(dDir^2 + dReach^2), each scaled by
+// the thrusts' own spread. Keep dRot=0 for the existing debug-log format.
 float thrustDistance(const PushStroke &p, float &dDir, float &dReach, float &dRot)
 {
+    dRot = 0.0f;
     const ThrustTemplate *selected = activeThrustTemplate();
     if (!selected)
     {
-        dDir = dReach = dRot = 1e9f;
+        dDir = dReach = 1e9f;
         return 1e9f;
     }
     const ThrustTemplate &m = *selected;
-    float rotRef = m.rotRefDeg;
-    float rotSpread = m.rotSpreadDeg;
-    if (lockedWeapon == WEAPON_SWORD_SHIELD)
-    {
-        rotRef = max(rotRef, SWORD_THRUST_ROT_REF_DEG);
-        rotSpread = max(rotSpread, SWORD_THRUST_ROT_SPREAD_DEG);
-    }
     dDir = angleBetweenDeg(p.ux, p.uy, p.uz, m.ux, m.uy, m.uz, false) / m.dirSpreadDeg;
     dReach = (p.reachM - m.reachMeanM) / m.reachSpreadM;
-    dRot = max(0.0f, p.rotDeg - rotRef) / rotSpread;
-    return sqrt(dDir * dDir + dReach * dReach + dRot * dRot);
+    return sqrt(dDir * dDir + dReach * dReach);
 }
 
 // ---------------- Accepted strokes ----------------
@@ -2295,27 +2375,18 @@ void onMotionEnd(const char *closeReason)
     {
         Stroke &s = strokes[k];
         computeStrokeFeatures(s, closeMs);
-        TemplateMatch m = nearestTemplate(s);
         bool relaxedUppercut = false;
-        if (lockedWeapon == WEAPON_SWORD_SHIELD && m.dist > strikeDistanceLimit(m, false))
-        {
-            TemplateMatch alt = relaxedSwordUppercut(s);
-            if (alt.idx >= 0 && alt.dist <= SWORD_UPPERCUT_MAX_DIST && alt.dist < m.dist)
-            {
-                m = alt;
-                relaxedUppercut = true;
-            }
-            alt = playerTwoUppercut(s);
-            if (alt.idx >= 0 && alt.dist <= P2_UPPERCUT_MAX_DIST && alt.dist < m.dist)
-            {
-                m = alt;
-                relaxedUppercut = true;
-            }
-        }
+        TemplateMatch m = chooseStrikeTemplate(s, relaxedUppercut);
 
+        uint32_t durationMs = buffer[s.b].t - buffer[s.a].t;
+        bool spin = m.idx >= 0 && STRIKE_MODEL[m.idx].bidirectional;
+        const char *qualityReason = ActionQuality::reasonName(
+            ActionQuality::evaluate(durationMs, s.linearActiveMs, spin, s.torsoActiveMs));
         const char *reason;
         if (s.torsoBeacons == 0)
             reason = "torso_data"; // check torso link/power
+        else if (qualityReason)
+            reason = qualityReason;
         else if (!(m.idx >= 0 && STRIKE_MODEL[m.idx].bidirectional) && isReturnOfLastStrike(s))
             reason = "return";
         else if (m.idx >= 0 && strcmp(STRIKE_MODEL[m.idx].action, "uppercut") == 0 &&
@@ -2328,6 +2399,8 @@ void onMotionEnd(const char *closeReason)
         bool ok = strcmp(reason, "ok") == 0;
 
         debugLog("Stroke i=" + String(k) + " kind=rot t0=" + String(buffer[s.a].t) + " t1=" + String(buffer[s.b].t) +
+                 " dur=" + String(durationMs) + " linearMs=" + String(s.linearActiveMs) +
+                 " torsoActiveMs=" + String(s.torsoActiveMs) +
                  " peak=" + String(s.peakDps, 1) + " rot=" + String(s.rotDeg, 1) +
                  " ax=" + String(s.ux, 3) + " ay=" + String(s.uy, 3) + " az=" + String(s.uz, 3) +
                  " px=" + String(s.hx, 3) + " py=" + String(s.hy, 3) + " pz=" + String(s.hz, 3) +
@@ -2354,11 +2427,13 @@ void onMotionEnd(const char *closeReason)
         const char *reason = nullptr;
         if (p.torsoBeacons == 0)
             reason = "torso_data";
+        uint32_t durationMs = buffer[p.e].t - buffer[p.a].t;
+        if (!reason)
+            reason = ActionQuality::reasonName(
+                ActionQuality::evaluate(durationMs, p.linearActiveMs, false, 0));
         if (!reason)
             reason = pushContextReject(p);
-        if (!reason && (!activeActionLimits() || p.reachM < activeActionLimits()->minThrustReachM ||
-                        (lockedWeapon == WEAPON_SWORD_SHIELD && p.rotDeg > SWORD_THRUST_HIGH_ROT_DEG &&
-                         p.reachM < SWORD_THRUST_HIGH_ROT_MIN_REACH_M)))
+        if (!reason && (!activeActionLimits() || p.reachM < activeActionLimits()->minThrustReachM))
             reason = "short";
         if (!reason)
         {
@@ -2370,6 +2445,7 @@ void onMotionEnd(const char *closeReason)
         bool ok = strcmp(reason, "ok") == 0;
 
         debugLog("Stroke i=" + String(k) + " kind=push t0=" + String(buffer[p.a].t) + " t1=" + String(buffer[p.e].t) +
+                 " dur=" + String(durationMs) + " linearMs=" + String(p.linearActiveMs) +
                  " peak=" + String(p.peakG, 2) + " rot=" + String(p.rotDeg, 1) + " reach=" + String(p.reachM, 3) +
                  " ax=" + String(p.ux, 3) + " ay=" + String(p.uy, 3) + " az=" + String(p.uz, 3) +
                  " beacons=" + String(p.torsoBeacons) + " nearest=thrust dist=" + String(d, 2) +

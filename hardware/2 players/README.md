@@ -31,13 +31,14 @@ flashed with a player 1 sketch pairs with the wrong player.
 
    Each stroke is compared with a strike template for every action. A
    template records which way the arm rotates, which way the hand is pushed,
-   how far the arm turns, and how much the torso turns with it. The torso's
-   beacons supply the torso data.
+   and how much the torso turns with it. The torso's beacons supply the torso
+   data. Recorded wrist rotation angles are kept for diagnostics and fitting
+   metadata, but are not used as angle limits or matching penalties.
 
    A thrust barely rotates, so it's found as a push stroke instead: a burst
    of linear acceleration, with gravity tracked by the gyro. It's compared
-   with a thrust template on three measures: push direction, how far the hand
-   travels before it stops, and how little the wrist turns. A push is
+   with a thrust template on two measures: push direction and how far the hand
+   travels before it stops. A push is
    rejected if it is the lead-in to a swing in the same candidate.
 
    - **Accepted:** the stroke is close enough to its nearest template
@@ -60,40 +61,74 @@ flashed with a player 1 sketch pairs with the wrong player.
    The sword/shield hubs also apply narrow tolerances from the 2026-10-19
    labeled player 1 captures. Horizontal and diagonal strikes allow distance
    1.75 instead of 1.50. A missed uppercut may use a 35-degree axis spread
-   and distance 2.25 only when it rotates at least 60 degrees, peaks above
-   250 dps, and has torso ratio at least 0.070. This keeps recorded guard
-   raises from passing the wider match. Thrust allows 65 degrees of wrist
-   rotation before a penalty. Its distance limit is 1.50 for pushes peaking
+   and distance 2.25 only when it peaks at least 250 dps and has torso ratio
+   at least 0.070. Thrust's distance limit is 1.50 for pushes peaking
    at least 1.50 g, and 1.10 for weaker pushes (the fitted limit is 1.00).
-   A push rotating over 55 degrees must travel at least 0.65 m so a recorded
-   flick does not pass the wider thrust check. These adjustments are outside the
+   These adjustments are outside the
    generated model block and are applied only to sword/shield. The fitter's
    printed limits describe the generated baseline; check these live-play
    allowances with fresh labeled captures after flashing.
 
    Player 2 also accepts a second sword/shield uppercut wrist orientation seen
-   in the 2026-10-21 `uppercut` capture. It requires a full swing (at least
-   350 dps and 60 degrees of rotation), torso participation, and a close
+   in the 2026-10-21 `uppercut` capture. It requires peak speed of at least
+   350 dps, torso participation, and a close
    match to that capture's axis and push direction. The same conditional code
    is in both hub sketches, but activates only for `PLAYER_ID=2`. Recheck
    uppercuts and accidental accepts on the physical boards after flashing.
 
-   Both hubs cap the normalised rotation-angle error at +/-0.75 for all
-   rotation strikes. Uppercuts have no angle penalty from 60 to 220 degrees
-   and an axis spread of at least 35 degrees, including the alternate player 2
-   grip. Outside that reference range the angle penalty grows gradually and
-   is capped; this is not a hard accepted-angle range. The uppercut speed and
-   torso gates still apply.
+   Both hubs completely ignore wrist rotation angle when deciding validity.
+   There is no minimum stroke angle, uppercut angle gate, spin angle gate,
+   thrust rotation penalty, or extra reach requirement for a twisting thrust.
+   The logged `rot` measurements remain available, and `dRot` is always zero.
+   Uppercuts retain an axis spread of at least 35 degrees, including the
+   alternate player 2 grip. Speed and torso gates still apply, as do direction
+   matching, minimum thrust reach, and duplicate/return suppression.
 
-   Spins retain the 250-degree minimum coherent wrist rotation, but have no
-   angle penalty from 250 to 720 degrees. Spin matching allows at least a
+   Spins have no minimum or maximum wrist rotation angle. Matching allows at least a
    45-degree axis spread, a 60-degree push-direction spread, and distance 2.25.
    A matched spin is exempt from return-to-guard suppression, including after
    a non-spin strike. Torso data is still required. These allowances favour
    fewer missed attacks and may admit more handling movements; validate with
-   multiple players and the non-action recordings below. A spin split into
-   strokes below 250 degrees can still miss; inspect the stroke logs before
-   reducing that minimum or changing segmentation.
+   multiple players and the non-action recordings below. Wrist angular speed
+   still opens candidates and locates rotation strokes; removing angle gates
+   does not remove the existing motion-strength thresholds.
+
+   To suppress flicks without restoring angle limits, both hubs also use the
+   identical action quality checks embedded directly in each wrist sketch.
+   Each sketch can be copied into the Arduino IDE without a separate quality
+   header. These are conservative
+   starting thresholds and need testing with several players:
+
+   - Every rotation stroke must last at least 100 ms, measured between its
+     extracted endpoints (not the candidate's pre-trigger or settling window).
+     A thrust uses its push-to-stop duration, also at least 100 ms.
+   - Gravity-removed linear acceleration must stay at or above 0.15 g for at
+     least 40 ms continuously. Rotation strokes use the whole stroke; thrusts
+     use the accelerating push portion, excluding the stopping tail.
+   - A matched spin additionally needs torso beacon speed at or above 35 dps
+     for at least 100 ms continuously inside the stroke itself. Ordinary cuts
+     and thrusts do not acquire this new torso-motion requirement.
+   - Below-threshold readings reset each active run. Wrist gaps over 30 ms
+     and torso beacon gaps over 45 ms also reset it, so long missing intervals
+     cannot be mistaken for sustained activity.
+
+   Debug lines include `dur`, `linearMs`, and (for rotation strokes)
+   `torsoActiveMs`. New rejection reasons are `too_short`, `weak_hand`, and
+   `spin_torso_quiet`. Tune the constants in each sketch's `ActionQuality` block from valid
+   attacks, flicks, and handling captures. Direction matching and the other
+   existing rejection checks still apply; these checks cannot identify every
+   handling movement. Synthetic boundary, spike, missing-data, and rollover
+   checks live in [the C++ regression test](../tests/action_quality_compile_test.cpp).
+   Run [its PowerShell runner](../tests/action_quality_compile_test.ps1) with
+   `-Compiler <path-to-g++>` to test the actual inline checks from both sketches.
+
+   Spin templates compete only when the stroke meets the spin-specific torso
+   requirement. A quiet torso must not cause an uppercut to be rejected merely
+   because the broad spin template had a smaller distance. Both sword/shield
+   uppercut grips are compared on every stroke, even when the initial match is
+   already within its limit; a closer eligible uppercut can replace that match.
+   The 2026-11-01 player 2 uppercut capture exposed this selection interaction.
+   No motion thresholds or wrist-angle limits were changed for this fix.
 
    These runtime allowances are outside the generated tables. Offline fit and
    replay results do not validate them unless the same policies are implemented
