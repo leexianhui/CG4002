@@ -64,6 +64,26 @@ void test_units_and_clipping() {
     TEST_ASSERT_EQUAL(32767, gatewayScale(2000, 16.4f));
     TEST_ASSERT_EQUAL(-32768, gatewayScale(-2000, 16.4f));
 }
+// Output/input RMS over the last second (whole cycles) of a 2 s sine at `hz`, sampled at 100 Hz.
+static float sineGain(float hz) {
+    GatewayLowPass f;
+    float in = 0, out = 0;
+    for (int n = 0; n < 200; n++) {
+        float x = sinf(2.0f * 3.14159265f * hz * n / 100.0f);
+        float y = f.step(x);
+        if (n >= 100) { in += x * x; out += y * y; }
+    }
+    return sqrtf(out / in);
+}
+void test_gyro_low_pass_matches_the_training_chip_filter() {
+    GatewayLowPass f;
+    TEST_ASSERT_EQUAL_FLOAT(-123.0f, f.step(-123.0f)); // primed: a held value passes unchanged
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, -123.0f, f.step(-123.0f));
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 1.0f, sineGain(5));    // swings (<10 Hz) untouched
+    TEST_ASSERT_FLOAT_WITHIN(0.03f, 0.981f, sineGain(10));
+    TEST_ASSERT_FLOAT_WITHIN(0.03f, 0.707f, sineGain(20)); // -3 dB at 20 Hz, like DLPF_CFG=4
+    TEST_ASSERT_TRUE(sineGain(40) < 0.08f);                // jitter that would alias at 50 Hz: gone
+}
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_roles_and_missing);
@@ -72,5 +92,6 @@ int main(int, char **) {
     RUN_TEST(test_sequence_wrap);
     RUN_TEST(test_identity_and_format);
     RUN_TEST(test_units_and_clipping);
+    RUN_TEST(test_gyro_low_pass_matches_the_training_chip_filter);
     return UNITY_END();
 }

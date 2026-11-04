@@ -66,6 +66,13 @@ feedback queue. Sensor reads, UDP and motor writes stay on the hardware main thr
     the AI's training data has. It waits at most 400 ms past acceptance for that (otherwise the window
     ends 400 ms after acceptance), plus 80 ms for node samples still on the radio, then copies the
     100 rows out of the history. Real samples on both sides, no padding.
+  - **Matching the training boards' chip filter.** ACTION_FINAL was recorded on these same MPU6500
+    boards with the chip's low-pass on (`0x1A = 4`: gyro ~20 Hz, ~9.9 ms delay; accelerometer
+    unfiltered, as the training data's flat accel noise confirms) and read at 50 Hz. The game sketches
+    keep the chip filter off for their own swing detection, so every board runs the AI's copy of its
+    gyro through `GatewayLowPass` (`include/gateway_samples.h`: 2nd-order Butterworth, 20 Hz at
+    100 Hz, ~9.8 ms delay) before every other sample is taken. The accelerometer is left as it is. The
+    sketches' own detection still gets the raw readings.
   - **Validity.** A sensor present in fewer than 80 of the 100 rows is flagged not valid; the relay then
     sends the left wrist as its at-rest placeholder and the torso as absent, and the AI fills them with
     its training mean. A short gap repeats the sensor's previous row. Serial prints

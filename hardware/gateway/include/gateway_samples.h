@@ -13,6 +13,31 @@ struct __attribute__((packed)) GatewaySample {
 };
 static_assert(sizeof(GatewaySample) == 30, "UDP sample layout");
 
+// The AI's copy of the gyro must look like ACTION_FINAL's training data. Those recordings came from
+// the same MPU6500 boards with the chip's DLPF_CFG=4 (gyro ~20 Hz bandwidth, ~9.9 ms delay) read at
+// 50 Hz; the accelerometer was unfiltered (on the MPU6500 that register leaves it alone, and the
+// training data's accel noise is flat to 25 Hz). The game sketches leave the DLPF off for their own
+// swing detection and read at 100 Hz, so the gateway filters the gyro it exports: a 2nd-order
+// Butterworth low-pass, fc 20 Hz at fs 100 Hz (bilinear), group delay ~9.8 ms. Taking every other
+// filtered sample then matches the chip's filter-and-read-at-50-Hz. Feed it every 100 Hz sample.
+struct GatewayLowPass {
+    static constexpr float b0 = 0.206572084f, b1 = 0.413144168f, b2 = 0.206572084f;
+    static constexpr float a1 = -0.369527377f, a2 = 0.195815713f;
+    float z1 = 0, z2 = 0;
+    bool primed = false;
+    float step(float x) {
+        if (!primed) { // start in steady state at the first value: no start-up transient
+            z2 = (b2 - a2) * x;
+            z1 = (b1 - a1) * x + z2;
+            primed = true;
+        }
+        float y = b0 * x + z1; // direct form II transposed
+        z1 = b1 * x - a1 * y + z2;
+        z2 = b2 * x - a2 * y;
+        return y;
+    }
+};
+
 inline int16_t gatewayScale(float value, float scale) {
     if (!isfinite(value)) return 0;
     float n = roundf(value * scale);

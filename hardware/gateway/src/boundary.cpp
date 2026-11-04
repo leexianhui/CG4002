@@ -19,6 +19,7 @@ uint8_t playerId, roleId, weaponId;
 uint16_t samplePort;
 uint32_t bootId, sequence, lastExport;
 GatewaySamples samples;
+GatewayLowPass gyroLowPass[3]; // this board's gx, gy, gz, as sent to the AI (hardware loop only)
 portMUX_TYPE sampleMux = portMUX_INITIALIZER_UNLOCKED;
 QueueHandle_t feedbackQueue;
 #if CG_GATEWAY_ROLE == 0 && CG_GATEWAY_EVENT_MODE
@@ -79,6 +80,12 @@ void gatewayBegin(uint8_t player, uint8_t role) {
 // every sample: in event mode in the history, in continuous mode as the latest SENSOR_FRAME value.
 void gatewaySample(float ax, float ay, float az, float gx, float gy, float gz) {
     uint32_t now = millis();
+    float values[] = {ax, ay, az, gx, gy, gz};
+    for (unsigned i = 0; i < 6; ++i)
+        if (!isfinite(values[i])) return; // missing/invalid samples age out instead of becoming zeros
+    // Every 100 Hz sample goes through the gyro low-pass (gateway_samples.h), before the 20 ms
+    // export throttle, so the AI sees the gyro the way the training boards' chip filter shaped it.
+    for (unsigned i = 0; i < 3; ++i) values[3 + i] = gyroLowPass[i].step(values[3 + i]);
     if (roleId && now - lastExport < 20) return;
     lastExport = now;
     GatewaySample s;
@@ -87,11 +94,7 @@ void gatewaySample(float ax, float ay, float az, float gx, float gy, float gz) {
     s.boot = bootId;
     s.seq = ++sequence;
     s.source_ms = now;
-    const float values[] = {ax, ay, az, gx, gy, gz};
-    for (unsigned i = 0; i < 6; ++i) {
-        if (!isfinite(values[i])) return; // missing/invalid samples age out instead of becoming zeros
-        s.axes[i] = gatewayScale(values[i], i < 3 ? 2048.0f : 16.4f);
-    }
+    for (unsigned i = 0; i < 6; ++i) s.axes[i] = gatewayScale(values[i], i < 3 ? 2048.0f : 16.4f);
     if (roleId == 0) {
 #if CG_GATEWAY_ROLE == 0 && CG_GATEWAY_EVENT_MODE
         history.put(0, now, s.axes);

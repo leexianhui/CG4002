@@ -67,9 +67,12 @@ The contract is `shared/protocol/app_messages.md` §3.1/§3.2.
    the moves to `shared/config/weapons.yaml`.
 3. **`cnn.hwh` is from the 2026-09-28 build.** Same `design_1`, part and DMA, so it should load the new
    bitstream, but ask the AI team for the matching `.hwh`. If `fpga_infer.py` isn't bit-exact, suspect this first.
-4. **To confirm with the AI team:** how their 50 Hz training data was made from the boards' 100 Hz
-   samples (the hub keeps the latest sample in each 20 ms step), and that it was recorded with the same
-   board mounting and axes as the gateway builds.
+4. **Matched to the training recordings (2026-11-04).** Same boards and mounting; the AI team's
+   collector (`imu_stream_3sensor.ino`) read the chip at 50 Hz with `0x1A = 4`, so its gyro was low-passed
+   at ~20 Hz and its accelerometer was not. The gateway now gives the AI's gyro the same 20 Hz low-pass
+   and takes every other 100 Hz sample (`hardware/gateway/README.md`). Still worth getting their
+   `data_utils.py` (`make_windows`) to see exactly how each window was centred; the model tolerates
+   ±200 ms either way.
 
 Tested from `comms/` with `python -m pytest tests/test_ai_boundary.py`. It runs the relay's real
 classifier client against `classifier_server.py`, and pushes the AI team's 68 test windows through the
