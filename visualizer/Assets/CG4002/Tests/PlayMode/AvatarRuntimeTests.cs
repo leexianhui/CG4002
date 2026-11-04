@@ -150,6 +150,46 @@ namespace CG4002.Tests
         }
 
         [UnityTest]
+        public IEnumerator TwoHandedGuard_UsesTheBothArmsLayer([Values(WeaponType.Spear, WeaponType.Mace)] WeaponType weapon)
+        {
+            yield return EquipAndSettle(weapon);
+            avatar.SetGuard(true);
+            yield return new WaitForSeconds(0.4f);
+
+            Assert.That(avatar.Animator.GetLayerWeight(AvatarContract.GuardBothLayer), Is.EqualTo(1f).Within(1e-3f));
+            Assert.That(avatar.Animator.GetLayerWeight(AvatarContract.GuardLayer), Is.EqualTo(0f).Within(1e-3f));
+        }
+
+        // The off hand is solved onto the shaft: it must stay on the weapon's axis in idle, guard and mid-attack.
+        [UnityTest]
+        public IEnumerator TwoHanded_LeftHandStaysOnTheShaft([Values(WeaponType.Spear, WeaponType.Mace)] WeaponType weapon)
+        {
+            yield return EquipAndSettle(weapon);
+            AssertLeftHandOnShaft("idle");
+
+            avatar.SetGuard(true);
+            yield return new WaitForSeconds(0.4f);
+            AssertLeftHandOnShaft("guard");
+
+            avatar.SetGuard(false);
+            yield return new WaitForSeconds(0.4f);
+            avatar.PlayAttack(AttackSlot.Horizontal);
+            yield return WaitFor(() => events.Contains("StrikeOpen"), 1f);
+            AssertLeftHandOnShaft("attack");
+        }
+
+        void AssertLeftHandOnShaft(string when)
+        {
+            var weapon = avatar.CurrentWeapon.transform;
+            Vector3 elbow = avatar.transform.Find("Hips/Spine/Chest/UpperArm_L/Forearm_L").position;
+            Vector3 wrist = avatar.transform.Find("Hips/Spine/Chest/UpperArm_L/Forearm_L/Hand_L").position;
+            // The fist closes 5 cm past the wrist, along the forearm.
+            Vector3 grip = wrist + (wrist - elbow).normalized * 0.05f;
+            Vector3 offAxis = Vector3.ProjectOnPlane(grip - weapon.position, weapon.up);
+            Assert.That(offAxis.magnitude, Is.LessThan(0.06f), $"{when}: left hand {offAxis.magnitude:0.000} m off the shaft");
+        }
+
+        [UnityTest]
         public IEnumerator StrikeWindow_BuildsTrailMesh()
         {
             yield return EquipAndSettle(WeaponType.SwordAndShield);

@@ -129,6 +129,7 @@ namespace CG4002.EditorTools
             if (!parameters.Contains(C.AttackTrigger)) errors.Add($"{who}: base controller is missing parameter '{C.AttackTrigger}'.");
             if (!parameters.Contains(C.AttackSlotInt)) errors.Add($"{who}: base controller is missing parameter '{C.AttackSlotInt}'.");
             if (controller.layers.Length <= C.GuardLayer) errors.Add($"{who}: base controller has no guard layer.");
+            if (controller.layers.Length <= C.GuardBothLayer) errors.Add($"{who}: base controller has no two-handed guard layer.");
 
             var pairs = new List<KeyValuePair<AnimationClip, AnimationClip>>();
             overrides.GetOverrides(pairs);

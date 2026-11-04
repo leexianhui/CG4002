@@ -86,11 +86,12 @@ namespace CG4002.Offline
         /// </summary>
         public bool Attack(PlayerId attacker, ActionType action)
         {
-            if (phase != MatchPhase.Running)
-                return false;
-
             var attackerState = Get(attacker);
-            if (Time.time < attackerState.cooldownEndsAt)
+            bool onCooldown = Time.time < attackerState.cooldownEndsAt;
+            // Like the engine's ACTION_RECOGNIZED: every attack is reported, resolved or not.
+            Send(new ActionRecognizedMessage { player = attacker, action = action, onCooldown = onCooldown });
+
+            if (phase != MatchPhase.Running || onCooldown)
                 return false;
 
             PlayerId defender = OtherPlayer(attacker);

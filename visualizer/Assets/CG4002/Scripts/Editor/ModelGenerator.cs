@@ -56,7 +56,8 @@ namespace CG4002.EditorTools
 
             var avatar = ModelFactory.BuildAvatar(materials);
             var guardMask = AnimatorFactory.CreateGuardMask(avatar.gameObject);
-            var baseController = AnimatorFactory.CreateBaseController(guardMask);
+            var bothArmsMask = AnimatorFactory.CreateBothArmsMask(avatar.gameObject);
+            var baseController = AnimatorFactory.CreateBaseController(guardMask, bothArmsMask);
 
             var swordAnimations = BakeWeapon(baseController, WeaponType.SwordAndShield);
             var spearAnimations = BakeWeapon(baseController, WeaponType.Spear);
@@ -64,13 +65,13 @@ namespace CG4002.EditorTools
 
             // The AI classifies the same six attacks for every weapon (ai/config.py MOVE_CLASSES), so every
             // weapon animates all six; the engine's weapons.yaml decides which of them can land.
-            var swordDefinition = DefinitionFactory.Create(WeaponType.SwordAndShield, "Sword & Shield", sword, shield, swordAnimations, ModelFactory.SwordAccent,
+            var swordDefinition = DefinitionFactory.Create(WeaponType.SwordAndShield, "Sword & Shield", sword, shield, twoHanded: false, swordAnimations, ModelFactory.SwordAccent,
                 ClassifierMoves((ActionType.ChargedAttack, AttackSlot.Charged)));
 
-            var spearDefinition = DefinitionFactory.Create(WeaponType.Spear, "Spear", spear, null, spearAnimations, ModelFactory.SpearAccent,
+            var spearDefinition = DefinitionFactory.Create(WeaponType.Spear, "Spear", spear, null, twoHanded: true, spearAnimations, ModelFactory.SpearAccent,
                 ClassifierMoves((ActionType.ChargedThrust, AttackSlot.Charged), (ActionType.Swing, AttackSlot.Horizontal)));
 
-            var maceDefinition = DefinitionFactory.Create(WeaponType.Mace, "Mace", mace, null, maceAnimations, ModelFactory.MaceAccent,
+            var maceDefinition = DefinitionFactory.Create(WeaponType.Mace, "Mace", mace, null, twoHanded: true, maceAnimations, ModelFactory.MaceAccent,
                 ClassifierMoves((ActionType.ChargedAttack, AttackSlot.Charged)));
 
             var catalog = DefinitionFactory.CreateCatalog(swordDefinition, spearDefinition, maceDefinition);

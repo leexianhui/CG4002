@@ -25,11 +25,15 @@ namespace CG4002.EditorTools
         // Printed width of each marker in metres. ARKit infers distance from this, so it must
         // match the ruler measurement of the print, not the size it was meant to print at.
         // Height is derived from the source image's aspect ratio.
+        // Vuforia's Mars targets (print sheet: Docs/PropMarkers_Mars.pdf, at 100%, 7 x 12 cm each).
         static readonly (string name, string file, float widthMetres)[] Markers =
         {
-            ("Sword", "two.png", 0.09f),
-            ("Shield", "Rafflesia.jpg", 0.15f),
-            ("SwordBackup", "one.png", 0.09f),
+            ("Sword", "Astronaut.png", 0.07f),
+            ("Shield", "Oxygen.png", 0.07f),
+            ("Spear", "Drone.png", 0.07f),
+            ("Mace", "Fissure.png", 0.07f),
+            // The previous sword marker, so the existing sword prop works until it's reprinted.
+            ("SwordBackup", "two.png", 0.09f),
         };
 
         // Moving images ARKit tracks every frame. Without this it treats images as fixed in the
@@ -90,10 +94,16 @@ namespace CG4002.EditorTools
 
         static XRReferenceImageLibrary CreateLibrary()
         {
-            // Reference images are sub-entries of the library, so rebuild it rather than patch it.
-            AssetDatabase.DeleteAsset(LibraryPath);
-            var library = ScriptableObject.CreateInstance<XRReferenceImageLibrary>();
-            AssetDatabase.CreateAsset(library, LibraryPath);
+            // Rebuild the entries in place: re-creating the asset would give it a new GUID and break
+            // every scene referencing it (SampleScene and OnlineScene).
+            var library = AssetDatabase.LoadAssetAtPath<XRReferenceImageLibrary>(LibraryPath);
+            if (library == null)
+            {
+                library = ScriptableObject.CreateInstance<XRReferenceImageLibrary>();
+                AssetDatabase.CreateAsset(library, LibraryPath);
+            }
+            while (library.count > 0)
+                library.RemoveAt(library.count - 1);
 
             foreach (var (name, file, width) in Markers)
             {

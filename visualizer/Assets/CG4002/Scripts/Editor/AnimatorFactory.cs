@@ -15,39 +15,49 @@ namespace CG4002.EditorTools
     ///   Layer 0 "Body":  Idle ── Attack & AttackSlot==n ──▶ state named after slot n ──(clip ends)──▶ Idle
     ///                    one state per AttackSlot (Horizontal, Charged, Vertical, ...);
     ///                    attack transitions come from Any State, so a new attack interrupts
-    ///   Layer 1 "Guard": masked to the left arm, always playing Guard; AvatarView fades its weight.
+    ///   Layer 1 "Guard":     masked to the left arm (shield), always playing Guard.
+    ///   Layer 2 "GuardBoth": masked to both arms (two-handed weapons), always playing GuardBoth.
+    ///   AvatarView fades in whichever guard layer suits the equipped weapon. Both play the weapon's
+    ///   guard clip; each mask keeps only its own arms.
     /// </summary>
     static class AnimatorFactory
     {
         const string AnimationDir = AssetIO.Root + "/Animation";
 
-        public static AvatarMask CreateGuardMask(GameObject avatarRoot)
+        public static AvatarMask CreateGuardMask(GameObject avatarRoot) =>
+            CreateMask(avatarRoot, MannequinRig.GuardBones, "Mask_GuardArm");
+
+        public static AvatarMask CreateBothArmsMask(GameObject avatarRoot) =>
+            CreateMask(avatarRoot, MannequinRig.ArmBones, "Mask_BothArms");
+
+        static AvatarMask CreateMask(GameObject avatarRoot, string[] bones, string name)
         {
             var mask = new AvatarMask();
             mask.AddTransformPath(avatarRoot.transform, true);
             for (int i = 0; i < mask.transformCount; i++)
             {
                 string path = mask.GetTransformPath(i);
-                bool active = MannequinRig.GuardBones.Any(bone => path == bone || path.StartsWith(bone + "/"));
+                bool active = bones.Any(bone => path == bone || path.StartsWith(bone + "/"));
                 mask.SetTransformActive(i, active);
             }
-            return AssetIO.Save(mask, $"{AnimationDir}/Mask_GuardArm.mask");
+            return AssetIO.Save(mask, $"{AnimationDir}/{name}.mask");
         }
 
         public class BaseController
         {
             public AnimatorController controller;
-            public AnimationClip idle, guard;
+            public AnimationClip idle, guard, guardBoth;
             public readonly Dictionary<AttackSlot, AnimationClip> attacks = new();
         }
 
-        public static BaseController CreateBaseController(AvatarMask guardMask)
+        public static BaseController CreateBaseController(AvatarMask guardMask, AvatarMask bothArmsMask)
         {
             // Placeholder clips: they only exist so each weapon's override controller has something to replace.
             var result = new BaseController
             {
                 idle = AssetIO.Save(new AnimationClip(), $"{AnimationDir}/Base/Base_Idle.anim"),
                 guard = AssetIO.Save(new AnimationClip(), $"{AnimationDir}/Base/Base_Guard.anim"),
+                guardBoth = AssetIO.Save(new AnimationClip(), $"{AnimationDir}/Base/Base_GuardBoth.anim"),
             };
             foreach (var slot in C.AttackSlots)
                 result.attacks[slot] = AssetIO.Save(new AnimationClip(), $"{AnimationDir}/Base/Base_{slot}.anim");
@@ -89,6 +99,18 @@ namespace CG4002.EditorTools
             guard.motion = result.guard;
             guardMachine.defaultState = guard;
 
+            controller.AddLayer("GuardBoth");
+            layers = controller.layers;
+            layers[C.GuardBothLayer].defaultWeight = 0f;
+            layers[C.GuardBothLayer].avatarMask = bothArmsMask;
+            layers[C.GuardBothLayer].blendingMode = AnimatorLayerBlendingMode.Override;
+            controller.layers = layers;
+
+            var guardBothMachine = controller.layers[C.GuardBothLayer].stateMachine;
+            var guardBoth = guardBothMachine.AddState(C.GuardBothState, new Vector3(300, 0));
+            guardBoth.motion = result.guardBoth;
+            guardBothMachine.defaultState = guardBoth;
+
             result.controller = controller;
             return result;
         }
@@ -121,6 +143,7 @@ namespace CG4002.EditorTools
             {
                 new(baseController.idle, idle),
                 new(baseController.guard, guard),
+                new(baseController.guardBoth, guard),
             };
             foreach (var slot in C.AttackSlots)
                 pairs.Add(new(baseController.attacks[slot], attacks[slot]));
@@ -137,13 +160,14 @@ namespace CG4002.EditorTools
         const string DefinitionDir = AssetIO.Root + "/Definitions";
 
         public static WeaponDefinition Create(WeaponType type, string displayName, WeaponView mainHand, ShieldView offHand,
-            AnimatorOverrideController animations, Color accent, params (ActionType action, AttackSlot slot)[] moves)
+            bool twoHanded, AnimatorOverrideController animations, Color accent, params (ActionType action, AttackSlot slot)[] moves)
         {
             var definition = ScriptableObject.CreateInstance<WeaponDefinition>();
             definition.type = type;
             definition.displayName = displayName;
             definition.mainHandPrefab = mainHand;
             definition.offHandPrefab = offHand;
+            definition.twoHanded = twoHanded;
             definition.animations = animations;
             definition.accentColor = accent;
             definition.moves = moves.Select(m => new WeaponDefinition.MoveBinding { action = m.action, slot = m.slot }).ToArray();

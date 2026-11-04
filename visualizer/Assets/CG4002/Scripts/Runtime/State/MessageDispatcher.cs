@@ -28,6 +28,9 @@ namespace CG4002.State
         /// <summary>An attack was resolved. Raised after GameState has the new health.</summary>
         public event Action<CombatOutcomeMessage> OutcomeReceived;
 
+        /// <summary>The AI recognised a player's attack, resolved or not.</summary>
+        public event Action<ActionRecognizedMessage> ActionRecognized;
+
         void Update()
         {
             // Drain everything, not one per frame, so a burst doesn't turn into visible lag.
@@ -53,6 +56,9 @@ namespace CG4002.State
                     break;
                 case CombatOutcomeMessage outcome:
                     OutcomeReceived?.Invoke(outcome);
+                    break;
+                case ActionRecognizedMessage recognized:
+                    ActionRecognized?.Invoke(recognized);
                     break;
             }
         }

@@ -73,7 +73,7 @@ namespace CG4002.Tests
         }
 
         [UnityTest]
-        public IEnumerator NoWeapon_ShowsMirroredHologramDummyInFrontOfCamera()
+        public IEnumerator NoWeapon_ShowsAMirroredHologramDummyPerWeaponInFrontOfCamera()
         {
             yield return Send(new WeaponChangedMessage { player = PlayerId.P1, selected = false });
 
@@ -84,10 +84,16 @@ namespace CG4002.Tests
             Assert.That(stage.transform.position.z, Is.EqualTo(2.5f).Within(1e-3f));
             Assert.That(Vector3.Dot(stage.transform.forward, Vector3.back), Is.GreaterThan(0.99f));
 
-            var dummy = stage.GetComponentInChildren<AvatarView>();
-            Assert.That(dummy.CurrentDefinition.type, Is.EqualTo(WeaponType.SwordAndShield));
-            Assert.That(dummy.transform.localScale.x, Is.LessThan(0f), "mirrored");
-            Assert.That(dummy.GetComponentsInChildren<Renderer>().SelectMany(r => r.sharedMaterials).All(m => m == hologram));
+            var dummies = stage.GetComponentsInChildren<AvatarView>();
+            CollectionAssert.AreEquivalent(new[] { WeaponType.Spear, WeaponType.SwordAndShield, WeaponType.Mace },
+                dummies.Select(d => d.CurrentDefinition.type));
+            var sword = dummies.Single(d => d.CurrentDefinition.type == WeaponType.SwordAndShield);
+            Assert.That(sword.transform.parent.localPosition.x, Is.EqualTo(0f).Within(1e-4f), "sword in the middle");
+            foreach (var dummy in dummies)
+            {
+                Assert.That(dummy.transform.localScale.x, Is.LessThan(0f), "mirrored");
+                Assert.That(dummy.GetComponentsInChildren<Renderer>().SelectMany(r => r.sharedMaterials).All(m => m == hologram));
+            }
         }
 
         [UnityTest]

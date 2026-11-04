@@ -81,14 +81,22 @@ namespace CG4002.Net
                         "BLOCK" => Outcome.Block, "PARRY" => Outcome.Parry,
                         _ => throw new FormatException("Unknown outcome"),
                     };
-                    // COMBAT_EVENT is the sole attack-animation source. Recognition is diagnostic.
+                    // COMBAT_EVENT animates the opponent's avatar; ACTION_RECOGNIZED animates your own first-person view.
                     output.Add(new ActionMessage { player = attacker, action = action });
                     output.Add(new CombatOutcomeMessage { player = defender, attacker = attacker,
                         outcome = outcome, damage = (int)Number(root, "damage"),
                         defenderHealth = (int)Number(root, "defenderHp") });
                     break;
+                case "ACTION_RECOGNIZED":
+                    // Every recognised action, resolved or not. Guard-only reports (action IDLE) carry
+                    // nothing new: guard state arrives in snapshots.
+                    var recognized = Action(Text(root, "action"));
+                    if (recognized != ActionType.Idle)
+                        output.Add(new ActionRecognizedMessage { player = Player(root["playerId"]), action = recognized,
+                            onCooldown = Text(root, "outcome") == "ON_COOLDOWN" });
+                    break;
                 // These are also sent for legacy clients. Complete snapshots own online state.
-                case "MATCH_STATE": case "WEAPON_CHANGED": case "ACTION_RECOGNIZED":
+                case "MATCH_STATE": case "WEAPON_CHANGED":
                 case "COOLDOWN_STATE": case "POSITION": break;
                 default: throw new FormatException("Unknown engine message");
             }

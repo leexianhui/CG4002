@@ -16,6 +16,7 @@ MonoBehaviour:
   displayName: Mace
   mainHandPrefab: {fileID: 3717421943421523819, guid: e1c288669f9864fad8634ef8e0280273, type: 3}
   offHandPrefab: {fileID: 0}
+  twoHanded: 1
   animations: {fileID: 22100000, guid: cff2fe3684c8443c49f205da208060f9, type: 2}
   accentColor: {r: 1.125, g: 0.525, b: 1.5, a: 1.5}
   moves:

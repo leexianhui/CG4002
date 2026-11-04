@@ -22,6 +22,8 @@ namespace CG4002.EditorTools
     ///   └─ Debug        bottom-right: RESET, MOVE DUMMY, TRACKING buttons (DebugPanel)
     ///   WeaponSelect (Canvas + WeaponSelectScreen): title and instruction, top centre; the
     ///                   dummies themselves are spawned in the world at runtime
+    ///   FirstPerson  (Canvas + FirstPersonAttack): the recognised move's name, lower centre; the
+    ///                   first-person avatar is spawned under the AR camera at runtime
     ///   EventSystem     routes taps to the buttons
     /// </summary>
     static class HudBuilder
@@ -139,6 +141,45 @@ namespace CG4002.EditorTools
             settings.FindProperty("instruction").objectReferenceValue = instruction;
             settings.ApplyModifiedPropertiesWithoutUndo();
             return screen;
+        }
+
+        /// <summary>
+        /// The local player's first-person attack view, wired to the open scene (dispatcher, state,
+        /// AR camera, prop tracker, FX). Rebuilt from scratch each time.
+        /// </summary>
+        public static CG4002.Controllers.FirstPersonAttack BuildFirstPerson()
+        {
+            var existing = GameObject.Find("FirstPerson");
+            if (existing != null)
+                Object.DestroyImmediate(existing);
+
+            var dispatcher = Object.FindAnyObjectByType<MessageDispatcher>();
+            var gameState = Object.FindAnyObjectByType<GameState>();
+            var placer = Object.FindAnyObjectByType<DummyPlacer>();
+            if (dispatcher == null || gameState == null || placer == null)
+                throw new System.InvalidOperationException("Run CG4002 > Setup Game Scene first: no dispatcher, GameState or DummyPlacer in the scene.");
+
+            var canvasObject = new GameObject("FirstPerson", typeof(Canvas), typeof(CanvasScaler));
+            var canvas = canvasObject.GetComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            var scaler = canvasObject.GetComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920f, 1080f);
+            scaler.matchWidthOrHeight = 0.5f;
+            var label = CentreText(canvasObject.transform, "MoveName", 56, y: -300f);
+
+            var view = canvasObject.AddComponent<CG4002.Controllers.FirstPersonAttack>();
+            var settings = new SerializedObject(view);
+            settings.FindProperty("dispatcher").objectReferenceValue = dispatcher;
+            settings.FindProperty("gameState").objectReferenceValue = gameState;
+            settings.FindProperty("catalog").objectReferenceValue = LoadGenerated<CG4002.Models.WeaponCatalog>("Definitions/WeaponCatalog.asset");
+            settings.FindProperty("avatarPrefab").objectReferenceValue = LoadGenerated<CG4002.Models.AvatarView>("Prefabs/OpponentAvatar.prefab");
+            settings.FindProperty("arCamera").objectReferenceValue = new SerializedObject(placer).FindProperty("arCamera").objectReferenceValue;
+            settings.FindProperty("prop").objectReferenceValue = Object.FindAnyObjectByType<PropTracker>();
+            settings.FindProperty("fx").objectReferenceValue = Object.FindAnyObjectByType<CG4002.FX.CombatFxController>();
+            settings.FindProperty("moveLabel").objectReferenceValue = label;
+            settings.ApplyModifiedPropertiesWithoutUndo();
+            return view;
         }
 
         static T LoadGenerated<T>(string path) where T : Object =>

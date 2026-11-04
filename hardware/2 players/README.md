@@ -59,8 +59,8 @@ flashed with a player 1 sketch pairs with the wrong player.
 
    The sword/shield hubs also apply narrow tolerances from the 2026-10-19
    labeled player 1 captures. Horizontal and diagonal strikes allow distance
-   1.75 instead of 1.50. A missed uppercut may use a 24-degree axis spread
-   and distance 2.25 only when it rotates at least 100 degrees, peaks above
+   1.75 instead of 1.50. A missed uppercut may use a 35-degree axis spread
+   and distance 2.25 only when it rotates at least 60 degrees, peaks above
    250 dps, and has torso ratio at least 0.070. This keeps recorded guard
    raises from passing the wider match. Thrust allows 65 degrees of wrist
    rotation before a penalty. Its distance limit is 1.50 for pushes peaking
@@ -73,10 +73,31 @@ flashed with a player 1 sketch pairs with the wrong player.
 
    Player 2 also accepts a second sword/shield uppercut wrist orientation seen
    in the 2026-10-21 `uppercut` capture. It requires a full swing (at least
-   350 dps and 90 degrees of rotation), torso participation, and a close
+   350 dps and 60 degrees of rotation), torso participation, and a close
    match to that capture's axis and push direction. The same conditional code
    is in both hub sketches, but activates only for `PLAYER_ID=2`. Recheck
    uppercuts and accidental accepts on the physical boards after flashing.
+
+   Both hubs cap the normalised rotation-angle error at +/-0.75 for all
+   rotation strikes. Uppercuts have no angle penalty from 60 to 220 degrees
+   and an axis spread of at least 35 degrees, including the alternate player 2
+   grip. Outside that reference range the angle penalty grows gradually and
+   is capped; this is not a hard accepted-angle range. The uppercut speed and
+   torso gates still apply.
+
+   Spins retain the 250-degree minimum coherent wrist rotation, but have no
+   angle penalty from 250 to 720 degrees. Spin matching allows at least a
+   45-degree axis spread, a 60-degree push-direction spread, and distance 2.25.
+   A matched spin is exempt from return-to-guard suppression, including after
+   a non-spin strike. Torso data is still required. These allowances favour
+   fewer missed attacks and may admit more handling movements; validate with
+   multiple players and the non-action recordings below. A spin split into
+   strokes below 250 degrees can still miss; inspect the stroke logs before
+   reducing that minimum or changing segmentation.
+
+   These runtime allowances are outside the generated tables. Offline fit and
+   replay results do not validate them unless the same policies are implemented
+   in those tools; confirm behaviour on the boards after flashing.
 
 ## Recording and fitting weapon-specific actions
 

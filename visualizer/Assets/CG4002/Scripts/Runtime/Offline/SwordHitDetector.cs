@@ -34,7 +34,7 @@ namespace CG4002.Offline
         void Update()
         {
             // No sword on screen, or no dummy placed yet: nothing can be hit.
-            if (!prop.IsSwordVisible || !dummy.gameObject.activeInHierarchy)
+            if (!prop.IsWeaponVisible || !dummy.gameObject.activeInHierarchy)
             {
                 // Tracking lost: forget the last tip so a jump on re-acquire isn't read as a swing.
                 wasTouching = false;
@@ -42,8 +42,8 @@ namespace CG4002.Offline
                 return;
             }
 
-            Vector3 bladeBase = prop.Sword.trailBase.position;
-            Vector3 tip = prop.Sword.trailTip.position;
+            Vector3 bladeBase = prop.Weapon.trailBase.position;
+            Vector3 tip = prop.Weapon.trailTip.position;
             // Defined for a full-size dummy; scaled with it.
             Vector3 bottom = dummy.transform.TransformPoint(0f, capsuleBottom, 0f);
             Vector3 top = dummy.transform.TransformPoint(0f, capsuleTop, 0f);

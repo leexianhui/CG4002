@@ -16,6 +16,7 @@ MonoBehaviour:
   displayName: Spear
   mainHandPrefab: {fileID: 449078958669571341, guid: b5f3fc56b4b294cb6a26ecdc63f07fad, type: 3}
   offHandPrefab: {fileID: 0}
+  twoHanded: 1
   animations: {fileID: 22100000, guid: c0b1b452020e4417dae95e34ee379bbc, type: 2}
   accentColor: {r: 1.5, g: 0.90000004, b: 0.22500001, a: 1.5}
   moves:

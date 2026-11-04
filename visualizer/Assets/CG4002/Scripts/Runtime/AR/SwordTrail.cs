@@ -37,7 +37,7 @@ namespace CG4002.AR
 
         void Update()
         {
-            if (!prop.IsSwordVisible)
+            if (!prop.IsWeaponVisible)
             {
                 // Tracking lost: stop, and don't treat the jump on re-appearing as a swing.
                 if (trail.IsEmitting)
@@ -46,12 +46,12 @@ namespace CG4002.AR
                 return;
             }
 
-            Vector3 tip = prop.Sword.trailTip.position;
+            Vector3 tip = prop.Weapon.trailTip.position;
             if (hasPreviousTip && Time.deltaTime > 0f)
             {
                 float speed = Vector3.Distance(tip, previousTip) / Time.deltaTime;
                 if (!trail.IsEmitting && speed > startSpeed)
-                    trail.Begin(prop.Sword.trailBase, prop.Sword.trailTip, colour, lifetime);
+                    trail.Begin(prop.Weapon.trailBase, prop.Weapon.trailTip, colour, lifetime);
                 else if (trail.IsEmitting && speed < stopSpeed)
                     trail.End();
             }

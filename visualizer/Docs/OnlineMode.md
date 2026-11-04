@@ -52,7 +52,8 @@ comes from a message. The one difference is who sits on the engine side of the t
 | Phone → engine | `POSITION {x, y, heading}` | 10×/s, only while calibrated |
 | Phone → engine | `VISUALIZER_READY {ready}` | Whenever calibration changes (ready / not ready) |
 | Engine → phone | `STATE_SNAPSHOT` | 10×/s: the complete state of both players |
-| Engine → phone | `COMBAT_EVENT` | Once per resolved attack |
+| Engine → phone | `COMBAT_EVENT` | Once per resolved attack (animates the opponent's avatar) |
+| Engine → phone | `ACTION_RECOGNIZED` | Once per recognised action, resolved or not (animates your own first-person view) |
 
 The phone **never sends attacks**. Actions come from the wearables through the relays and the
 AI classifier, straight to the engine.
@@ -69,8 +70,9 @@ All Unity paths are under `visualizer/Assets/CG4002/`.
 | `Scripts/Runtime/Net/EngineWireCodec.cs` | 144 | JSON ⇄ the message classes in `State/Messages.cs`; coordinate conversion |
 | `Scripts/Runtime/Net/SharedArenaCalibration.cs` | 68 | Puts both phones in one shared coordinate frame |
 | `Scripts/Runtime/Net/PhoneSetupStatus.cs` | 57 | Reads a snapshot for the "setup readings" diagnostics |
-| `Scripts/Editor/OnlineIntegrationSetup.cs` | | Menus **CG4002 → Integration → Create Online Scene** and **Add Weapon Select Screen** |
+| `Scripts/Editor/OnlineIntegrationSetup.cs` | | Menus **CG4002 → Integration → Create Online Scene** and **Refresh Player Views** |
 | `Scripts/Runtime/UI/WeaponSelectScreen.cs`, `Shaders/Hologram.shader` | | Weapon selection before calibration (section 3.3a) |
+| `Scripts/Runtime/Controllers/FirstPersonAttack.cs` | | Your own recognised attacks, first-person (section 3.11) |
 | `Scripts/Editor/EngineTokenBuildStep.cs` | 61 | Copies the engine token from `comms/.env.engine` into the build |
 | `Resources/engine_token.txt` | | The token baked into the app (empty in git) |
 | `Tests/PlayMode/EngineWireCodecTests.cs`, `OnlineEngineConnectionTests.cs`, `PhoneCalibrationTests.cs` | | Tests for the three runtime pieces |
@@ -160,8 +162,11 @@ before the first snapshot and in offline play.
 
 - **Mirrored.** The dummy's weapon hand appears on the same side as the player's, so the player
   copies it like a mirror.
-- **Which weapons are offered:** `weapons` in the Inspector. It is only the sword for now. Adding
-  spear and mace there shows them side by side, once their ready stances are animated.
+- **Which weapons are offered:** `weapons` in the Inspector: spear, sword & shield, mace, left to
+  right as the player sees them, 1 m apart. Each dummy holds its weapon's ready stance:
+  - **sword:** sword up, shield across the chest;
+  - **spear:** two-handed, diagonal, tip forward-up, right hand at the hip, left hand forward;
+  - **mace:** two-handed, upright in front of the chest, hands stacked.
 - **Following the player.** The dummies stand on the lowest detected floor plane (or 1.4 m below
   the camera). If the player turns away for 1.5 s, they move back in front of the camera.
 - **If the hub drops its lock** (reboot), the screen opens again and calibration resets.
@@ -174,8 +179,8 @@ before the first snapshot and in offline play.
   1. In `SampleScene`, select **OfflineEngine** and tick *Require Weapon Selection* on `LocalGameRules`.
   2. Press Play.
   3. Press **1** to play the hub locking the sword.
-- **Setup:** **CG4002 → Integration → Add Weapon Select Screen** adds the screen to both scenes;
-  **Setup Game Scene** also builds it.
+- **Setup:** **CG4002 → Integration → Refresh Player Views** rebuilds it (with the first-person
+  view and prop wiring) in both scenes; **Setup Game Scene** also builds it.
 
 ### 3.4 Shared arena calibration (SharedArenaCalibration.cs)
 
@@ -242,8 +247,9 @@ back, so `UnityHeading` simply calls `CanonicalHeading`.
 | Engine message | Becomes |
 |---|---|
 | `STATE_SNAPSHOT` | For **each** player: `WeaponChanged` (`selected = weapon != null`, `onlyIfChanged` so the avatar doesn't re-equip 10×/s), `Health`, `Guard`, `Position` (if fresh), `Cooldown` (all per-action entries). Then `MatchState` |
-| `COMBAT_EVENT` | `ActionMessage` (attack animation), then `CombatOutcomeMessage` (HP and hit/block FX) |
-| `MATCH_STATE`, `WEAPON_CHANGED`, `ACTION_RECOGNIZED`, `COOLDOWN_STATE`, `POSITION` | Ignored: legacy messages already covered by snapshots |
+| `COMBAT_EVENT` | `ActionMessage` (the opponent avatar's attack animation), then `CombatOutcomeMessage` (HP and hit/block FX) |
+| `ACTION_RECOGNIZED` | `ActionRecognizedMessage` (`onCooldown` when the outcome was `ON_COOLDOWN`) for your first-person view (3.11). Guard-only reports (`action: IDLE`) produce nothing |
+| `MATCH_STATE`, `WEAPON_CHANGED`, `COOLDOWN_STATE`, `POSITION` | Ignored: legacy messages already covered by snapshots |
 
 Engine phases map as:
 - `WAITING`/`ALIGNING` → `Waiting`
@@ -329,6 +335,15 @@ Match tuning (HP, parry window, guard arc) lives in `shared/config/match.yaml`. 
   - The six classifier attacks are shared motions.
   - Each weapon authors its own stance, guard and charged attack.
   - The mace plays the shared motions 10 % slower.
+  - **Spear and mace are two-handed.** Their stance sets `Pose.offHandGrip` (spear +0.4 m: left
+    hand 40 cm up the shaft; mace −0.09 m: stacked just below the right). In every clip the solver
+    (`PoseSolver.OffHandOnWeapon`) finds the right hand and the weapon's direction, then reaches
+    the left hand onto the shaft with two-bone IK. So all six attacks, the charged attack and the
+    idle become two-handed without per-move authoring.
+  - **Guards.** The sword raises its shield on the left-arm guard layer. Spear and mace hold the
+    weapon level across the body at chest height, both hands forward, on a second guard layer
+    that moves both arms (`GuardBoth`). `AvatarView` fades in the layer that suits the weapon
+    (`WeaponDefinition.twoHanded`).
 - **After changing a pose:** run **CG4002 → Generate Models**. Then **CG4002 → Render Preview
   Sheets** writes a film strip of every attack per weapon (`Preview_<Weapon>_Attacks.png`).
 - **The spin** uses `Pose.rootYaw`, which turns the whole body, arms and feet included. The clip
@@ -340,7 +355,46 @@ Match tuning (HP, parry window, guard arc) lives in `shared/config/match.yaml`. 
   - spear: thrust only;
   - mace: vertical and diagonal.
 
-  Moves outside that list are resolved as IGNORED and never reach the phone.
+  Moves outside that list are resolved as IGNORED and never reach the opponent's phone as
+  combat, though they still play first-person on yours (3.11).
+
+### 3.11 Your own attacks, first-person (Controllers/FirstPersonAttack.cs)
+
+Image tracking draws the sword on your prop while you're still (idle, guard). During a fast swing
+the marker blurs and tracking drops, so your attacks are shown by the engine instead:
+
+```
+ wearable ─▶ AI ─▶ engine: ACTION_RECOGNIZED { playerId: you, action: THRUST, outcome: MISS }
+                     │ (sent for every recognised action, hit, miss or ignored)
+                     ▼
+ EngineWireCodec ─▶ ActionRecognizedMessage ─▶ dispatcher.Inbound ─▶ MessageDispatcher.ActionRecognized
+                                                                          │
+                     FirstPersonAttack: mine? not on cooldown? ───────────┘
+                       · prop weapon hidden (PropTracker.Suppressed; tracking keeps running)
+                       · camera-locked avatar plays the THRUST clip, only the weapon arm drawn
+                       · slash trail (CombatFxController), "THRUST" flashes lower centre
+                       · back to Idle ─▶ arm hidden, prop sword back
+```
+
+- **It's a confirmation, not live motion.** The AI only labels a move after its ~1 s motion
+  window closes, plus relay and engine delay, so the animation starts after your real swing.
+- **Opponent vs you.** The opponent's avatar animates from `COMBAT_EVENT` and yours from
+  `ACTION_RECOGNIZED`, so no single attack is animated twice (as `app_messages.md` requires).
+- **Plays for** every recognised attack of yours except `ON_COOLDOWN`, so a spammed move visibly
+  does nothing. Because recognition doesn't need a resolved hit, it also plays in a one-phone
+  test, and while the match is waiting or paused.
+- **Only the arms holding the weapon are drawn.** For the sword, that's the sword arm alone: the
+  shield sits across the chest in the ready stance, right in front of the camera, and would hide
+  most of the view. For the two-handed spear and mace, both forearms on the shaft.
+- **Placement** is a first-person-game "viewmodel": the avatar sits higher and further forward
+  than a real body (*Eye Height* 1.38 m, *Forward* 0.3 m on the `FirstPerson` object) so strikes
+  pass through the middle of the view. Tune both in the Inspector. A thrust always looks short,
+  since it drives along your line of sight; the move name covers it.
+- **Offline** (`LocalGameRules`) reports every attack the same way, so hitting the dummy with
+  the prop plays it too. Editor keys: **H** horizontal, **2** vertical, **3** diagonal, **4** thrust,
+  **5** spin, **6** uppercut. The offline cooldown is 0.6 s, so a key pressed again sooner plays nothing.
+- **Setup:** **CG4002 → Integration → Refresh Player Views** rebuilds it in both scenes;
+  **Setup Game Scene** also builds it.
 
 ---
 
