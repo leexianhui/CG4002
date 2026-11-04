@@ -46,9 +46,9 @@ namespace CG4002.UI
 
         [Header("Layout")]
         [Tooltip("Weapons offered, left to right as the player sees them.")]
-        [SerializeField] WeaponType[] weapons = { WeaponType.SwordAndShield };
+        [SerializeField] WeaponType[] weapons = { WeaponType.Spear, WeaponType.SwordAndShield, WeaponType.Mace };
         [SerializeField] float distance = 2.5f;
-        [SerializeField] float spacing = 1.2f;
+        [SerializeField] float spacing = 1.0f;
         [SerializeField] float dummyHeight = 1.6f;
         [Tooltip("Seconds the dummies may be out of view before they move back in front of the camera.")]
         [SerializeField] float recentreAfter = 1.5f;

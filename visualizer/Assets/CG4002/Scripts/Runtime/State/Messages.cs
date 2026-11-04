@@ -68,6 +68,19 @@ namespace CG4002.State
     }
 
     /// <summary>
+    /// The AI recognised an attack by <see cref="Message.player"/>, whether or not it went on to
+    /// resolve (engine ACTION_RECOGNIZED). Drives the local player's first-person animation; the
+    /// opponent's avatar animates from ActionMessage instead, so no attack is animated twice.
+    /// An event: not stored in GameState.
+    /// </summary>
+    public class ActionRecognizedMessage : Message
+    {
+        public ActionType action;
+        [Tooltip("The move was still on cooldown, so the engine did nothing with it.")]
+        public bool onCooldown;
+    }
+
+    /// <summary>
     /// Result of an attack; <see cref="Message.player"/> is the defender. Carries the
     /// defender's resulting health, not just the damage, so a lost message can't leave
     /// health permanently wrong.

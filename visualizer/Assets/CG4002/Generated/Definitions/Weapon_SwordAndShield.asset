@@ -16,6 +16,7 @@ MonoBehaviour:
   displayName: Sword & Shield
   mainHandPrefab: {fileID: 2032831773782835759, guid: 5ebc331bd421b4107a293e315e2beea8, type: 3}
   offHandPrefab: {fileID: 1749677284976474017, guid: 7c9dc255f0c36495694d600b8f9b98b8, type: 3}
+  twoHanded: 0
   animations: {fileID: 22100000, guid: 7074d30c3c7a84ee598fbc8bcb722b6b, type: 2}
   accentColor: {r: 0.375, g: 1.2750001, b: 1.5, a: 1.5}
   moves:

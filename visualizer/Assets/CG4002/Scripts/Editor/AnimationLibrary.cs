@@ -11,7 +11,8 @@ namespace CG4002.EditorTools
     ///
     /// Each weapon authors its own stance, guard and charged attack. The six classifier attacks
     /// (horizontal, vertical, diagonal, thrust, spin, uppercut) are shared motions played from
-    /// that stance, at the weapon's pace.
+    /// that stance, at the weapon's pace. Spear and mace are two-handed: their stance sets
+    /// Pose.offHandGrip, so in every clip the solver puts the left hand on the shaft.
     ///
     /// Timing note: the classifier labels an action only after the player's motion window
     /// closes, so these clips arrive late by design. Wind-ups are kept short and strikes
@@ -54,6 +55,22 @@ namespace CG4002.EditorTools
                 armL = new ArmPose(raised.upper + V(0f, 0.04f, 0f), raised.fore + V(0f, -0.03f, 0f), raised.facing),
             };
             return new ClipSpec { name = name, loop = true, guardLayerOnly = true }
+                .Key(0f, settle)
+                .Key(0.6f, shift)
+                .Key(1.2f, settle);
+        }
+
+        /// <summary>
+        /// A two-handed weapon's guard: both arms, the weapon held by the right hand as given and the
+        /// left hand solved onto it (the stance's offHandGrip). Plays on the both-arms guard layer.
+        /// </summary>
+        static ClipSpec TwoHandGuard(string name, Pose stance, ArmPose weaponArm)
+        {
+            var settle = stance.Copy();
+            settle.armR = weaponArm;
+            var shift = settle.Copy();
+            shift.armR = new ArmPose(weaponArm.upper + V(0f, 0.03f, 0f), weaponArm.fore, weaponArm.facing);
+            return new ClipSpec { name = name, loop = true, guardLayerOnly = true, bothArms = true }
                 .Key(0f, settle)
                 .Key(0.6f, shift)
                 .Key(1.2f, settle);
@@ -334,12 +351,14 @@ namespace CG4002.EditorTools
 
         static WeaponClips Spear()
         {
+            // Ready stance: right hand low at the hip, spear angled forward and up, left hand 40 cm up
+            // the shaft at chest height. Two-handed, so the left arm is solved onto the shaft.
             var stance = new Pose
             {
                 hips = V(0f, -0.03f, 0f),
                 hipsYaw = 12f,
                 armR = new ArmPose(V(0.3f, -0.95f, 0.05f), V(0.05f, -0.85f, 0.5f), V(0.05f, 0.55f, 0.85f)),
-                armL = new ArmPose(V(-0.25f, -0.95f, 0.2f), V(0.35f, -0.3f, 0.9f), V(0f, 1f, 0f)),
+                offHandGrip = 0.4f,
             };
 
             // Charged: overhead javelin grip, then a lunging thrust.
@@ -350,7 +369,6 @@ namespace CG4002.EditorTools
             draw.chestPitch = -8f;
             draw.footR = V(0.18f, MannequinRig.AnkleHeight, -0.2f);
             draw.armR = new ArmPose(V(0.55f, 0.5f, -0.65f), V(0.05f, 0.95f, 0.25f), V(0f, -0.2f, 1f));
-            draw.armL = new ArmPose(V(-0.3f, -0.2f, 0.95f), V(0.2f, 0.2f, 0.95f), V(0f, 1f, 0f));
 
             var tremble = draw.Copy();
             tremble.hips += V(0f, -0.01f, 0f);
@@ -362,7 +380,6 @@ namespace CG4002.EditorTools
             lunge.chestPitch = 18f;
             lunge.footL = V(-0.12f, MannequinRig.AnkleHeight, 0.45f);
             lunge.armR = new ArmPose(V(0.15f, 0.05f, 1f), V(0.05f, 0.95f, -0.05f), V(0f, -0.1f, 1f));
-            lunge.armL = new ArmPose(V(-0.35f, -0.7f, -0.4f), V(-0.1f, -0.9f, 0.3f), V(0f, 0f, 1f));
 
             var extend = lunge.Copy();
             extend.armR = new ArmPose(V(0.12f, -0.05f, 1f), V(0f, 0.9f, -0.1f), V(0f, -0.15f, 1f));
@@ -378,20 +395,23 @@ namespace CG4002.EditorTools
                 .Event(0.40f, C.StrikeOpenEvent)
                 .Event(0.64f, C.StrikeCloseEvent);
 
+            // Guard: the shaft held level across the body at chest height, both hands forward, tip to the left.
             return Complete("Spear", stance, pace: 1f, charged,
-                Guard("Spear_Guard", new ArmPose(V(-0.35f, -0.35f, 0.85f), V(0.9f, 0.35f, 0.2f), V(0f, 0.1f, 1f))));
+                TwoHandGuard("Spear_Guard", stance, new ArmPose(V(0.35f, -0.55f, 0.75f), V(0.05f, 0.25f, 1f), V(-1f, 0f, 0.05f))));
         }
 
         // ---- Mace -------------------------------------------------------------------------------
 
         static WeaponClips Mace()
         {
+            // Ready stance: held upright in front of the chest, head up, both hands stacked on the
+            // handle (left just below right).
             var stance = new Pose
             {
                 hips = V(0f, -0.04f, 0f),
                 hipsYaw = 8f,
-                armR = new ArmPose(V(0.3f, -0.95f, 0.1f), V(0.05f, -0.7f, 0.7f), V(0.1f, 0.7f, 0.7f)),
-                armL = new ArmPose(V(-0.3f, -0.9f, 0.2f), V(0.4f, -0.1f, 0.9f), V(0f, 1f, 0f)),
+                armR = new ArmPose(V(0.2f, -0.8f, 0.55f), V(-0.5f, 0f, 0.85f), V(0f, 1f, 0.1f)),
+                offHandGrip = -0.09f,
             };
 
             // Charged: wind far back behind the shoulder, then a crouching slam.
@@ -429,8 +449,9 @@ namespace CG4002.EditorTools
                 .Event(0.66f, C.StrikeCloseEvent);
 
             // Heavier than the others: every shared motion plays 10 % slower.
+            // Guard: the handle held level across the body, both hands forward, head to the right.
             return Complete("Mace", stance, pace: 1.1f, charged,
-                Guard("Mace_Guard", new ArmPose(V(-0.35f, -0.35f, 0.85f), V(0.9f, 0.35f, 0.2f), V(0f, 0.1f, 1f))));
+                TwoHandGuard("Mace_Guard", stance, new ArmPose(V(0f, -0.55f, 0.8f), V(-0.15f, 0.25f, 1f), V(1f, 0f, 0.15f))));
         }
     }
 }

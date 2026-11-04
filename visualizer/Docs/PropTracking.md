@@ -77,13 +77,18 @@ exactly the printed area.
 | `Mace` | `Fissure.png` | 7 × 12 cm | the mace: a flat card on the handle between the hands |
 | `SwordBackup` | `two.png` | 9 × 9 cm | the previous sword marker, until the sword prop is reprinted |
 
-Only `Sword`/`SwordBackup` drive a model so far (`PropTracker`); the others are detected and
-shown by the TRACKING overlay. The images are © PTC (Vuforia samples): fine for this project,
-not ours to redistribute.
+`PropTracker` draws the model of the weapon this player holds (from the engine) on that weapon's
+marker: Sword/SwordBackup → sword, Spear → spear, Mace → mace. The shield marker is detected and
+shown by the TRACKING overlay but drives no model yet. The images are © PTC (Vuforia samples):
+fine for this project, not ours to redistribute.
 
-- **New card on the sword?** `PropTracker`'s *Marker To Grip Centre* is measured on the prop,
-  from the marker's centre to the middle of the handle. Re-measure it if the new card sits
-  somewhere else on the sword.
+- **Measure each prop.** Each weapon has its own *Props* entry on the Prop Tracker: *Marker To Grip
+  Centre* (marker centre back to the middle of the weapon hand's grip) and *Marker To Tip*. The
+  sword's are measured. The spear's (0.2 / 0.98) and mace's (0.12 / 0.56) assume the card sits
+  centred between the hands (spear) or just above them (mace); re-measure on the real props.
+- **Glue each card with the top of the picture pointing toward the weapon's tip.** On the spear and
+  mace, glue it flat to a rigid card on the shaft, never wrapped round it.
+- **Rewiring:** **CG4002 → Integration → Refresh Player Views** rewires the markers and models but keeps the measurements already set.
 
 - **Why the physical size matters:** a camera sees only an image's size *in pixels*. The same
   picture looks the same whether it is small and close or big and far. Telling ARKit the real

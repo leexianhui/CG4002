@@ -34,7 +34,7 @@ instruction below; the preview images are not required to build or run the proje
 - **Editor:**
   1. Open `Assets/Scenes/SampleScene` and press Play (XR Simulation).
   2. Click a detected floor plane to place the dummy.
-  3. Keys: **H** hit the dummy · **G** toggle its guard · **C** it hits you · **R** restart.
+  3. Keys: **H** hit the dummy · **2–6** your other attacks (vertical, diagonal, thrust, spin, uppercut) · **G** toggle its guard · **C** it hits you · **R** restart.
 - **Phone:** File → Build Profiles → iOS → Build, then run from Xcode. Tap the floor to place
   the dummy and swing the prop into it. Print the markers from `Docs/PropMarkers_Mars.pdf` at 100% (7 × 12 cm each).
 - **Tests:** Window → General → Test Runner → PlayMode → Run All. Or headless:

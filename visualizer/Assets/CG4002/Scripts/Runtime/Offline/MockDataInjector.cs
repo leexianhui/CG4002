@@ -35,6 +35,16 @@ namespace CG4002.Offline
         // The opponent has always chosen already, so only the local player sees weapon selection.
         void Start() => rules.LockWeapon(dummy, WeaponType.SwordAndShield);
 
+        // Number keys, not letters: XR Simulation steers its camera with WASD.
+        static readonly (Key key, ActionType action)[] MyAttackKeys =
+        {
+            (Key.Digit2, ActionType.VerticalSwing),
+            (Key.Digit3, ActionType.DiagonalSwing),
+            (Key.Digit4, ActionType.Thrust),
+            (Key.Digit5, ActionType.SpinAttack),
+            (Key.Digit6, ActionType.Uppercut),
+        };
+
         void OnEnable()
         {
             if (dummyGuards) StartCoroutine(GuardRoutine());
@@ -77,7 +87,8 @@ namespace CG4002.Offline
 
         // Editor testing: H = my sword hits the dummy, G = toggle the dummy's guard,
         // C = the dummy attacks me, R = restart the match,
-        // 1 = I hold the sword stance until the hub locks it (with Require Weapon Selection on).
+        // 1 = I hold the sword stance until the hub locks it (with Require Weapon Selection on),
+        // 2-6 = my other attacks (see MyAttackKeys), each shown first-person like a recognised move.
         void Update()
         {
             var keyboard = Keyboard.current;
@@ -89,6 +100,11 @@ namespace CG4002.Offline
             if (keyboard.cKey.wasPressedThisFrame) rules.Attack(dummy, ActionType.HorizontalSwing);
             if (keyboard.rKey.wasPressedThisFrame) rules.StartMatch();
             if (keyboard.digit1Key.wasPressedThisFrame) rules.LockWeapon(localPlayer, WeaponType.SwordAndShield);
+            foreach (var (key, action) in MyAttackKeys)
+            {
+                if (keyboard[key].wasPressedThisFrame)
+                    rules.Attack(localPlayer, action);
+            }
         }
     }
 }

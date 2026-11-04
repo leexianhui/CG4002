@@ -1,5 +1,6 @@
 using System;
 using CG4002.AR;
+using CG4002.Combat;
 using CG4002.Controllers;
 using CG4002.FX;
 using CG4002.Models;
@@ -28,6 +29,7 @@ namespace CG4002.EditorTools
     ///     OpponentAvatar   AvatarView + AvatarController
     ///   HUD            Canvas + HudController + DebugPanel (layout from HudBuilder)
     ///   WeaponSelect   Canvas + WeaponSelectScreen (shown while the engine reports no weapon)
+    ///   FirstPerson    Canvas + FirstPersonAttack (your recognised attacks, seen first-person)
     ///
     /// Game, OfflineEngine and HUD are rebuilt from scratch each run. Run CG4002 > Setup Image
     /// Tracking first. Safe to re-run: CG4002 > Setup Game Scene.
@@ -115,7 +117,7 @@ namespace CG4002.EditorTools
             Set(mock, "rules", rules);
 
             Set(propTracker, "manager", imageManager);
-            Set(propTracker, "swordPrefab", Load<WeaponView>("Prefabs/Weapon_Sword.prefab"));
+            WireProps(propTracker, gameState);
             Set(hitDetector, "prop", propTracker);
             Set(hitDetector, "dummy", avatar);
             Set(hitDetector, "dispatcher", dispatcher);
@@ -153,10 +155,63 @@ namespace CG4002.EditorTools
 
             HudBuilder.Build(gameState, dispatcher, placer, trackingOverlay);
             HudBuilder.BuildWeaponSelect();
+            HudBuilder.BuildFirstPerson();
 
             EditorSceneManager.MarkSceneDirty(scene);
             EditorSceneManager.SaveScene(scene);
             Debug.Log("[CG4002] Game scene set up.");
+        }
+
+        /// <summary>
+        /// Which marker drives which weapon's model, and each prop's measurements. Measurements already
+        /// set on the tracker are kept, so re-running doesn't undo values measured on the real props;
+        /// the defaults below only fill in new entries. The spear and mace defaults are starting
+        /// values (marker centred between the hands): re-measure on the real props.
+        /// </summary>
+        public static void WireProps(PropTracker tracker, GameState gameState)
+        {
+            if (tracker == null)
+                throw new InvalidOperationException("No PropTracker in the scene: run CG4002 > Setup Game Scene first.");
+            var props = new[]
+            {
+                (WeaponType.SwordAndShield, new[] { "Sword", "SwordBackup" }, "Prefabs/Weapon_Sword.prefab", 0.155f, 0.8f),
+                // Card on the shaft halfway between the hands (40 cm apart); model's grip-to-tip 1.18 m.
+                (WeaponType.Spear, new[] { "Spear" }, "Prefabs/Weapon_Spear.prefab", 0.2f, 0.98f),
+                // Card on the handle just above the hands; model's grip-to-tip 0.68 m.
+                (WeaponType.Mace, new[] { "Mace" }, "Prefabs/Weapon_Mace.prefab", 0.12f, 0.56f),
+            };
+
+            var settings = new SerializedObject(tracker);
+            settings.FindProperty("gameState").objectReferenceValue = gameState;
+            var list = settings.FindProperty("props");
+
+            var measured = new System.Collections.Generic.Dictionary<int, (float grip, float tip)>();
+            for (int i = 0; i < list.arraySize; i++)
+            {
+                var old = list.GetArrayElementAtIndex(i);
+                float grip = old.FindPropertyRelative("markerToGripCentre").floatValue;
+                float tip = old.FindPropertyRelative("markerToTip").floatValue;
+                if (grip != 0f || tip != 0f)
+                    measured[old.FindPropertyRelative("weapon").enumValueIndex] = (grip, tip);
+            }
+
+            list.arraySize = props.Length;
+            for (int i = 0; i < props.Length; i++)
+            {
+                var (weapon, imageNames, prefab, markerToGrip, markerToTip) = props[i];
+                var entry = list.GetArrayElementAtIndex(i);
+                entry.FindPropertyRelative("weapon").enumValueIndex = (int)weapon;
+                var names = entry.FindPropertyRelative("imageNames");
+                names.arraySize = imageNames.Length;
+                for (int n = 0; n < imageNames.Length; n++)
+                    names.GetArrayElementAtIndex(n).stringValue = imageNames[n];
+                entry.FindPropertyRelative("prefab").objectReferenceValue = Load<WeaponView>(prefab);
+                if (measured.TryGetValue((int)weapon, out var kept))
+                    (markerToGrip, markerToTip) = kept;
+                entry.FindPropertyRelative("markerToGripCentre").floatValue = markerToGrip;
+                entry.FindPropertyRelative("markerToTip").floatValue = markerToTip;
+            }
+            settings.ApplyModifiedPropertiesWithoutUndo();
         }
 
         static T Load<T>(string path) where T : UnityEngine.Object =>

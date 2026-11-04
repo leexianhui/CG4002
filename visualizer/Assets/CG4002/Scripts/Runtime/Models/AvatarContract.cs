@@ -16,10 +16,12 @@ namespace CG4002.Models
         // Animator layers
         public const int BodyLayer = 0;
         public const int GuardLayer = 1;
+        public const int GuardBothLayer = 2;
 
         // States in the base controller. Each weapon overrides the clip behind each one.
         public const string IdleState = "Idle";
         public const string GuardState = "Guard";
+        public const string GuardBothState = "GuardBoth";
 
         /// <summary>Every AttackSlot has a body-layer state of the same name.</summary>
         public static string AttackState(AttackSlot slot) => slot.ToString();

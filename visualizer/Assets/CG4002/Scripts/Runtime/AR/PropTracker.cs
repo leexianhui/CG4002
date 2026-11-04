@@ -1,4 +1,8 @@
+using System;
+using System.Collections.Generic;
+using CG4002.Combat;
 using CG4002.Models;
+using CG4002.State;
 using UnityEngine;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
@@ -6,42 +10,63 @@ using UnityEngine.XR.ARSubsystems;
 namespace CG4002.AR
 {
     /// <summary>
-    /// Draws the sword model on the physical sword prop, using the marker ARKit tracks on the
-    /// blade. ARKit gives the marker's pose; this works out where the grip and tip are from the
+    /// Draws the held weapon's model on its physical prop, using the marker ARKit tracks on the
+    /// prop. ARKit gives the marker's pose; this works out where the grip and tip are from the
     /// prop's measurements, scales the model to the prop's length, and smooths the result.
     ///
+    /// Each weapon's prop has its own marker and measurements (Props). Only the weapon this player
+    /// holds (GameState, from the engine) is drawn.
+    ///
     /// Marker frame (from AR Foundation): +Y out of the print, +Z towards the top of the picture,
-    /// which is glued pointing up the blade. Weapon frame: pivot at the grip, +Y towards the tip.
+    /// which is glued pointing toward the weapon's tip. Weapon frame: pivot at the weapon hand's
+    /// grip, +Y towards the tip.
     /// </summary>
     public class PropTracker : MonoBehaviour
     {
-        [SerializeField] ARTrackedImageManager manager;
-        [SerializeField] WeaponView swordPrefab;
-        [Tooltip("Reference image names that count as the sword marker.")]
-        [SerializeField] string[] swordImageNames = { "Sword", "SwordBackup" };
+        [Serializable]
+        public class Prop
+        {
+            public WeaponType weapon;
+            [Tooltip("Reference image names that count as this prop's marker.")]
+            public string[] imageNames;
+            public WeaponView prefab;
 
-        [Header("Prop measurements (metres)")]
-        [Tooltip("Along the blade, from the marker's centre down to the middle of the handle.")]
-        [SerializeField] float markerToGripCentre = 0.155f;
-        [Tooltip("Along the blade, from the marker's centre up to where the rendered tip should be. " +
-                 "Can be longer than the prop. The model is scaled uniformly to fit, and looks its natural size " +
-                 "when this plus Marker To Grip Centre is about 0.95.")]
-        [SerializeField] float markerToTip = 0.8f;
+            [Header("Measured on the prop (metres)")]
+            [Tooltip("Along the weapon, from the marker's centre back to the middle of the weapon hand's grip.")]
+            public float markerToGripCentre;
+            [Tooltip("Along the weapon, from the marker's centre up to where the rendered tip should be. Can be " +
+                     "longer than the prop. The model is scaled uniformly to fit, and looks its natural size when " +
+                     "this plus Marker To Grip Centre equals the model's grip-to-tip length.")]
+            public float markerToTip;
+        }
+
+        [SerializeField] ARTrackedImageManager manager;
+        [Tooltip("Optional. Draws the prop of the weapon this player holds; without it, the first prop.")]
+        [SerializeField] GameState gameState;
+        [SerializeField] Prop[] props = Array.Empty<Prop>();
 
         [Header("Tracking")]
-        [Tooltip("Keep showing the sword this long after tracking drops, so brief dropouts don't flicker.")]
+        [Tooltip("Keep showing the weapon this long after tracking drops, so brief dropouts don't flicker.")]
         [SerializeField] float holdSeconds = 0.3f;
         [Tooltip("How quickly the model follows the marker. Higher is snappier but shows more jitter.")]
         [SerializeField] float followSpeed = 25f;
 
-        ARTrackedImage trackedImage;
+        readonly Dictionary<string, ARTrackedImage> images = new();
+        readonly Dictionary<WeaponType, WeaponView> models = new();
+        Prop current;
         float lastTrackedTime = float.NegativeInfinity;
 
-        /// <summary>The sword model, or null before the prop is first seen.</summary>
-        public WeaponView Sword { get; private set; }
+        /// <summary>The held weapon's model, or null before its prop is first drawn.</summary>
+        public WeaponView Weapon { get; private set; }
+
+        /// <summary>
+        /// Hides the weapon model without stopping tracking, e.g. while the first-person attack
+        /// animation shows the weapon instead. It reappears at the tracked pose when cleared.
+        /// </summary>
+        public bool Suppressed { get; set; }
 
         /// <summary>True while the model is shown, i.e. tracked now or within holdSeconds.</summary>
-        public bool IsSwordVisible => Sword != null && Sword.gameObject.activeSelf;
+        public bool IsWeaponVisible => Weapon != null && Weapon.gameObject.activeSelf;
 
         void OnEnable() => manager.trackablesChanged.AddListener(OnTrackablesChanged);
         void OnDisable() => manager.trackablesChanged.RemoveListener(OnTrackablesChanged);
@@ -49,64 +74,97 @@ namespace CG4002.AR
         void OnTrackablesChanged(ARTrackablesChangedEventArgs<ARTrackedImage> args)
         {
             foreach (var image in args.added)
-            {
-                if (trackedImage == null && IsSwordImage(image))
-                    trackedImage = image;
-            }
+                images[image.referenceImage.name] = image;
             foreach (var removed in args.removed)
             {
-                if (removed.Value == trackedImage)
-                    trackedImage = null;
+                foreach (var (name, image) in new List<KeyValuePair<string, ARTrackedImage>>(images))
+                {
+                    if (image == removed.Value)
+                        images.Remove(name);
+                }
             }
         }
-
-        bool IsSwordImage(ARTrackedImage image) =>
-            System.Array.IndexOf(swordImageNames, image.referenceImage.name) >= 0;
 
         void Update()
         {
-            bool tracking = trackedImage != null && trackedImage.trackingState == TrackingState.Tracking;
-            if (tracking)
+            var selected = SelectedProp();
+            if (selected != current)
             {
-                if (Sword == null)
-                    Sword = CreateSword();
-                lastTrackedTime = Time.time;
-                FollowMarker(snap: !Sword.gameObject.activeSelf);
+                if (Weapon != null)
+                    Weapon.gameObject.SetActive(false);
+                current = selected;
+                Weapon = current != null ? ModelFor(current) : null;
+                lastTrackedTime = float.NegativeInfinity;
             }
-            if (Sword != null)
-                Sword.gameObject.SetActive(Time.time - lastTrackedTime <= holdSeconds);
+            if (current == null)
+                return;
+
+            var marker = TrackedMarker(current);
+            if (marker != null)
+            {
+                lastTrackedTime = Time.time;
+                FollowMarker(marker, snap: !Weapon.gameObject.activeSelf);
+            }
+            Weapon.gameObject.SetActive(!Suppressed && Time.time - lastTrackedTime <= holdSeconds);
         }
 
-        WeaponView CreateSword()
+        Prop SelectedProp()
         {
-            var sword = Instantiate(swordPrefab);
-            sword.name = "Tracked Sword";
+            if (props.Length == 0)
+                return null;
+            if (gameState == null)
+                return props[0];
+            foreach (var prop in props)
+            {
+                if (prop.weapon == gameState.Self.weapon)
+                    return prop;
+            }
+            return null;
+        }
+
+        ARTrackedImage TrackedMarker(Prop prop)
+        {
+            foreach (var name in prop.imageNames)
+            {
+                if (images.TryGetValue(name, out var image) && image.trackingState == TrackingState.Tracking)
+                    return image;
+            }
+            return null;
+        }
+
+        WeaponView ModelFor(Prop prop)
+        {
+            if (models.TryGetValue(prop.weapon, out var existing))
+                return existing;
+
+            var model = Instantiate(prop.prefab);
+            model.name = $"Tracked {prop.weapon}";
             // Start hidden: the first tracked frame then snaps it onto the prop instead of
             // gliding in from wherever the prefab was spawned.
-            sword.gameObject.SetActive(false);
+            model.gameObject.SetActive(false);
             // Scale the model so its tip lands on the prop's tip.
-            float modelGripToTip = sword.trailTip.localPosition.y;
-            sword.transform.localScale = Vector3.one * ((markerToGripCentre + markerToTip) / modelGripToTip);
-            return sword;
+            float modelGripToTip = model.trailTip.localPosition.y;
+            model.transform.localScale = Vector3.one * ((prop.markerToGripCentre + prop.markerToTip) / modelGripToTip);
+            models[prop.weapon] = model;
+            return model;
         }
 
-        void FollowMarker(bool snap)
+        void FollowMarker(ARTrackedImage marker, bool snap)
         {
-            Transform marker = trackedImage.transform;
-            Vector3 upTheBlade = marker.forward;  // marker +Z, glued pointing at the tip
-            Vector3 targetPosition = marker.position - upTheBlade * markerToGripCentre;
-            // Weapon +Y runs up the blade; its flat faces the same way as the print.
-            Quaternion targetRotation = Quaternion.LookRotation(marker.up, upTheBlade);
+            Vector3 upTheWeapon = marker.transform.forward;  // marker +Z, glued pointing at the tip
+            Vector3 targetPosition = marker.transform.position - upTheWeapon * current.markerToGripCentre;
+            // Weapon +Y runs up the weapon; its flat faces the same way as the print.
+            Quaternion targetRotation = Quaternion.LookRotation(marker.transform.up, upTheWeapon);
 
             if (snap)
             {
-                Sword.transform.SetPositionAndRotation(targetPosition, targetRotation);
+                Weapon.transform.SetPositionAndRotation(targetPosition, targetRotation);
                 return;
             }
             float t = 1f - Mathf.Exp(-followSpeed * Time.deltaTime);
-            Sword.transform.SetPositionAndRotation(
-                Vector3.Lerp(Sword.transform.position, targetPosition, t),
-                Quaternion.Slerp(Sword.transform.rotation, targetRotation, t));
+            Weapon.transform.SetPositionAndRotation(
+                Vector3.Lerp(Weapon.transform.position, targetPosition, t),
+                Quaternion.Slerp(Weapon.transform.rotation, targetRotation, t));
         }
     }
 }

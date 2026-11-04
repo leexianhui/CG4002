@@ -52,21 +52,24 @@ namespace CG4002.EditorTools
             Debug.Log("Online scene created. Add it to your build profile. Configure URL/player/token at runtime; calibrate both phones.");
         }
 
-        /// <summary>Adds (or rebuilds) the weapon-selection screen in both scenes, touching nothing else.</summary>
-        [MenuItem("CG4002/Integration/Add Weapon Select Screen")]
-        public static void AddWeaponSelect()
+        /// <summary>
+        /// Rebuilds the player-facing pieces in both scenes, touching nothing else: the weapon
+        /// selection screen, the first-person attack view, and which prop each weapon's marker drives.
+        /// </summary>
+        [MenuItem("CG4002/Integration/Refresh Player Views")]
+        public static void RefreshPlayerViews()
         {
             if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
-            AddWeaponSelectTo(Source);
-            AddWeaponSelectTo(Destination);
+            RefreshPlayerViewsIn(Source);
+            RefreshPlayerViewsIn(Destination);
         }
 
-        public static void AddWeaponSelectBatch()
+        public static void RefreshPlayerViewsBatch()
         {
             try
             {
-                AddWeaponSelectTo(Source);
-                AddWeaponSelectTo(Destination);
+                RefreshPlayerViewsIn(Source);
+                RefreshPlayerViewsIn(Destination);
                 EditorApplication.Exit(0);
             }
             catch (Exception e)
@@ -76,10 +79,11 @@ namespace CG4002.EditorTools
             }
         }
 
-        static void AddWeaponSelectTo(string path)
+        static void RefreshPlayerViewsIn(string path)
         {
             if (AssetDatabase.LoadAssetAtPath<SceneAsset>(path) == null) return;
             var scene = EditorSceneManager.OpenScene(path);
+
             var screen = HudBuilder.BuildWeaponSelect();
             var client = UnityEngine.Object.FindAnyObjectByType<OnlineEngineClient>(FindObjectsInactive.Include);
             if (client != null)
@@ -87,9 +91,13 @@ namespace CG4002.EditorTools
                 client.weaponSelect = screen;
                 EditorUtility.SetDirty(client);
             }
+            HudBuilder.BuildFirstPerson();
+            GameSceneSetup.WireProps(UnityEngine.Object.FindAnyObjectByType<PropTracker>(),
+                UnityEngine.Object.FindAnyObjectByType<GameState>());
+
             EditorSceneManager.MarkSceneDirty(scene);
             EditorSceneManager.SaveScene(scene);
-            Debug.Log($"[CG4002] Weapon select screen added to {path}.");
+            Debug.Log($"[CG4002] Player views refreshed in {path}.");
         }
     }
 }

@@ -36,6 +36,12 @@ namespace CG4002.EditorTools
         /// Unlike hipsYaw, arm directions and feet turn with it, and the head doesn't counter-rotate.
         /// </summary>
         public float rootYaw;
+        /// <summary>
+        /// Two-handed grip: metres along the weapon from the weapon hand to the off hand (positive
+        /// toward the tip). When non-zero, armL is ignored, armR only says where the weapon is and
+        /// which way it points, and both arms are solved onto the shaft (PoseSolver.TwoHandedArms).
+        /// </summary>
+        public float offHandGrip;
         public Vector3 footL = new(-0.14f, MannequinRig.AnkleHeight, 0.1f);
         public Vector3 footR = new(0.15f, MannequinRig.AnkleHeight, -0.08f);
         public ArmPose armR = new(new Vector3(0.15f, -1f, 0.05f), new Vector3(0.1f, -1f, 0.2f), Vector3.forward);
@@ -56,6 +62,7 @@ namespace CG4002.EditorTools
                 chestRoll = Mathf.Lerp(a.chestRoll, b.chestRoll, t),
                 headPitch = Mathf.Lerp(a.headPitch, b.headPitch, t),
                 rootYaw = Mathf.Lerp(a.rootYaw, b.rootYaw, t),
+                offHandGrip = Mathf.Lerp(a.offHandGrip, b.offHandGrip, t),
                 footL = Step(a.footL, b.footL, t),
                 footR = Step(a.footR, b.footR, t),
                 armR = Lerp(a.armR, b.armR, t),
@@ -92,6 +99,8 @@ namespace CG4002.EditorTools
         public string name;
         public bool loop;
         public bool guardLayerOnly;
+        /// <summary>With guardLayerOnly: bake both arms (a two-handed guard) instead of the off arm only.</summary>
+        public bool bothArms;
         public readonly List<(float time, Pose pose, Ease ease)> keys = new();
         public readonly List<(float time, string function)> events = new();
 
@@ -165,10 +174,15 @@ namespace CG4002.EditorTools
             float totalPitch = pose.spinePitch + pose.chestPitch;
             local[MannequinRig.Head] = Quaternion.Euler(pose.headPitch - totalPitch * 0.6f, -totalYaw * 0.75f, -pose.chestRoll * 0.5f);
 
-            SolveArm(Turn(root, pose.armR), chestW, MannequinRig.UpperArmR, MannequinRig.ForearmR, local);
-            SolveArm(Turn(root, pose.armL), chestW, MannequinRig.UpperArmL, MannequinRig.ForearmL, local);
-
             Vector3 hipsPos = MannequinRig.HipsRest + root * pose.hips;
+
+            ArmPose armR = Turn(root, pose.armR);
+            ArmPose armL = Turn(root, pose.armL);
+            if (pose.offHandGrip != 0f)
+                (armR, armL) = TwoHandedArms(armR, pose.offHandGrip, hipsPos, hipsW, spineW, chestW);
+            SolveArm(armR, chestW, MannequinRig.UpperArmR, MannequinRig.ForearmR, local);
+            SolveArm(armL, chestW, MannequinRig.UpperArmL, MannequinRig.ForearmL, local);
+
             Quaternion feetW = root * Quaternion.Euler(0f, pose.hipsYaw * 0.5f, 0f);
             SolveLeg(hipsPos, hipsW, +1f, root * pose.footR, MannequinRig.UpperLegR, MannequinRig.LowerLegR, MannequinRig.FootR, feetW, local);
             SolveLeg(hipsPos, hipsW, -1f, root * pose.footL, MannequinRig.UpperLegL, MannequinRig.LowerLegL, MannequinRig.FootL, feetW, local);
@@ -177,6 +191,96 @@ namespace CG4002.EditorTools
         }
 
         static ArmPose Turn(Quaternion root, ArmPose arm) => new(root * arm.upper, root * arm.fore, root * arm.facing);
+
+        // The grip sits this far past the wrist, where AvatarView's weapon socket is (ModelFactory.BuildAvatar).
+        const float WristToGrip = 0.05f;
+
+        static Vector3 Shoulder(float side, Vector3 hipsPos, Quaternion hipsW, Quaternion spineW, Quaternion chestW)
+        {
+            Vector3 spine = hipsPos + hipsW * new Vector3(0f, 0.10f, 0f);
+            Vector3 chest = spine + spineW * new Vector3(0f, 0.18f, 0f);
+            return chest + chestW * new Vector3(MannequinRig.ShoulderWidth * side, 0.25f, 0f);
+        }
+
+        const float ArmReach = MannequinRig.UpperArmLength + MannequinRig.ForearmLength + WristToGrip;
+
+        /// <summary>
+        /// Both arms on a two-handed weapon. The move's right arm only supplies where the weapon is and
+        /// which way it points; the grips are then pulled in until both shoulders can reach them (a
+        /// one-handed motion often holds the weapon at full stretch), and both arms are solved by IK.
+        /// Each elbow is placed so its forearm stays perpendicular to the shaft, as a fist holds it.
+        /// `grip` is the off hand's distance along the weapon from the weapon hand.
+        /// </summary>
+        static (ArmPose right, ArmPose left) TwoHandedArms(ArmPose moveArm, float grip,
+            Vector3 hipsPos, Quaternion hipsW, Quaternion spineW, Quaternion chestW)
+        {
+            Vector3 shoulderR = Shoulder(+1f, hipsPos, hipsW, spineW, chestW);
+            Vector3 shoulderL = Shoulder(-1f, hipsPos, hipsW, spineW, chestW);
+            Vector3 fore = moveArm.fore.normalized;
+            Vector3 weapon = Vector3.ProjectOnPlane(moveArm.facing, fore).normalized;
+            Vector3 rightGrip = shoulderR + moveArm.upper.normalized * MannequinRig.UpperArmLength
+                + fore * (MannequinRig.ForearmLength + WristToGrip);
+
+            // Slide the weapon (keeping its direction) toward whichever shoulder is out of reach.
+            const float comfortable = ArmReach * 0.97f;
+            for (int i = 0; i < 6; i++)
+            {
+                Vector3 toLeft = rightGrip + weapon * grip - shoulderL;
+                if (toLeft.magnitude > comfortable)
+                    rightGrip -= toLeft.normalized * (toLeft.magnitude - comfortable);
+                Vector3 toRight = rightGrip - shoulderR;
+                if (toRight.magnitude > comfortable)
+                    rightGrip -= toRight.normalized * (toRight.magnitude - comfortable);
+            }
+
+            var right = ReachGrip(shoulderR, rightGrip, weapon, new Vector3(0.6f, -1f, -0.2f));
+            // The weapon as the right fist actually holds it, so the left hand lands on the drawn shaft.
+            Vector3 heldWeapon = Vector3.ProjectOnPlane(weapon, right.fore).normalized;
+            var left = ReachGrip(shoulderL, rightGrip + heldWeapon * grip, heldWeapon, new Vector3(-0.6f, -1f, -0.2f));
+            return (new ArmPose(right.upper, right.fore, heldWeapon), new ArmPose(left.upper, left.fore, heldWeapon));
+        }
+
+        /// <summary>
+        /// Two-bone IK from the shoulder to a grip on the weapon. Of the elbow positions that reach, it
+        /// takes the one whose forearm is perpendicular to the weapon (nearest `pole` if two); if none
+        /// is, it bends toward `pole`. Out of reach, the arm points straight at the grip.
+        /// </summary>
+        static (Vector3 upper, Vector3 fore) ReachGrip(Vector3 shoulder, Vector3 grip, Vector3 weapon, Vector3 pole)
+        {
+            float a = MannequinRig.UpperArmLength;
+            float b = MannequinRig.ForearmLength + WristToGrip;
+            Vector3 toGrip = grip - shoulder;
+            float d = Mathf.Clamp(toGrip.magnitude, Mathf.Abs(a - b) + 0.01f, (a + b) * 0.999f);
+            Vector3 axis = toGrip.normalized;
+            Vector3 hand = shoulder + axis * d;
+
+            // The elbow lies on a circle round the shoulder-hand axis.
+            float along = (a * a - b * b + d * d) / (2f * d);
+            float radius = Mathf.Sqrt(Mathf.Max(0f, a * a - along * along));
+            Vector3 centre = shoulder + axis * along;
+            Vector3 e1 = Vector3.ProjectOnPlane(pole, axis);
+            if (e1.sqrMagnitude < 1e-6f)
+                e1 = Vector3.ProjectOnPlane(Vector3.back, axis);  // pole along the arm: bend the elbow back
+            e1.Normalize();
+            Vector3 e2 = Vector3.Cross(axis, e1);
+
+            // Forearm perpendicular to the weapon: (elbow - hand) . weapon = 0.
+            float A = radius * Vector3.Dot(e1, weapon);
+            float B = radius * Vector3.Dot(e2, weapon);
+            float K = -Vector3.Dot(centre - hand, weapon);
+            float amplitude = Mathf.Sqrt(A * A + B * B);
+            float angle = 0f;  // toward the pole
+            if (amplitude > 1e-4f && Mathf.Abs(K) <= amplitude)
+            {
+                float baseAngle = Mathf.Atan2(B, A);
+                float spread = Mathf.Acos(K / amplitude);
+                float first = baseAngle + spread, second = baseAngle - spread;
+                // Prefer the solution nearer the pole (cos of the angle from e1).
+                angle = Mathf.Cos(first) >= Mathf.Cos(second) ? first : second;
+            }
+            Vector3 elbow = centre + radius * (Mathf.Cos(angle) * e1 + Mathf.Sin(angle) * e2);
+            return ((elbow - shoulder).normalized, (hand - elbow).normalized);
+        }
 
         static void SolveArm(ArmPose arm, Quaternion chestW, string upperPath, string forePath, Dictionary<string, Quaternion> local)
         {
@@ -235,7 +339,8 @@ namespace CG4002.EditorTools
         public static AnimationClip Bake(ClipSpec spec)
         {
             var clip = new AnimationClip { name = spec.name, frameRate = SampleRate };
-            string[] bones = spec.guardLayerOnly ? MannequinRig.GuardBones : MannequinRig.AnimatedBones;
+            string[] bones = !spec.guardLayerOnly ? MannequinRig.AnimatedBones
+                : spec.bothArms ? MannequinRig.ArmBones : MannequinRig.GuardBones;
 
             int frames = Mathf.Max(2, Mathf.RoundToInt(spec.Length * SampleRate) + 1);
             var times = new float[frames];

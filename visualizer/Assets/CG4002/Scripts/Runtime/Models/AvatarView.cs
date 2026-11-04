@@ -86,14 +86,20 @@ namespace CG4002.Models
             AttackStarted?.Invoke(this, slot);
         }
 
-        /// <summary>Raise or lower the off-hand guard. Blends over a few frames.</summary>
+        /// <summary>Raise or lower the guard (the shield arm, or both arms for a two-handed weapon). Blends over a few frames.</summary>
         public void SetGuard(bool guarding) => IsGuarding = guarding;
 
         void Update()
         {
             guardWeight = Mathf.MoveTowards(guardWeight, IsGuarding ? 1f : 0f, guardBlendSpeed * Time.deltaTime);
-            if (animator.runtimeAnimatorController != null && animator.layerCount > AvatarContract.GuardLayer)
-                animator.SetLayerWeight(AvatarContract.GuardLayer, guardWeight);
+            if (animator.runtimeAnimatorController == null)
+                return;
+            // A shield guard moves only the off arm; a two-handed guard moves both arms and the weapon.
+            bool twoHanded = CurrentDefinition != null && CurrentDefinition.twoHanded;
+            if (animator.layerCount > AvatarContract.GuardLayer)
+                animator.SetLayerWeight(AvatarContract.GuardLayer, twoHanded ? 0f : guardWeight);
+            if (animator.layerCount > AvatarContract.GuardBothLayer)
+                animator.SetLayerWeight(AvatarContract.GuardBothLayer, twoHanded ? guardWeight : 0f);
         }
 
         void OnDrawGizmosSelected()

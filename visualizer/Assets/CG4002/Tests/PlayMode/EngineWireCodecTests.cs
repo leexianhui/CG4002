@@ -79,7 +79,24 @@ namespace CG4002.Tests
                 ""outcome"":""HIT"",""damage"":10,""attackerHp"":100,""defenderHp"":90,""rangeM"":1}");
             Assert.That(output.OfType<ActionMessage>().Count(), Is.EqualTo(1));
             Assert.That(output.OfType<CombatOutcomeMessage>().Single().player, Is.EqualTo(PlayerId.P2));
-            Assert.That(EngineWireCodec.Decode(@"{""type"":""ACTION_RECOGNIZED"",""version"":1}"), Is.Empty);
+        }
+
+        static string Recognized(string action, string outcome, string guard = "IDLE") =>
+            $@"{{""type"":""ACTION_RECOGNIZED"",""version"":1,""timestamp"":10,""playerId"":2,""weapon"":""SWORD"",
+                ""action"":""{action}"",""actionConfidence"":0.9,""guardState"":""{guard}"",""guardConfidence"":0.0,
+                ""outcome"":""{outcome}"",""targetId"":null}}";
+
+        [Test]
+        public void ActionRecognized_DecodesForTheFirstPersonView()
+        {
+            var thrust = EngineWireCodec.Decode(Recognized("THRUST", "MISS")).Cast<ActionRecognizedMessage>().Single();
+            Assert.That(thrust.player, Is.EqualTo(PlayerId.P2));
+            Assert.That(thrust.action, Is.EqualTo(ActionType.Thrust));
+            Assert.That(thrust.onCooldown, Is.False);
+
+            Assert.That(EngineWireCodec.Decode(Recognized("UPPERCUT", "ON_COOLDOWN")).Cast<ActionRecognizedMessage>().Single().onCooldown, Is.True);
+            // A guard-only report animates nothing: guard arrives in snapshots.
+            Assert.That(EngineWireCodec.Decode(Recognized("IDLE", "STATE_ONLY", guard: "GUARDING")), Is.Empty);
         }
 
         [Test]

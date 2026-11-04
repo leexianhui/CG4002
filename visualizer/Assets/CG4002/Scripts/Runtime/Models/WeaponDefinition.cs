@@ -25,6 +25,8 @@ namespace CG4002.Models
         public WeaponView mainHandPrefab;
         [Tooltip("Optional. Only the sword and shield uses an off-hand item.")]
         public ShieldView offHandPrefab;
+        [Tooltip("Held in both hands (spear, mace): the guard moves both arms, and first person draws both.")]
+        public bool twoHanded;
 
         [Header("Animation")]
         [Tooltip("Supplies this weapon's clips for the shared avatar state machine.")]

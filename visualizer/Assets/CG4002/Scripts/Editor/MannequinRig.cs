@@ -79,5 +79,8 @@ namespace CG4002.EditorTools
 
         /// <summary>Bones the off-hand guard layer is allowed to drive.</summary>
         public static readonly string[] GuardBones = { UpperArmL, ForearmL };
+
+        /// <summary>Bones the two-handed guard layer drives: both arms hold the weapon.</summary>
+        public static readonly string[] ArmBones = { UpperArmR, ForearmR, UpperArmL, ForearmL };
     }
 }
