@@ -1,31 +1,49 @@
 """
-Final Ultra96 classifier service.
+Final Ultra96 classifier service (ACTION_FINAL + GUARD_FINAL, one FPGA IP).
 
-Input JSON:
-{
-  "type":"SENSOR_WINDOW",
-  "playerId":1,
-  "weapon":"SWORD",
-  "timestamp":12345678,
-  "samples":[ [18 floats], ... exactly 100 rows ... ]
-}
+Line-delimited JSON over TCP 127.0.0.1:8888. The relay reaches it through the SSH tunnel.
+Comms boundary = shared/protocol/app_messages.md 3.1/3.2:
 
-Channel order:
-RIGHT ax ay az gx gy gz,
-LEFT  ax ay az gx gy gz,
-TORSO ax ay az gx gy gz
+  in : {"type":"SENSOR_WINDOW","version":1,"playerId":1,"requestId":42,"weapon":"SWORD",
+        "timestamp":12345678,"windowStartTs":..,"windowEndTs":..,"sampleRateHz":50,"stalePct":0,
+        "dominant":[[ax,ay,az,gx,gy,gz],...],      right wrist
+        "offhand":[[...],...],                     left wrist
+        "torso":[[...],...]}                       optional; absent today
+       Also accepted (AI team testing): "samples": 100 rows x 18 = RIGHT, LEFT, TORSO.
+  out: {"type":"ACTION_RESULT","version":1,"playerId":1,"requestId":42,"timestamp":12345678,
+        "action":"HORIZONTAL_SWING","actionConfidence":0.94,
+        "guardState":"IDLE","guardConfidence":0.12, ...extra AI fields}
 
-Output includes raw action, guard state, and finalAction.
-Guard has priority over attack.
+Boundary rules (Comms, 2026-11-04):
+  * requestId, playerId and timestamp are echoed UNCHANGED: the relay matches replies by
+    requestId and drops a reply whose timestamp/playerId differ.
+  * A sensor that sent nothing, or a perfectly constant block (the relay's off-hand placeholder in
+    segment mode: the hub sends only the right wrist), is filled with the model's training mean,
+    i.e. 0 after normalisation, instead of being fed as fake motion.
+  * Guard has priority over attack (AI team rule): while guarding, action is IDLE + GUARDING,
+    which the engine treats as a guard-only report.
+  * guardState is GUARDING or IDLE (comms GuardState); the model's NOT_GUARDING maps to IDLE.
+  * Action classes the game has no rules for (COMMS_ACTION_MAP) are reported as IDLE; the AI label
+    stays in "rawAction".
+
+Backends:
+  python3 classifier_server.py --backend stub                     random answers, no model
+  python3 classifier_server.py --backend numpy                    float CNN on the ARM cores
+  python3 classifier_server.py --backend fixed                    bit-accurate copy of the FPGA maths
+  sudo -E python3 classifier_server.py --backend fpga --bit cnn.bit   the FPGA
 """
 import argparse, asyncio, json, os, random, sys, time
 import numpy as np
 
 HERE=os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0,HERE)
 sys.path.insert(0,os.path.join(HERE,".."))
 sys.path.insert(0,os.path.join(HERE,"..","src"))
 import config as C
+from data_utils_lite import fit_window, load_norm_json
 from fixedpoint_ref import FxCfg, forward_fixed, forward_float, load_weights, pad_out, softmax
+
+PROTOCOL_VERSION=1
 
 ACTION_MODEL="ACTION_FINAL"
 GUARD_MODEL="GUARD_FINAL"
@@ -36,11 +54,17 @@ GUARD_EXIT=0.35
 GUARD_ENTER_COUNT=2
 GUARD_EXIT_COUNT=3
 
-_guard_state={}
+# Action names the comms engine accepts (comms ActionClass / shared/schemas/action_result.schema.json).
+COMMS_ACTIONS={"IDLE","HORIZONTAL_SWING","VERTICAL_SWING","DIAGONAL_SWING","THRUST",
+               "CHARGED_ATTACK","CHARGED_THRUST","SWING"}
+# AI classes with no game rule yet -> what the engine is told. To make one count, map it to a game
+# action here (or add the move to shared/config/weapons.yaml and COMMS_ACTIONS).
+COMMS_ACTION_MAP={"SPIN_ATTACK":"IDLE","UPPERCUT":"IDLE"}
 
-def load_norm(path):
-    d=json.load(open(path))
-    return np.asarray(d["mean"],np.float32),np.asarray(d["std"],np.float32)
+# 18-channel layout of config.CHANNELS: which request field fills which columns.
+SENSOR_BLOCKS=(("dominant",0),("offhand",6),("torso",12))
+
+_guard_state={}
 
 class StubBackend(object):
     def logits(self,model,x_raw):
@@ -51,17 +75,23 @@ class StubBackend(object):
 class NumpyBackend(object):
     def __init__(self,models_dir,fixed=False,fx=None):
         self.W={n:load_weights(os.path.join(models_dir,n,"weights.npz")) for n in C.MODEL_NAMES}
-        self.norm={n:load_norm(os.path.join(models_dir,n,"norm.json")) for n in C.MODEL_NAMES}
+        self.norm={n:load_norm_json(os.path.join(models_dir,n,"norm.json")) for n in C.MODEL_NAMES}
         self.fixed=fixed
         self.cfg=FxCfg(*fx) if fx else FxCfg()
         if fixed:
             self.W={n:pad_out(w,C.NOUT) for n,w in self.W.items()}
 
-    def logits(self,model,x_raw):
+    def normalise(self,model,x_raw,missing):
         m,s=self.norm[model]
         x=((x_raw-m)/s).astype(np.float32)
+        for start in missing:
+            x[:,start:start+6]=0.0      # absent sensor = training mean
         if model==GUARD_MODEL:
-            x[:,12:]=0.0
+            x[:,12:]=0.0                # GUARD uses RIGHT+LEFT only
+        return x
+
+    def logits(self,model,x_raw,missing=()):
+        x=self.normalise(model,x_raw,missing)
         nv=len(C.CLASSES[model])
         z=forward_fixed(x,self.W[model],self.cfg) if self.fixed else forward_float(x,self.W[model])
         return np.asarray(z)[:nv]
@@ -72,22 +102,37 @@ class FpgaBackend(NumpyBackend):
         from fpga_infer import FpgaEngine
         self.eng=FpgaEngine(bit)
 
-    def logits(self,model,x_raw):
-        m,s=self.norm[model]
-        x=((x_raw-m)/s).astype(np.float32)
-        if model==GUARD_MODEL:
-            x[:,12:]=0.0
+    def logits(self,model,x_raw,missing=()):
+        x=self.normalise(model,x_raw,missing)
         return self.eng.infer(C.MODEL_IDS[model],x)[:len(C.CLASSES[model])]
 
-def validate_samples(req):
-    x=np.asarray(req.get("samples"),dtype=np.float32)
-    if x.shape != (C.WINDOW,C.N_CH):
-        raise ValueError("samples must have shape (%d,%d), got %r" % (C.WINDOW,C.N_CH,x.shape))
-    return x
+def build_window(req):
+    """-> (WINDOW, 18) raw window, and the start columns of sensors that carry no data."""
+    if "samples" in req:
+        x=fit_window(req["samples"],C.WINDOW)
+        if x.shape[1]!=C.N_CH:
+            raise ValueError("samples must have %d channels, got %d"%(C.N_CH,x.shape[1]))
+        return x,()
+    x=np.zeros((C.WINDOW,C.N_CH),np.float32)
+    missing=[]
+    for field,start in SENSOR_BLOCKS:
+        rows=req.get(field)
+        if not rows:
+            missing.append(start); continue
+        block=fit_window(rows,C.WINDOW)
+        if block.shape[1]!=6:
+            raise ValueError("%s rows must have 6 values, got %d"%(field,block.shape[1]))
+        x[:,start:start+6]=block
+        if np.all(block==block[0]):     # constant = placeholder, not a measurement
+            missing.append(start)
+    return x,tuple(missing)
 
-def probs_for(backend,model,x):
-    z=np.asarray(backend.logits(model,x),dtype=np.float64)
-    return softmax(z)
+def probs_for(backend,model,x,missing):
+    if isinstance(backend,StubBackend):
+        z=backend.logits(model,x)
+    else:
+        z=backend.logits(model,x,missing)
+    return softmax(np.asarray(z,dtype=np.float64))
 
 def update_guard(player_id,guard_prob):
     key=str(player_id)
@@ -117,15 +162,20 @@ def handle_request(backend,req,debug=False):
         return {"type":"PONG","timestamp":int(time.time()*1000)}
     if req.get("type")!="SENSOR_WINDOW":
         return {"type":"ERROR","error":"unknown type %r"%req.get("type")}
+    for key in ("timestamp","playerId","requestId"):
+        if key not in req:
+            return {"type":"ERROR","error":"missing %s"%key,"requestId":req.get("requestId")}
+    if "samples" not in req and "dominant" not in req:
+        return {"type":"ERROR","error":"missing dominant","requestId":req["requestId"]}
 
     weapon=str(req.get("weapon","")).upper()
-    if weapon and weapon not in C.WEAPONS:
-        return {"type":"ERROR","error":"unknown weapon %r"%weapon}
+    if weapon not in C.WEAPONS:
+        return {"type":"ERROR","error":"unknown weapon %r"%weapon,"requestId":req["requestId"]}
 
     t0=time.perf_counter()
-    x=validate_samples(req)
+    x,missing=build_window(req)
 
-    ap=probs_for(backend,ACTION_MODEL,x)
+    ap=probs_for(backend,ACTION_MODEL,x,missing)
     ai=int(ap.argmax())
     raw_action=C.CLASSES[ACTION_MODEL][ai]
     a_conf=float(ap[ai])
@@ -134,44 +184,51 @@ def handle_request(backend,req,debug=False):
     if raw_action!="IDLE" and a_conf<ATTACK_THRESHOLD:
         action="IDLE"
 
-    gp=probs_for(backend,GUARD_MODEL,x)
+    gp=probs_for(backend,GUARD_MODEL,x,missing)
     guard_prob=float(gp[1])  # GUARDING is class index 1
-    guard_active=update_guard(req.get("playerId"),guard_prob)
+    guard_active=update_guard(req["playerId"],guard_prob)
 
     final_action="GUARD" if guard_active else action
+    comms_action="IDLE" if guard_active else COMMS_ACTION_MAP.get(action,action)
+    if comms_action not in COMMS_ACTIONS:
+        comms_action="IDLE"
 
     out={
         "type":"ACTION_RESULT",
-        "playerId":req.get("playerId"),
+        "version":PROTOCOL_VERSION,
+        "playerId":req["playerId"],
+        "requestId":req["requestId"],
+        "timestamp":req["timestamp"],
         "weapon":weapon,
-        "action":action,
+        "action":comms_action,
         "rawAction":raw_action,
         "actionConfidence":round(a_conf,4),
-        "guardState":"GUARDING" if guard_active else "NOT_GUARDING",
+        "guardState":"GUARDING" if guard_active else "IDLE",
         "guardConfidence":round(guard_prob,4),
         "finalAction":final_action,
-        "timestamp":int(time.time()*1000),
     }
     if debug:
         out["latencyMs"]=round((time.perf_counter()-t0)*1000,3)
+        out["missingSensors"]=[f for f,s in SENSOR_BLOCKS if s in missing]
     return out
 
 def make_server(backend,debug):
     async def client(reader,writer):
-        print("client connected:",writer.get_extra_info("peername"))
+        peer=writer.get_extra_info("peername")
+        print("client connected:",peer)
         try:
             while True:
                 line=await reader.readline()
                 if not line: break
                 try:
                     resp=handle_request(backend,json.loads(line.decode()),debug)
-                except Exception as e:
+                except Exception as e:  # one bad packet must not kill the service
                     resp={"type":"ERROR","error":"%s: %s"%(type(e).__name__,e)}
                 writer.write((json.dumps(resp)+"\n").encode())
                 await writer.drain()
         finally:
             writer.close()
-            print("client disconnected")
+            print("client disconnected:",peer)
     return client
 
 async def serve(host,port,backend,debug):
@@ -180,13 +237,13 @@ async def serve(host,port,backend,debug):
     await asyncio.Future()
 
 def main():
-    ap=argparse.ArgumentParser()
+    ap=argparse.ArgumentParser(description=__doc__,formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--backend",choices=["stub","numpy","fixed","fpga"],default="stub")
     ap.add_argument("--host",default="127.0.0.1")
     ap.add_argument("--port",type=int,default=8888)
     ap.add_argument("--bit",default=None)
     ap.add_argument("--models-dir",default=C.MODELS_DIR)
-    ap.add_argument("--debug",action="store_true")
+    ap.add_argument("--debug",action="store_true",help="add latencyMs and missingSensors to replies")
     a=ap.parse_args()
 
     if a.backend=="stub":

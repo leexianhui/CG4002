@@ -1,0 +1,8 @@
+              precision    recall  f1-score   support
+
+NOT_GUARDING      1.000     1.000     1.000         4
+    GUARDING      1.000     1.000     1.000         6
+
+    accuracy                          1.000        10
+   macro avg      1.000     1.000     1.000        10
+weighted avg      1.000     1.000     1.000        10

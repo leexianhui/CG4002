@@ -147,10 +147,12 @@ cd ai
 python3 classifier_server.py --backend numpy     # or --backend fixed: the FPGA's exact maths on the ARM
 ```
 
-Expect `classifier service listening on 127.0.0.1:8888  (backend=NumpyBackend)`.
-Once that works end to end, try the FPGA (PYNQ normally needs root):
+Expect `classifier service listening on 127.0.0.1:8888 backend=NumpyBackend`.
+Once that works end to end, check the bitstream once, then serve from the FPGA (PYNQ normally needs root):
 
 ```sh
+git lfs pull                                     # cnn.bit / cnn.hwh must be real files, not LFS pointers
+sudo -E python3 fpga_infer.py --bit cnn.bit      # HW acc should match fixed acc, bit-exact n/n
 sudo -E python3 classifier_server.py --backend fpga --bit cnn.bit
 ```
 
@@ -306,8 +308,8 @@ Reset the match (Ultra96, from `comms/`):
 | `window_dropped reason=classifier offline` | Terminal A (AI) is not running, or the SSH tunnel is down |
 | `classifier correlation mismatch` | Something other than `ai/classifier_server.py` (or `cg-ultra96-sim`) is on port 8888, or an old copy of the AI server that does not echo `requestId`/`timestamp` |
 | Always `IDLE` while swinging | Normal at low confidence: the gate is 0.6 (`min_confidence`). Check the AI terminal for replies, and see `ai/README.md` known gaps |
-| `SPIN_ATTACK` / `UPPERCUT` swings do nothing | Expected: there are no game rules for them yet, so they map to `IDLE` |
-| Never guards | No GUARD model was supplied, so guard is always `IDLE` |
+| `SPIN_ATTACK` / `UPPERCUT` swings do nothing | Expected: there are no game rules for them yet, so they map to `IDLE` (the AI label is in `rawAction`) |
+| Never guards, or poor recognition | The models want right wrist + left wrist + torso, but in segment mode the hub sends only the right wrist (`ai/README.md` known gaps) |
 | Engine stuck in WAITING or PAUSED | A phone isn't ready or calibrated, a relay is disconnected, or a position is more than 1 s old. Check the setup readings in the panel |
 | Relay can't reach the engine (TLS error) | `comms/certs/engine.crt` is missing on the relay laptop. Copy it from the Ultra96 as for the demo |
 | Swings accepted on the hub (`action_accepted`) but no `segment_received` | Hub serial shows `[segment] undelivered`: the BLE link is losing chunks. `stream_decode_drop reason=bad_crc` on the relay: the BLE packet size is too small (see `ble_mtu_too_small_for_segments`). `segment_ignored`: the relay YAML lacks `segment_mode: true` |

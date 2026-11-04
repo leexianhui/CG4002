@@ -1,0 +1,13 @@
+                  precision    recall  f1-score   support
+
+            IDLE      0.900     1.000     0.947         9
+HORIZONTAL_SWING      0.909     1.000     0.952        10
+  VERTICAL_SWING      0.909     1.000     0.952        10
+  DIAGONAL_SWING      1.000     0.900     0.947        10
+          THRUST      1.000     0.800     0.889        10
+     SPIN_ATTACK      1.000     0.900     0.947        10
+        UPPERCUT      0.900     1.000     0.947         9
+
+        accuracy                          0.941        68
+       macro avg      0.945     0.943     0.940        68
+    weighted avg      0.947     0.941     0.940        68

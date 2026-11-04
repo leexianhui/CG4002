@@ -1,0 +1,10 @@
+{
+  "accuracy": 1.0,
+  "macro_f1": 1.0,
+  "epochs_run": 100,
+  "input_shape": [
+    100,
+    18
+  ],
+  "architecture": "valid-conv HLS-compatible"
+}

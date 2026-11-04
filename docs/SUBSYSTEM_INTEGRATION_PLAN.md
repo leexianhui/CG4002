@@ -60,7 +60,7 @@ supplied except the comms boundary of `ai/classifier_server.py`, which now speak
 team's model code (float, bit-accurate fixed-point, or FPGA). `ai/data_utils_lite.py` is a
 reconstruction of a module the drop imported but did not include. Hardware relay windows are now
 100 samples / stride 10, the trained model's input length. AI-only classes (SPIN_ATTACK, UPPERCUT)
-are reported as IDLE until given game rules. No GUARD model was supplied: guard is always IDLE.
+are reported as IDLE until given game rules. Since 2026-11-04 GUARD_FINAL exists, but it needs the left wrist, which segment mode does not send yet.
 The repo now has four subsystem roots (`ai/`, `comms/`, `hardware/`, `visualizer/`) plus `shared/`,
 `docs/`, `scripts/`; `comms/firmware/` is the shared BLE stack and `hardware/gateway/` the six-board
 build. The retired `visualizer_demo/` HUD was removed (history: 94108e4). 290 Python tests pass,

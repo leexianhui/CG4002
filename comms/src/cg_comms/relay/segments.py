@@ -25,8 +25,9 @@ logger = structlog.get_logger(__name__)
 _AXES = 6
 
 # Placeholder off-hand row: the hub sends the dominant wrist only, and SENSOR_WINDOW requires an
-# offhand array. Gravity-down at rest, zero rotation; only a GUARD model would read it, and there is
-# none yet (ai/classifier_server.py). Counted as stale in stalePct, never presented as a measurement.
+# offhand array. Gravity-down at rest, zero rotation. ai/classifier_server.py treats a constant block as
+# absent and feeds the models their training mean instead. Counted as stale in stalePct, never
+# presented as a measurement.
 OFFHAND_PLACEHOLDER: tuple[float, ...] = (0.0, 0.0, 1.0, 0.0, 0.0, 0.0)
 
 

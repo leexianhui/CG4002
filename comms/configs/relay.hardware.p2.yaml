@@ -14,7 +14,7 @@ windowing:
   segment_timeout_ms: 2000
   frame_rate_hz: 50.0
   # 100 samples = 2.0 s at 50 Hz: the input length the supplied AI model was trained on
-  # (ai/models/SWORD/norm.json "window"). Stride 10 = one classification every 200 ms.
+  # (ai/config.py WINDOW). Stride 10 = one classification every 200 ms.
   window_samples: 100
   stride_frames: 10
   max_stale_pct: 20.0
