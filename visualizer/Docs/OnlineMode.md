@@ -33,7 +33,7 @@ comes from a message. The one difference is who sits on the engine side of the t
  └──────────────────────────────────────┬─────────────────────────────────────────────┘
                      ws://127.0.0.1:8080/visualizer/{1|2}   (Bearer token)
                                         │
-             Android: Termux socat :8080 ─TLS─▶ SSH tunnel ─▶ Ultra96 :8443
+        in-app PhoneTunnel :8080 ─TLS─▶ SSH -J tunnel (SSH.NET) ─▶ Ultra96 :8443
                                         │
  ┌────────────────────────────── ULTRA96 (Python, comms/) ────────────────────────────┐
  │  ws_server.py ── /visualizer/1, /visualizer/2, /relay/1, /relay/2, /control        │
@@ -349,29 +349,31 @@ Match tuning (HP, parry window, guard arc) lives in `shared/config/match.yaml`. 
 A Unity IMGUI panel in the top-left corner, scaled to the safe area:
 
 ```
- ┌──────────────────────────────────────────┐      collapsed while the match runs:
+ ┌──────────────────────────────────────────┐      after [Hide panel]:
  │ [Hide panel]                             │      ┌────────────────┐
  │ Online P1 · Connected                    │      │ P1 · Running   │
  │ Match: Running · Move cooldown: 0.4s     │      └────────────────┘
+ │ SSH tunnel: Up                           │
  │ ws://127.0.0.1:8080       (endpoint)     │
  │ ********                  (token)        │
+ │ [x] Built-in SSH tunnel                  │
  │ [Player 1] [Player 2]                    │
  │ [Connect]   or [Disconnect / settings]   │
  │ Tap the shared floor origin, then stand  │
  │ on the marked +Z line.                   │
  │ Calibration: Ready                       │
  │ [Confirm shared +Z direction]            │
- │ [Show setup readings]                    │
- │   snapshot age, phase / reason,          │
- │   P1: relay on, ready, weapon SPEAR, x/y │
- │   P2: ...                                │
- │   Separation: 1.84 m                     │
+ │ snapshot age, phase / reason,            │
+ │ P1: relay on, ready, weapon SPEAR, x/y   │
+ │ P2: ...                                  │
+ │ Separation: 1.84 m                       │
  └──────────────────────────────────────────┘
 ```
 
-- It **collapses by itself** when the match starts. Tap the button to reopen it.
+- It stays open until you tap **Hide panel**, and stays collapsed until you tap the button again.
+  It never collapses or opens by itself.
 - `DummyPlacer.BlockPlacementInput = PointerOverPanel`, so taps on the panel don't move the arena.
-- **Setup readings** answer "why isn't the match starting?": which player has no relay, no
+- **Setup readings** (always shown in the open panel) answer "why isn't the match starting?": which player has no relay, no
   calibration, no weapon or no position, and how far apart the engine thinks the players are.
 
 ---
@@ -383,10 +385,11 @@ The full procedure is in [docs/INTEGRATION_RUNBOOK.md](../../docs/INTEGRATION_RU
 1. Open `Assets/Scenes/OnlineScene.unity`. It is the only scene enabled in the build. If it's missing,
    use **CG4002 → Integration → Create Online Scene**.
 2. Build to the phone. The engine token is copied in automatically when `comms/.env.engine` exists.
-3. Network route:
-   - **Android:** Termux runs an SSH tunnel and `socat` on `127.0.0.1:8080`.
-   - **iPhone:** there's no Termux, so iPhones need another reachable `ws://`/`wss://` endpoint.
-     This isn't solved yet.
+3. Network route: built in, on Android and iPhone. `Net/PhoneTunnel.cs` (SSH.NET, in
+   `Assets/Plugins/SshNet/`) opens `ssh -J` through stujump to the board on Connect and terminates
+   the engine's TLS on `127.0.0.1:8080`, which is what Termux `ssh` + `socat` used to do. Logins are in
+   `Resources/ssh_tunnel.txt`. It is off in the editor; the panel's **Built-in SSH tunnel** toggle
+   switches back to an external Termux tunnel.
 4. In the app:
    1. choose P1 or P2 (different on the two phones);
    2. tap **Connect**;

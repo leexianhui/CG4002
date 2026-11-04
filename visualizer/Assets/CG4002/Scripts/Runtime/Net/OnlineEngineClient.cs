@@ -22,10 +22,19 @@ namespace CG4002.Net
         [Tooltip("Optional. While it is open, calibration waits: the weapon is chosen first.")]
         public CG4002.UI.WeaponSelectScreen weaponSelect;
         public GameObject offlineEngine;
-        [Tooltip("Base URL without /visualizer/id. The phone's socat on 8080 does the TLS to the engine.")]
+        [Tooltip("Base URL without /visualizer/id. 127.0.0.1:8080 is served by the built-in tunnel (or Termux socat).")]
         public string endpoint = "ws://127.0.0.1:8080";
         public PlayerId player = PlayerId.P1;
         [NonSerialized] public string bearerToken = "";
+        // Replaces Termux ssh -J + socat; settings from Resources/ssh_tunnel.txt. Off in the editor by default.
+#if UNITY_EDITOR
+        [NonSerialized] public bool builtInTunnel = false;
+#else
+        [NonSerialized] public bool builtInTunnel = true;
+#endif
+        PhoneTunnel.Settings tunnelSettings = new();
+        bool askTunnelPasswords = true;
+        PhoneTunnel tunnel;
 
         public string Status { get; private set; } = "Enter connection settings";
         public bool Connected => socket != null && socket.State == WebSocketState.Open;
@@ -42,15 +51,13 @@ namespace CG4002.Net
         float lastSnapshotAt;
         bool showSettings = true;
         PhoneSetupStatus setupStatus;
-        bool showDiagnostics;
         // Collapsed: only a small "Online" button, so the HUD (health, weapon) is unobstructed.
-        // Collapses by itself once the match runs; tap the button to reopen.
+        // Only the player collapses or reopens it.
         bool collapsed;
-        bool autoCollapsed;
         int observedCalibration = -1;
         const float PanelWidth = 410;
         const float CollapsedWidth = 150, CollapsedHeight = 44;
-        float PanelHeight => showDiagnostics ? 560 : 370;
+        float PanelHeight => 540 + 50 + (askTunnelPasswords && builtInTunnel ? 56 : 0);
         // Scale is fixed by the full panel so the collapsed button keeps the same size.
         float PanelScale => Mathf.Max(0.5f, Mathf.Min(Screen.safeArea.width / (PanelWidth + 20),
             Screen.safeArea.height / (PanelHeight + 20)));
@@ -80,6 +87,9 @@ namespace CG4002.Net
             int saved = PlayerPrefs.GetInt(PlayerPref, 0);
             if (saved == 1 || saved == 2) player = (PlayerId)saved;
             if (!string.IsNullOrWhiteSpace(bearerToken)) Status = "Choose your player, then Connect";
+            var ssh = Resources.Load<TextAsset>("ssh_tunnel");
+            if (ssh != null) tunnelSettings = PhoneTunnel.Settings.Parse(ssh.text);
+            askTunnelPasswords = !tunnelSettings.Complete;
         }
 
         void OnEnable()
@@ -103,6 +113,14 @@ namespace CG4002.Net
                 (uri.Scheme != "ws" && uri.Scheme != "wss") || uri.AbsolutePath != "/" ||
                 !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.UserInfo))
             { Status = "Use ws://host:port or wss://host:port"; return; }
+            bool loopback = uri.Host == "127.0.0.1" || uri.Host == "localhost";
+            if (builtInTunnel && loopback)
+            {
+                if (!tunnelSettings.Complete) { Status = "Enter both SSH passwords"; return; }
+                tunnel = new PhoneTunnel(tunnelSettings, uri.Port);
+                tunnel.Start();
+                if (!tunnel.Running) { Status = tunnel.Status; tunnel = null; return; }
+            }
             ConfigureIdentity();
             if (loadSavedSettings) { PlayerPrefs.SetInt(PlayerPref, (int)player); PlayerPrefs.Save(); }
             lifetime = new CancellationTokenSource();
@@ -117,6 +135,8 @@ namespace CG4002.Net
             owner?.Cancel();
             socket?.Abort();
             socket = null;
+            tunnel?.Stop();
+            tunnel = null;
             Interlocked.Increment(ref generation);
             while (inbox.TryDequeue(out _)) { }
             while (outbox.TryDequeue(out _)) { }
@@ -140,6 +160,8 @@ namespace CG4002.Net
         {
             foreground = !paused;
             if (paused) { calibration.Invalidate(); socket?.Abort(); }
+            // Backgrounded phones (iOS especially) kill the SSH sockets; rebuild on return.
+            if (paused) tunnel?.Stop(); else tunnel?.Start();
         }
 
         async Task Run(CancellationTokenSource owner, string url, string token)
@@ -150,6 +172,14 @@ namespace CG4002.Net
                 while (!owner.IsCancellationRequested)
                 {
                     if (!foreground) { await Task.Delay(250, owner.Token); continue; }
+                    var ssh = tunnel;
+                    if (ssh != null && !ssh.Up)
+                    {
+                        reconnectStatus = "Waiting for SSH tunnel";
+                        attempts = 0;
+                        await Task.Delay(250, owner.Token);
+                        continue;
+                    }
                     using var current = new ClientWebSocket();
                     using var session = CancellationTokenSource.CreateLinkedTokenSource(owner.Token);
                     int epoch = Interlocked.Increment(ref generation);
@@ -292,9 +322,6 @@ namespace CG4002.Net
         void OnGUI()
         {
             // The token is never serialized into a scene or PlayerPrefs (only the player choice is saved).
-            bool running = Connected && gameState.Phase == MatchPhase.Running;
-            if (running && !autoCollapsed) { collapsed = true; autoCollapsed = true; }
-            if (!running) autoCollapsed = false; // collapse again the next time the match starts
             float scale = PanelScale;
             GUI.matrix = Matrix4x4.Scale(Vector3.one * scale);
             if (collapsed)
@@ -311,10 +338,24 @@ namespace CG4002.Net
             GUILayout.Label("Online P" + (int)player + " · " + Status);
             GUILayout.Label("Match: " + gameState.Phase + " · Move cooldown: " +
                 (gameState.Self.cooldownActionName ?? "none") + " " + gameState.Self.CooldownRemaining.ToString("0.0") + "s");
+            GUILayout.Label("SSH tunnel: " + (tunnel != null ? tunnel.Status : builtInTunnel ? "starts on Connect" : "external (Termux)"));
             if (lifetime == null || showSettings)
             {
                 endpoint = GUILayout.TextField(endpoint);
                 bearerToken = GUILayout.PasswordField(bearerToken, '*');
+                builtInTunnel = GUILayout.Toggle(builtInTunnel, "Built-in SSH tunnel (no Termux needed)");
+                if (builtInTunnel && askTunnelPasswords)
+                {
+                    // Typed passwords stay in memory only, like the token.
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label(tunnelSettings.jumpUser + "@jump", GUILayout.Width(150));
+                    tunnelSettings.jumpPassword = GUILayout.PasswordField(tunnelSettings.jumpPassword, '*');
+                    GUILayout.EndHorizontal();
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label(tunnelSettings.boardUser + "@board", GUILayout.Width(150));
+                    tunnelSettings.boardPassword = GUILayout.PasswordField(tunnelSettings.boardPassword, '*');
+                    GUILayout.EndHorizontal();
+                }
                 player = GUILayout.SelectionGrid((int)player - 1, new[] { "Player 1", "Player 2" }, 2) == 0 ? PlayerId.P1 : PlayerId.P2;
                 if (GUILayout.Button("Connect")) Connect();
             }
@@ -328,22 +369,17 @@ namespace CG4002.Net
                 if (GUILayout.Button(calibration.IsReady ? "Calibrated — reconfirm direction" : "Confirm shared +Z direction"))
                     Status = calibration.ConfirmFromMarkedForwardLine() ? "Calibration confirmed" : "Place arena; stand at least 0.3 m from origin";
             }
-            if (GUILayout.Button(showDiagnostics ? "Hide setup readings" : "Show setup readings"))
-                showDiagnostics = !showDiagnostics;
-            if (showDiagnostics)
+            bool fresh = Connected && setupStatus != null && Time.unscaledTime - lastSnapshotAt < 1f;
+            if (setupStatus == null) GUILayout.Label("Waiting for engine snapshot");
+            else
             {
-                bool fresh = Connected && setupStatus != null && Time.unscaledTime - lastSnapshotAt < 1f;
-                if (setupStatus == null) GUILayout.Label("Waiting for engine snapshot");
-                else
-                {
-                    GUILayout.Label($"Snapshot age: {Time.unscaledTime - lastSnapshotAt:F1}s" +
-                        (fresh ? "" : " - STALE / disconnected"));
-                    GUILayout.Label(setupStatus.phase + (setupStatus.reason == null ? "" : " / " + setupStatus.reason));
-                    GUILayout.Label(setupStatus.PlayerLine(0));
-                    GUILayout.Label(setupStatus.PlayerLine(1));
-                    GUILayout.Label(fresh && setupStatus.Separation.HasValue
-                        ? $"Separation: {setupStatus.Separation.Value:F2} m" : "Separation unavailable");
-                }
+                GUILayout.Label($"Snapshot age: {Time.unscaledTime - lastSnapshotAt:F1}s" +
+                    (fresh ? "" : " - STALE / disconnected"));
+                GUILayout.Label(setupStatus.phase + (setupStatus.reason == null ? "" : " / " + setupStatus.reason));
+                GUILayout.Label(setupStatus.PlayerLine(0));
+                GUILayout.Label(setupStatus.PlayerLine(1));
+                GUILayout.Label(fresh && setupStatus.Separation.HasValue
+                    ? $"Separation: {setupStatus.Separation.Value:F2} m" : "Separation unavailable");
             }
             GUILayout.EndArea();
             GUI.matrix = Matrix4x4.identity;

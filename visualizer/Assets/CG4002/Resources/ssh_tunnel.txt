@@ -1,0 +1,9 @@
+# Built-in phone tunnel (replaces the Termux ssh -J ... and socat commands). Read by OnlineEngineClient.
+# Leave a password blank to type it in the app's connection panel instead (kept in memory only).
+jump_host=stujump.comp.nus.edu.sg
+jump_user=e1138443
+jump_password=
+board_host=makerslab-fpga-53.ddns.comp.nus.edu.sg
+board_user=xilinx
+board_password=
+engine_port=8443

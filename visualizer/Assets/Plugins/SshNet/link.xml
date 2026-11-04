@@ -1,0 +1,6 @@
+<!-- IL2CPP: keep SSH.NET and its crypto whole; algorithm tables are built at runtime. -->
+<linker>
+    <assembly fullname="Renci.SshNet" preserve="all" />
+    <assembly fullname="BouncyCastle.Cryptography" preserve="all" />
+    <assembly fullname="System.Formats.Asn1" preserve="all" />
+</linker>

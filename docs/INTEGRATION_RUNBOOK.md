@@ -221,7 +221,7 @@ steps apply only to Android.
 
 Complete the common-origin/+Z calibration below on both phones and perform each player's physical
 weapon-selection procedure. Both relay connections, weapon selections, phone readiness and fresh
-positions are needed before the engine enters active play. Use **Show setup readings** to diagnose
+positions are needed before the engine enters active play. Use the setup readings in the panel to diagnose
 waiting/paused conditions. After switching to the canned action cycle, reset from Ultra96 `comms/`:
 
 ```sh
@@ -262,7 +262,7 @@ Start with mock hardware/AI that remain idle, so combat cannot end the match dur
 ```
 
 Use the reachable, certificate-matching WSS endpoint described above, with distinct P1/P2 identities.
-No certificate-trust bypass was added. After common-origin/+Z calibration, tap **Show setup readings**
+No certificate-trust bypass was added. After common-origin/+Z calibration, check the setup readings in the panel
 on both phones. The panel fits the screen safe area and shows the latest engine data:
 
 - P1/P2 relay connection, readiness, position and heading;

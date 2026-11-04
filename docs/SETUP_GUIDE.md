@@ -6,7 +6,7 @@ Every long-running command needs **its own terminal**.
 
 ```text
  dev laptop (this one)      relay laptop (Qian Hui's)          Ultra96                     phones
- build + flash boards       P1 relay ══BLE══ P1 hub board      ai/classifier_server.py :8888  Termux tunnel
+ build + flash boards       P1 relay ══BLE══ P1 hub board      ai/classifier_server.py :8888  in-app SSH tunnel
                             P2 relay ══BLE══ P2 hub board      cg-engine          :8443   Unity app
                             SSH tunnel ──────────────────────▶ (both)
 ```
@@ -16,7 +16,7 @@ Every long-running command needs **its own terminal**.
 | Dev laptop | `pio` builds and flashing | — |
 | Relay laptop | SSH tunnel, P1 relay, P2 relay | `ssh -J ... -L 8888 -L 8443` |
 | Ultra96 | AI classifier (8888), game engine (8443) | — |
-| Phone ×2 | Termux tunnel + `socat`, Unity app | `ssh -J ... -L 8443` |
+| Phone ×2 | Unity app (Android or iPhone), which opens its own tunnel | built-in `ssh -J ... -L 8443` + TLS |
 
 ## Secrets and settings per machine
 
@@ -33,11 +33,11 @@ addresses are new. The boards no longer need any Wi-Fi hotspot: all their links 
 | **Dev laptop** terminal | `CG_GATEWAY_PSK_HEX` = the same PSK as `.env.relay`, only when building the two hubs | `$env:` in step 1 | changed: was hard-coded in `comms/firmware/include/cg_config.h`; the hub build now reads it from this variable |
 | **6 boards** | nothing: each hub finds its own torso and left wrist over BLE | none | no. The hotspot SSID/password in the sketches is used only by the hardware team's recording (UDP) builds |
 | **Phones** | engine token, typed into the app | Unity app **Bearer token** field | no (same token) |
-| **Phones** (Termux) | your NUS SSH login for `stujump` + `xilinx@makerslab-fpga-53` | typed at the ssh prompt | no |
+| **Phones** | NUS SSH login for `stujump` + `xilinx@makerslab-fpga-53` | `visualizer/Assets/CG4002/Resources/ssh_tunnel.txt` (built in), or typed in the app panel if left blank | changed: was typed at the Termux ssh prompt |
 | **Ultra96 / relay laptop** | NUS SSH login (`e1138443`) | typed at the ssh prompt | no |
 
 Player ids need no setup. `relay.hardware.p1.yaml` / `p2.yaml` set them and override `.env.relay`'s
-`CG_RELAY_PLAYER_ID`. Ports are fixed: 8888 (AI), 8443 (engine), 8080 (phone `socat`).
+`CG_RELAY_PLAYER_ID`. Ports are fixed: 8888 (AI), 8443 (engine), 8080 (the phone's local end, served by the app).
 
 What changed since the comms demo:
 - The boards are the **real hardware**, built from `hardware/gateway/` (was `firmware_demo/`).
@@ -236,15 +236,22 @@ because the engine also waits for both phones to be ready.
 
 ## 4. Phones: tunnel to the engine
 
-On **each** Android phone, in two Termux sessions (unchanged from the demo):
+Nothing to run: the app does it. When you tap **Connect** it opens the same SSH tunnel Termux used to
+(`ssh -J e1138443@stujump... -L 8443 xilinx@makerslab-fpga-53...`) and does `socat`'s TLS step itself,
+serving `ws://127.0.0.1:8080` inside the phone. This works on iPhone too. The panel's **SSH tunnel:**
+line shows progress (`Connecting to stujump...` → `Up`), or why it failed (wrong password, unreachable).
+
+The hosts, users and the two passwords come from `visualizer/Assets/CG4002/Resources/ssh_tunnel.txt`.
+Leave a password blank there and the app shows a field for it instead (kept in memory only).
+
+Fallback (Android): untick **Built-in SSH tunnel** in the panel and run the two old Termux commands:
 
 ```sh
 ssh -J e1138443@stujump.comp.nus.edu.sg -L 127.0.0.1:8443:127.0.0.1:8443 xilinx@makerslab-fpga-53.ddns.comp.nus.edu.sg -N
-```
-
-```sh
 socat TCP-LISTEN:8080,reuseaddr,fork OPENSSL:127.0.0.1:8443,verify=0
 ```
+
+If Termux `socat` is still running, the built-in tunnel can't take port 8080 and says so.
 
 ---
 
@@ -262,7 +269,7 @@ socat TCP-LISTEN:8080,reuseaddr,fork OPENSSL:127.0.0.1:8443,verify=0
 6. Phone on USB with developer mode and USB debugging on, then **Build And Run**. Repeat for the second phone.
 
 In the app on each phone, pick **Player 1** or **Player 2** and tap **Connect**. That's all: the
-endpoint defaults to `ws://127.0.0.1:8080` (the phone's `socat`), and the engine token is built in.
+endpoint defaults to `ws://127.0.0.1:8080` (the app's own tunnel, §4), and the engine token is built in.
 The phone remembers its player for next time.
 
 The token comes from `visualizer/Assets/CG4002/Resources/engine_token.txt` (committed). Before every
@@ -278,7 +285,7 @@ comms .env** does the same by hand. Both fields stay editable in the app if you 
 2. Each phone: tap the origin in AR, stand on the +Z line at least 0.3 m out, and press
    **Confirm shared +Z direction**.
 3. Each player holds the weapon-selection pose until the hub buzzes twice (weapon locked).
-4. **Show setup readings** on a phone: both relays connected, both ready, positions sensible. Two
+4. The setup readings at the bottom of the phone panel: both relays connected, both ready, positions sensible. Two
    people 1 m apart along +Z should read about (0, 0) and (0, 1).
 5. When all four conditions hold, the engine moves to **IN_PROGRESS**. Swing!
 
@@ -301,7 +308,7 @@ Reset the match (Ultra96, from `comms/`):
 | Always `IDLE` while swinging | Normal at low confidence: the gate is 0.6 (`min_confidence`). Check the AI terminal for replies, and see `ai/README.md` known gaps |
 | `SPIN_ATTACK` / `UPPERCUT` swings do nothing | Expected: there are no game rules for them yet, so they map to `IDLE` |
 | Never guards | No GUARD model was supplied, so guard is always `IDLE` |
-| Engine stuck in WAITING or PAUSED | A phone isn't ready or calibrated, a relay is disconnected, or a position is more than 1 s old. Use **Show setup readings** |
+| Engine stuck in WAITING or PAUSED | A phone isn't ready or calibrated, a relay is disconnected, or a position is more than 1 s old. Check the setup readings in the panel |
 | Relay can't reach the engine (TLS error) | `comms/certs/engine.crt` is missing on the relay laptop. Copy it from the Ultra96 as for the demo |
 | Swings accepted on the hub (`action_accepted`) but no `segment_received` | Hub serial shows `[segment] undelivered`: the BLE link is losing chunks. `stream_decode_drop reason=bad_crc` on the relay: the BLE packet size is too small (see `ble_mtu_too_small_for_segments`). `segment_ignored`: the relay YAML lacks `segment_mode: true` |
 | `segment_abandoned reason=timeout` | Some chunks of a swing never arrived within 2 s; that swing is skipped. Occasional is fine, constant means a weak link |
