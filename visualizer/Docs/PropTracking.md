@@ -64,11 +64,26 @@ from feature points that lie on a common level. These are what the dummy is plac
 `Assets/CG4002/AR/PropMarkers.asset`, built by **CG4002 → Setup Image Tracking**
 (`Editor/ImageTrackingSetup.cs`).
 
+Vuforia's four Mars targets, one per prop. Print `Docs/PropMarkers_Mars.pdf` at **100% /
+Actual size** (each target 7 × 12 cm; check against the printed ruler). The PNGs in
+`Assets/UnityXRContent/Common/ReferenceImages/` were extracted from that PDF and cropped to
+exactly the printed area.
+
 | Name | Image | Printed size | Used for |
 |---|---|---|---|
-| `Sword` | `two.png` | 9 × 9 cm | the sword prop |
-| `SwordBackup` | `one.png` | 9 × 9 cm | also the sword, if `two` tracks badly |
-| `Shield` | `Rafflesia.jpg` | 15 × 10 cm | unused in the sword-only demo |
+| `Sword` | `Astronaut.png` | 7 × 12 cm | the sword prop |
+| `Shield` | `Oxygen.png` | 7 × 12 cm | the shield (blue, so it's never confused with the sword next to it) |
+| `Spear` | `Drone.png` | 7 × 12 cm | the spear: a flat card on the shaft between the hands |
+| `Mace` | `Fissure.png` | 7 × 12 cm | the mace: a flat card on the handle between the hands |
+| `SwordBackup` | `two.png` | 9 × 9 cm | the previous sword marker, until the sword prop is reprinted |
+
+Only `Sword`/`SwordBackup` drive a model so far (`PropTracker`); the others are detected and
+shown by the TRACKING overlay. The images are © PTC (Vuforia samples): fine for this project,
+not ours to redistribute.
+
+- **New card on the sword?** `PropTracker`'s *Marker To Grip Centre* is measured on the prop,
+  from the marker's centre to the middle of the handle. Re-measure it if the new card sits
+  somewhere else on the sword.
 
 - **Why the physical size matters:** a camera sees only an image's size *in pixels*. The same
   picture looks the same whether it is small and close or big and far. Telling ARKit the real
