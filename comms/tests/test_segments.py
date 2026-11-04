@@ -13,9 +13,28 @@ from test_windowing import make_windower
 from cg_comms.messages.enums import Weapon
 from cg_comms.messages.models import ActionResult
 from cg_comms.protocol.codec import DecodedPacket, DropReason, decode_packet, encode_packet
-from cg_comms.protocol.constants import SEGMENT_CHUNK_SAMPLES, Direction, PacketType
+from cg_comms.protocol.constants import (
+    SEGMENT_CHUNK_SAMPLES,
+    SEGMENT_CHUNK_SAMPLES_3IMU,
+    SEGMENT_FLAG_DOM_VALID,
+    SEGMENT_FLAG_OFF_VALID,
+    SEGMENT_FLAG_THREE_IMU,
+    SEGMENT_FLAG_TORSO_VALID,
+    Direction,
+    PacketType,
+)
 from cg_comms.protocol.crypto import SequenceTracker
-from cg_comms.relay.segments import SegmentAssembler, classifier_rows, fit_length, resample
+from cg_comms.relay.segments import (
+    DOMINANT,
+    OFFHAND,
+    OFFHAND_PLACEHOLDER,
+    TORSO,
+    SegmentAssembler,
+    classifier_input,
+    classifier_rows,
+    fit_length,
+    resample,
+)
 from cg_comms.relay.session import Session, SessionConfig
 from cg_comms.relay.ultra96 import Ultra96Client
 from cg_comms.transport.loopback import LoopbackTransport
@@ -244,3 +263,125 @@ async def test_classifier_capacity_drop_does_not_leak_segment_bookkeeping():
         await subject._handle_frame(frame(segment_chunks(8, 16)[0][0], 1))
     assert any(e["event"] == "window_dropped" and e["reason"] == "classifier_capacity" for e in logs)
     assert subject._segment_requests == {}
+
+
+# -- three-IMU windows (current hubs: right wrist + left wrist + torso, 100 rows x 18 axes) ----------
+
+ALL_VALID = SEGMENT_FLAG_DOM_VALID | SEGMENT_FLAG_OFF_VALID | SEGMENT_FLAG_TORSO_VALID
+
+
+def imu3_rows(n=100):
+    """Distinct values per sensor block so a column mix-up is visible: right 1xx, left 2xx, torso 3xx."""
+    return [tuple(block * 100 + axis + 10 * (i % 5) for block in (1, 2, 3) for axis in range(6))
+            for i in range(n)]
+
+
+def imu3_chunks(segment_id, rows, valid=ALL_VALID, weapon=1, first_ms=1000, rate=50):
+    """Splits 18-axis rows into SEGMENT_CHUNK field dicts the way gateway_segments.h does."""
+    per = SEGMENT_CHUNK_SAMPLES_3IMU
+    count = -(-len(rows) // per)
+    out = []
+    for i in range(count):
+        part = rows[i * per:(i + 1) * per]
+        flat = [v for row in part for v in row] + [0] * (6 * SEGMENT_CHUNK_SAMPLES - 18 * len(part))
+        out.append(dict(segment_id=segment_id, chunk_index=i, chunk_count=count, weapon_id=weapon,
+                        flags=SEGMENT_FLAG_THREE_IMU | valid, sample_rate_hz=rate,
+                        first_sample_ms=first_ms + i * per * 1000 // rate, sample_count=len(part),
+                        reserved=0, samples=tuple(flat)))
+    return out
+
+
+def assemble(chunks):
+    assembler = SegmentAssembler()
+    return [assembler.add(c, now=0.0) for c in chunks][-1]
+
+
+def test_three_imu_chunk_round_trips_in_the_same_234_bytes():
+    chunk = imu3_chunks(5, imu3_rows(5))[0]
+    raw = frame(chunk, 1)
+    assert len(raw) == 234
+    decoded = decode(raw, SequenceTracker())
+    assert decoded.fields["flags"] == SEGMENT_FLAG_THREE_IMU | ALL_VALID
+    assert decoded.fields["samples"] == chunk["samples"]
+
+
+def test_three_imu_window_reassembles_to_100_rows_of_18():
+    rows = imu3_rows()
+    chunks = imu3_chunks(77, rows)
+    assert len(chunks) == 20
+    segment = assemble(chunks[::-1])  # any order
+    assert segment.samples == rows and segment.three_imu
+    assert all(segment.measured(b) for b in (DOMINANT, OFFHAND, TORSO))
+
+
+def test_classifier_input_maps_right_left_torso_columns_unchanged():
+    segment = assemble(imu3_chunks(1, imu3_rows()))
+    rows = classifier_input(segment, 50.0, 100)
+    assert len(rows.dominant) == len(rows.offhand) == len(rows.torso) == 100
+    # row 0 raw: right 100..105, left 200..205, torso 300..305 counts
+    g, dps = 2048, 16.4
+    assert rows.dominant[0][0] == pytest.approx(100 / g)
+    assert rows.dominant[0][3] == pytest.approx(103 / dps)
+    assert rows.offhand[0][0] == pytest.approx(200 / g)
+    assert rows.offhand[0][5] == pytest.approx(205 / dps)
+    assert rows.torso[0][0] == pytest.approx(300 / g)
+    assert rows.torso[0][4] == pytest.approx(304 / dps)
+    assert rows.dominant[1][0] == pytest.approx(110 / 2048)  # time order kept: no resample, no padding
+    assert rows.stale_pct == 0.0
+
+
+@pytest.mark.parametrize("valid, offhand_real, torso_real, stale", [
+    (SEGMENT_FLAG_DOM_VALID | SEGMENT_FLAG_TORSO_VALID, False, True, 100 / 3),
+    (SEGMENT_FLAG_DOM_VALID | SEGMENT_FLAG_OFF_VALID, True, False, 100 / 3),
+    (SEGMENT_FLAG_DOM_VALID, False, False, 200 / 3),
+])
+def test_unmeasured_sensors_become_placeholder_or_absent(valid, offhand_real, torso_real, stale):
+    segment = assemble(imu3_chunks(1, imu3_rows(), valid=valid))
+    rows = classifier_input(segment, 50.0, 100)
+    assert (rows.offhand[0] != list(OFFHAND_PLACEHOLDER)) is offhand_real
+    assert (rows.torso is not None) is torso_real
+    assert rows.stale_pct == pytest.approx(stale)
+
+
+def test_legacy_dominant_only_segment_is_still_understood():
+    segment = assemble(segment_chunks(4, 75)[0])
+    assert not segment.three_imu
+    rows = classifier_input(segment, 50.0, 100)
+    assert rows.torso is None and rows.offhand[0] == list(OFFHAND_PLACEHOLDER) and rows.stale_pct == 50.0
+
+
+def test_three_imu_chunk_with_too_many_rows_or_mixed_flags_is_rejected():
+    chunks = imu3_chunks(2, imu3_rows(10))
+    assert SegmentAssembler().add({**chunks[0], "sample_count": 6}, now=0.0) is None
+    assembler = SegmentAssembler()
+    assembler.add(chunks[0], now=0.0)
+    assert assembler.add({**chunks[1], "flags": SEGMENT_FLAG_THREE_IMU}, now=0.0) is None
+
+
+async def test_three_imu_segment_becomes_one_window_with_all_three_sensors():
+    subject = session()
+    requests = []
+
+    async def classify(window):
+        requests.append(window)
+        return ActionResult(timestamp=window.timestamp, player_id=1, request_id=window.request_id,
+                            action="THRUST", action_confidence=.9, guard_state="IDLE",
+                            guard_confidence=0)
+
+    subject.ultra96.request = classify
+    chunks = imu3_chunks(31, imu3_rows(), weapon=2, first_ms=8000)
+    with structlog.testing.capture_logs() as logs:
+        for i, c in enumerate(chunks):
+            await subject._handle_frame(frame(c, seq=i + 1))
+        await asyncio.gather(*subject._classification_tasks)
+    assert len(requests) == 1
+    window = requests[0]
+    assert len(window.dominant) == len(window.offhand) == len(window.torso) == 100
+    assert window.offhand[0][0] == pytest.approx(200 / 2048)
+    assert window.torso[0][0] == pytest.approx(300 / 2048)
+    assert window.stale_pct == 0.0
+    assert (window.window_start_ts, window.window_end_ts) == (8000, 8000 + 1980)  # exactly 2 s
+    received = next(e for e in logs if e["event"] == "segment_received")
+    assert (received["right"], received["left"], received["torso"]) == (True, True, True)
+    wire = window.model_dump(by_alias=True)
+    assert len(wire["torso"]) == 100

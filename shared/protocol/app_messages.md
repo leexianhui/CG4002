@@ -19,7 +19,7 @@ Every message in this document carries:
 ```
 
 - `type` — the message name, exactly as titled in each section below.
-- `version` — `shared/protocol/VERSION` at the time the sender was built. A receiver that sees a
+- `version` — `shared/protocol/VERSION.txt` at the time the sender was built. A receiver that sees a
   version it does not know **logs and drops** the message rather than guessing at compatibility.
 - `timestamp` - nonnegative integer milliseconds. Incoming relay events use the relay laptop's
   monotonic clock after device conversion; Unity POSITION uses monotonic Stopwatch milliseconds.
@@ -221,6 +221,9 @@ correlated to its request when one is dropped, and so per-request latency can be
 ```
 
 - `windowStartTs`/`windowEndTs` — engine-time ms bounds of the window.
+- `torso` — optional, same row format; `null`/absent when the torso was not measured. Hardware
+  hubs in event mode send all three IMUs, so `dominant`, `offhand` and `torso` together form the
+  classifier's `(100, 18)` input: right wrist, left wrist, torso, 100 rows at 50 Hz.
 - `dominant`/`offhand` — each a list of `windowSamples` rows (relay `windowing.py`
   **[config]** `windowSamples: 40`), each row `[accelX, accelY, accelZ, gyroX, gyroY, gyroZ]` as
   floats, converted from the wire's fixed-point `int16` per `wire_protocol.md` §3.2. Row count is

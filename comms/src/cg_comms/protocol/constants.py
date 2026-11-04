@@ -88,8 +88,14 @@ ACK_RETRANSMIT_PACKET_TYPES: frozenset[PacketType] = frozenset(
 WINDOWED_RETRANSMIT_PACKET_TYPES: frozenset[PacketType] = frozenset({PacketType.SEGMENT_CHUNK})
 
 # SEGMENT_CHUNK layout limits (wire_protocol.md §3, cg_protocol.h CG_SEGMENT_*).
-SEGMENT_CHUNK_SAMPLES: int = 16
+SEGMENT_CHUNK_SAMPLES: int = 16  # legacy dominant-only rows per chunk (6 axes each)
+SEGMENT_CHUNK_SAMPLES_3IMU: int = 5  # three-IMU rows per chunk (18 axes each)
 SEGMENT_MAX_CHUNKS: int = 32
+# SEGMENT_CHUNK.flags (cg_protocol.h CG_SEGMENT_FLAG_*).
+SEGMENT_FLAG_THREE_IMU: int = 1 << 0
+SEGMENT_FLAG_DOM_VALID: int = 1 << 1
+SEGMENT_FLAG_OFF_VALID: int = 1 << 2
+SEGMENT_FLAG_TORSO_VALID: int = 1 << 3
 
 # SENSOR_FRAME.flags bits (wire_protocol.md §3.1).
 FLAG_DOM_STALE: int = 1 << 0

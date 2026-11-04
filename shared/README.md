@@ -11,7 +11,7 @@ subsystems live in one repository (`docs/REPO_PLAN.md` §1, §3).
 
 | Path | Normative for | Read by |
 |---|---|---|
-| `protocol/VERSION` | protocol version integer; bump on any breaking change | all |
+| `protocol/VERSION.txt` | protocol version integer; bump on any breaking change | all |
 | `protocol/wire_protocol.md` | the binary FireBeetle ↔ laptop protocol | firmware, comms |
 | `protocol/cg_protocol.h` | the same, as C — packet types, structs, CRC16 | firmware, comms |
 | `protocol/app_messages.md` | the JSON messages between relay, engine, Ultra96, visualizer | all |
@@ -29,7 +29,7 @@ subsystems live in one repository (`docs/REPO_PLAN.md` §1, §3).
    golden vectors are what prove they match.
 2. **Never renumber a shipped enum `wire` value.** Append new members. A renumber makes an old firmware
    and a new laptop silently read a byte as the wrong member — no error, just wrong behaviour.
-3. **Bump `protocol/VERSION` on any breaking change**, and let receivers drop unknown versions loudly.
+3. **Bump `protocol/VERSION.txt` on any breaking change**, and let receivers drop unknown versions loudly.
 4. **`generated/` is output, not source.** Edit `enums.yaml` or the schemas and regenerate.
 5. **No secrets here.** The AES-128 PSK lives in an environment variable or a file outside the repo,
    never in this directory.

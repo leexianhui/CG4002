@@ -30,7 +30,7 @@ from cg_comms.protocol.crypto import OutgoingSequenceCounter, SequenceTracker
 from cg_comms.protocol.framing import Framer
 from cg_comms.relay.heartbeat import HeartbeatMonitor, run_heartbeat_sender, run_liveness_watchdog
 from cg_comms.relay.reliability import LinkDegraded, ReliabilitySender
-from cg_comms.relay.segments import OFFHAND_PLACEHOLDER, Segment, SegmentAssembler, classifier_rows
+from cg_comms.relay.segments import Segment, SegmentAssembler, classifier_input
 from cg_comms.relay.timesync import LaptopSideSample, TimeSyncEstimator, estimate_offset_laptop_side
 from cg_comms.relay.ultra96 import Ultra96Client, Ultra96Unavailable, passes_confidence_gate
 from cg_comms.relay.windowing import PlayerWindower
@@ -462,6 +462,7 @@ class Session:
             flags=decoded.fields["flags"],
             dominant_raw=decoded.fields["dominant"],
             offhand_raw=decoded.fields["offhand"],
+            torso_raw=decoded.fields["torso"],
         )
         if window is None:
             return
@@ -503,12 +504,12 @@ class Session:
         log = dict(player_id=self.config.player_id, segment_id=segment.segment_id,
                    samples=len(segment.samples), sample_rate_hz=segment.sample_rate_hz,
                    chunks=segment.chunk_count, assembly_ms=round(segment.assembly_ms, 1),
-                   span_ms=span_ms)
+                   span_ms=span_ms, right=segment.measured(0), left=segment.measured(1),
+                   torso=segment.measured(2))
         if weapon is None or weapon is Weapon.NONE:
             logger.info("segment_suppressed", reason="no_weapon", **log)
             return None
-        n = windower.window_samples
-        dominant = classifier_rows(segment, windower.frame_rate_hz, n)
+        rows = classifier_input(segment, windower.frame_rate_hz, windower.window_samples)
         window = SensorWindow(
             # Arrival time, not the segment's end: the hub only sends a segment after its stroke has
             # settled (~0.4-1 s later), and the engine drops actions older than its reorder window
@@ -520,10 +521,10 @@ class Session:
             window_start_ts=start_ts,
             window_end_ts=start_ts + span_ms,
             sample_rate_hz=windower.frame_rate_hz,
-            dominant=dominant,
-            offhand=[list(OFFHAND_PLACEHOLDER) for _ in range(n)],
-            # Only the dominant half is measured; the placeholder off-hand half counts as stale.
-            stale_pct=50.0,
+            dominant=rows.dominant,
+            offhand=rows.offhand,
+            torso=rows.torso,
+            stale_pct=rows.stale_pct,
         )
         logger.info("segment_received", request_id=window.request_id, weapon=weapon.value, **log)
         self._segment_requests[window.request_id] = segment.segment_id

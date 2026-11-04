@@ -1,28 +1,27 @@
 """
-Final Ultra96 classifier service (ACTION_FINAL + GUARD_FINAL, one FPGA IP).
+Final Ultra96 classifier service: ACTION_FINAL (model_id 0 on the FPGA IP). Guard is detected by
+the hardware, not here, so the GUARD_FINAL model is no longer used.
 
 Line-delimited JSON over TCP 127.0.0.1:8888. The relay reaches it through the SSH tunnel.
 Comms boundary = shared/protocol/app_messages.md 3.1/3.2:
 
   in : {"type":"SENSOR_WINDOW","version":1,"playerId":1,"requestId":42,"weapon":"SWORD",
         "timestamp":12345678,"windowStartTs":..,"windowEndTs":..,"sampleRateHz":50,"stalePct":0,
-        "dominant":[[ax,ay,az,gx,gy,gz],...],      right wrist
-        "offhand":[[...],...],                     left wrist
-        "torso":[[...],...]}                       optional; absent today
+        "dominant":[[ax,ay,az,gx,gy,gz],...],      right wrist  } 100 rows each at 50 Hz (2 s),
+        "offhand":[[...],...],                     left wrist   } in g and deg/s, oldest first:
+        "torso":[[...],...]}                       torso        } one (100, 18) model input
        Also accepted (AI team testing): "samples": 100 rows x 18 = RIGHT, LEFT, TORSO.
   out: {"type":"ACTION_RESULT","version":1,"playerId":1,"requestId":42,"timestamp":12345678,
         "action":"HORIZONTAL_SWING","actionConfidence":0.94,
-        "guardState":"IDLE","guardConfidence":0.12, ...extra AI fields}
+        "guardState":"IDLE","guardConfidence":0.0, ...extra AI fields}
 
 Boundary rules (Comms, 2026-11-04):
   * requestId, playerId and timestamp are echoed UNCHANGED: the relay matches replies by
     requestId and drops a reply whose timestamp/playerId differ.
-  * A sensor that sent nothing, or a perfectly constant block (the relay's off-hand placeholder in
-    segment mode: the hub sends only the right wrist), is filled with the model's training mean,
+  * A sensor that sent nothing (torso null), or a perfectly constant block (the relay's off-hand
+    placeholder when the left wrist was not measured), is filled with the model's training mean,
     i.e. 0 after normalisation, instead of being fed as fake motion.
-  * Guard has priority over attack (AI team rule): while guarding, action is IDLE + GUARDING,
-    which the engine treats as a guard-only report.
-  * guardState is GUARDING or IDLE (comms GuardState); the model's NOT_GUARDING maps to IDLE.
+  * guardState is always IDLE with guardConfidence 0: guard comes from the hardware.
   * Action classes the game has no rules for (COMMS_ACTION_MAP) are reported as IDLE; the AI label
     stays in "rawAction".
 
@@ -46,13 +45,9 @@ from fixedpoint_ref import FxCfg, forward_fixed, forward_float, load_weights, pa
 PROTOCOL_VERSION=1
 
 ACTION_MODEL="ACTION_FINAL"
-GUARD_MODEL="GUARD_FINAL"
+MODELS=[ACTION_MODEL]   # GUARD_FINAL retired: guard is detected by the hardware
 
 ATTACK_THRESHOLD=0.70
-GUARD_ENTER=0.55
-GUARD_EXIT=0.35
-GUARD_ENTER_COUNT=2
-GUARD_EXIT_COUNT=3
 
 # Action names the comms engine accepts (comms ActionClass / shared/schemas/action_result.schema.json).
 COMMS_ACTIONS={"IDLE","HORIZONTAL_SWING","VERTICAL_SWING","DIAGONAL_SWING","THRUST",
@@ -64,8 +59,6 @@ COMMS_ACTION_MAP={"SPIN_ATTACK":"IDLE","UPPERCUT":"IDLE"}
 # 18-channel layout of config.CHANNELS: which request field fills which columns.
 SENSOR_BLOCKS=(("dominant",0),("offhand",6),("torso",12))
 
-_guard_state={}
-
 class StubBackend(object):
     def logits(self,model,x_raw):
         n=len(C.CLASSES[model])
@@ -74,8 +67,8 @@ class StubBackend(object):
 
 class NumpyBackend(object):
     def __init__(self,models_dir,fixed=False,fx=None):
-        self.W={n:load_weights(os.path.join(models_dir,n,"weights.npz")) for n in C.MODEL_NAMES}
-        self.norm={n:load_norm_json(os.path.join(models_dir,n,"norm.json")) for n in C.MODEL_NAMES}
+        self.W={n:load_weights(os.path.join(models_dir,n,"weights.npz")) for n in MODELS}
+        self.norm={n:load_norm_json(os.path.join(models_dir,n,"norm.json")) for n in MODELS}
         self.fixed=fixed
         self.cfg=FxCfg(*fx) if fx else FxCfg()
         if fixed:
@@ -86,8 +79,6 @@ class NumpyBackend(object):
         x=((x_raw-m)/s).astype(np.float32)
         for start in missing:
             x[:,start:start+6]=0.0      # absent sensor = training mean
-        if model==GUARD_MODEL:
-            x[:,12:]=0.0                # GUARD uses RIGHT+LEFT only
         return x
 
     def logits(self,model,x_raw,missing=()):
@@ -134,29 +125,6 @@ def probs_for(backend,model,x,missing):
         z=backend.logits(model,x,missing)
     return softmax(np.asarray(z,dtype=np.float64))
 
-def update_guard(player_id,guard_prob):
-    key=str(player_id)
-    st=_guard_state.setdefault(key,{"active":False,"enter":0,"exit":0})
-    if not st["active"]:
-        if guard_prob>=GUARD_ENTER:
-            st["enter"]+=1
-        else:
-            st["enter"]=0
-        if st["enter"]>=GUARD_ENTER_COUNT:
-            st["active"]=True
-            st["enter"]=0
-            st["exit"]=0
-    else:
-        if guard_prob<=GUARD_EXIT:
-            st["exit"]+=1
-        else:
-            st["exit"]=0
-        if st["exit"]>=GUARD_EXIT_COUNT:
-            st["active"]=False
-            st["enter"]=0
-            st["exit"]=0
-    return st["active"]
-
 def handle_request(backend,req,debug=False):
     if req.get("type")=="PING":
         return {"type":"PONG","timestamp":int(time.time()*1000)}
@@ -184,12 +152,7 @@ def handle_request(backend,req,debug=False):
     if raw_action!="IDLE" and a_conf<ATTACK_THRESHOLD:
         action="IDLE"
 
-    gp=probs_for(backend,GUARD_MODEL,x,missing)
-    guard_prob=float(gp[1])  # GUARDING is class index 1
-    guard_active=update_guard(req["playerId"],guard_prob)
-
-    final_action="GUARD" if guard_active else action
-    comms_action="IDLE" if guard_active else COMMS_ACTION_MAP.get(action,action)
+    comms_action=COMMS_ACTION_MAP.get(action,action)
     if comms_action not in COMMS_ACTIONS:
         comms_action="IDLE"
 
@@ -203,9 +166,8 @@ def handle_request(backend,req,debug=False):
         "action":comms_action,
         "rawAction":raw_action,
         "actionConfidence":round(a_conf,4),
-        "guardState":"GUARDING" if guard_active else "IDLE",
-        "guardConfidence":round(guard_prob,4),
-        "finalAction":final_action,
+        "guardState":"IDLE",
+        "guardConfidence":0.0,
     }
     if debug:
         out["latencyMs"]=round((time.perf_counter()-t0)*1000,3)

@@ -92,6 +92,10 @@ connected to its own torso and left wrist. No board uses Wi-Fi, so no hotspot is
 | Torso | `p1_torso` | `p2_torso` | no |
 | Left wrist | `p1_left` | `p2_left` | no |
 
+> **Reflash all six after pulling 2026-11-04 or later.** The torso and left wrist now stream their
+> samples to the hub, and the hub sends the AI a 2 s window of all three boards per action. An old
+> node build sends nothing in this mode, and an old hub sends the right wrist only.
+
 ```powershell
 cd C:\Users\T0332075\Desktop\CG4002
 & "pio-venv\Scripts\pio.exe" device list           # plug boards in one at a time to learn each COM port
@@ -152,7 +156,7 @@ Once that works end to end, check the bitstream once, then serve from the FPGA (
 
 ```sh
 git lfs pull                                     # cnn.bit / cnn.hwh must be real files, not LFS pointers
-sudo -E python3 fpga_infer.py --bit cnn.bit      # HW acc should match fixed acc, bit-exact n/n
+sudo -E python3 fpga_infer.py --bit cnn.bit      # HW acc should match fixed acc, bit-exact 68/68
 sudo -E python3 classifier_server.py --backend fpga --bit cnn.bit
 ```
 
@@ -309,7 +313,8 @@ Reset the match (Ultra96, from `comms/`):
 | `classifier correlation mismatch` | Something other than `ai/classifier_server.py` (or `cg-ultra96-sim`) is on port 8888, or an old copy of the AI server that does not echo `requestId`/`timestamp` |
 | Always `IDLE` while swinging | Normal at low confidence: the gate is 0.6 (`min_confidence`). Check the AI terminal for replies, and see `ai/README.md` known gaps |
 | `SPIN_ATTACK` / `UPPERCUT` swings do nothing | Expected: there are no game rules for them yet, so they map to `IDLE` (the AI label is in `rawAction`) |
-| Never guards, or poor recognition | The models want right wrist + left wrist + torso, but in segment mode the hub sends only the right wrist (`ai/README.md` known gaps) |
+| Never guards | Guard comes from the hardware now, not the AI, and has no path to the engine yet (`ai/README.md` known gaps) |
+| Poor recognition; relay logs `segment_received ... left=False` or `torso=False` | That board's samples aren't reaching the hub: check the hub's `[segment] window ... left=1 torso=1` line, and that the torso and left wrist were reflashed with the current `hardware/gateway` build (old node builds send nothing in event mode) |
 | Engine stuck in WAITING or PAUSED | A phone isn't ready or calibrated, a relay is disconnected, or a position is more than 1 s old. Check the setup readings in the panel |
 | Relay can't reach the engine (TLS error) | `comms/certs/engine.crt` is missing on the relay laptop. Copy it from the Ultra96 as for the demo |
 | Swings accepted on the hub (`action_accepted`) but no `segment_received` | Hub serial shows `[segment] undelivered`: the BLE link is losing chunks. `stream_decode_drop reason=bad_crc` on the relay: the BLE packet size is too small (see `ble_mtu_too_small_for_segments`). `segment_ignored`: the relay YAML lacks `segment_mode: true` |

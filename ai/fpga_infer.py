@@ -63,7 +63,7 @@ def main():
     ap.add_argument("--dma",default=None)
     ap.add_argument("--testset",default=os.path.join(C.ROOT,"hls","board_testset.npz"))
     ap.add_argument("--models-dir",default=C.MODELS_DIR)
-    ap.add_argument("--models",nargs="+",default=["ACTION_FINAL","GUARD_FINAL"])
+    ap.add_argument("--models",nargs="+",default=["ACTION_FINAL"])  # GUARD_FINAL retired (hardware guard)
     ap.add_argument("--fx",default="16,8,16,4,40,18,20,2")
     args=ap.parse_args()
 

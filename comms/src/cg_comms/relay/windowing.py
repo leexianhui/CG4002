@@ -79,6 +79,8 @@ class PlayerWindower:
     _request_ids: _RequestIdCounter = field(default_factory=_RequestIdCounter, init=False)
     _dominant: "deque[_RingSample]" = field(init=False)
     _offhand: "deque[_RingSample]" = field(init=False)
+    # Torso rows, in step with _dominant; None for a frame that carried no torso.
+    _torso: deque[tuple[int, ...] | None] = field(init=False)
     _frame_count: int = field(default=0, init=False)
     _current_weapon: Weapon | None = field(default=None, init=False)
     # Trigger-mode-only state (docs/DEMO_TRIGGERED_ACTION_PLAN.md §3.2). Unused when trigger_mode=False.
@@ -93,6 +95,12 @@ class PlayerWindower:
     def __post_init__(self) -> None:
         self._dominant = deque(maxlen=self.window_samples)
         self._offhand = deque(maxlen=self.window_samples)
+        self._torso = deque(maxlen=self.window_samples)
+
+    def _clear_rings(self) -> None:
+        self._dominant.clear()
+        self._offhand.clear()
+        self._torso.clear()
 
     def on_weapon_confirmed(self, weapon: Weapon | None) -> None:
         self._current_weapon = weapon
@@ -100,8 +108,7 @@ class PlayerWindower:
     def reset_session(self) -> None:
         if self._armed:
             self._log_suppression("too_few", self._capture_trigger_id, ended_by="session_lost")
-        self._dominant.clear()
-        self._offhand.clear()
+        self._clear_rings()
         self._frame_count = 0
         self._current_weapon = None
         self._armed = self._refractory = False
@@ -124,8 +131,9 @@ class PlayerWindower:
         flags: int,
         dominant_raw: tuple[int, ...],
         offhand_raw: tuple[int, ...],
+        torso_raw: tuple[int, ...] | None = None,
     ) -> SensorWindow | None:
-        """Feeds one decoded SENSOR_FRAME's dominant/off-hand samples.
+        """Feeds one decoded SENSOR_FRAME's dominant/off-hand (and torso) samples.
 
         `trigger_mode=False` (default): returns a SensorWindow if this frame completes a stride and
         the window passes the staleness/span checks, else None — bit-for-bit the original behaviour.
@@ -140,13 +148,12 @@ class PlayerWindower:
                 self._log_suppression("too_few", self._capture_trigger_id,
                                       ended_by="untagged" if not tagged else "trigger_changed")
                 self._armed = False
-                self._dominant.clear()
-                self._offhand.clear()
+                self._clear_rings()
             if tagged and not self._armed and not self._refractory:
-                self._dominant.clear()
-                self._offhand.clear()
+                self._clear_rings()
         self._dominant.append(_RingSample(engine_ts_ms, dominant_raw, bool(flags & FLAG_DOM_STALE)))
         self._offhand.append(_RingSample(engine_ts_ms, offhand_raw, bool(flags & FLAG_OFF_STALE)))
+        self._torso.append(torso_raw)
         self._frame_count += 1
 
         if self.trigger_mode:
@@ -251,6 +258,10 @@ class PlayerWindower:
                 sample_rate_hz=self.frame_rate_hz,
                 dominant=[_scale_sample(s.values) for s in self._dominant],
                 offhand=[_scale_sample(s.values) for s in self._offhand],
+                # SENSOR_FRAME has no torso stale bit (an absent torso is all zeros, which the
+                # classifier treats as missing); a window with a frame lacking it sends none.
+                torso=(None if any(t is None for t in self._torso)
+                       else [_scale_sample(t) for t in self._torso]),
                 stale_pct=stale_pct,
                 trigger_id=trigger_id,
             ),

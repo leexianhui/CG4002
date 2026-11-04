@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://cg4002.internal/schemas/sensor_window.schema.json",
   "title": "SENSOR_WINDOW",
-  "description": "relay (laptop) -> Ultra96. See shared/protocol/app_messages.md §3.1. Row count of dominant/offhand is deliberately not fixed here - it is dictated by the trained model's input shape and may change without a protocol version bump (COMMS_IMPLEMENTATION_PLAN.md §16.2).",
+  "description": "relay (laptop) -> Ultra96. See shared/protocol/app_messages.md §3.1. Row count of dominant/offhand/torso is deliberately not fixed here - it is dictated by the trained model's input shape and may change without a protocol version bump (COMMS_IMPLEMENTATION_PLAN.md §16.2).",
   "type": "object",
   "$defs": {
     "imuSample": {
@@ -32,6 +32,13 @@
       "type": "array",
       "items": { "$ref": "#/$defs/imuSample" },
       "minItems": 1
+    },
+    "torso": {
+      "description": "Optional. Torso IMU rows, same format; null or absent when the torso was not measured.",
+      "oneOf": [
+        { "type": "array", "items": { "$ref": "#/$defs/imuSample" }, "minItems": 1 },
+        { "type": "null" }
+      ]
     },
     "stalePct": { "type": "number", "minimum": 0, "maximum": 100 },
     "triggerId": {

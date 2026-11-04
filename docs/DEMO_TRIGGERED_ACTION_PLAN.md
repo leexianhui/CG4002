@@ -624,7 +624,7 @@ input feature that a real classifier ignores. `0`/absent means "not a triggered 
 | `shared/schemas/sensor_window.schema.json` | optional `triggerId` | no |
 | `shared/protocol/cg_protocol.h` | document flag bit 2 as "frame is part of a triggered capture"; bits 5–7 as trigger id; add shift/mask macros | no — bit *values* and header layout unchanged, golden vectors unaffected |
 | `shared/enums/enums.yaml` | **no change** (no new enum members) | — |
-| `shared/protocol/VERSION` | **no change** — everything is additive | — |
+| `shared/protocol/VERSION.txt` | **no change** — everything is additive | — |
 
 The last two rows matter: no enum change means no `shared/generated/` regeneration, and no version
 bump means no `UNKNOWN_VERSION` drops during a partial rollout across the three machines.
@@ -1473,7 +1473,7 @@ Stated explicitly so none of these is silently carried forward.
 
 Standing constraints for every task below: the FireBeetle must never name an action; the Ultra96 side
 owns classification; no test may be weakened to pass; the three runtime machines `git pull` (never
-hand-edit source there); `shared/enums/enums.yaml` and `shared/protocol/VERSION` are not to be touched.
+hand-edit source there); `shared/enums/enums.yaml` and `shared/protocol/VERSION.txt` are not to be touched.
 
 **Six corrections that override the first draft of this plan.** They are cheap to get right now and
 expensive to discover on demo day:

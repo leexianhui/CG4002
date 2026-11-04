@@ -9,7 +9,7 @@
 #include "gateway_segments.h"
 
 namespace {
-// Continuous-mode node samples: Wi-Fi UDP, or the BLE node link (it maps the port to a tag).
+// Node samples (both modes): Wi-Fi UDP, or the BLE node link (it maps the port to a tag).
 #if CG_GATEWAY_NODE_LINK
 GatewayLinkUdp udp;
 #else
@@ -24,6 +24,27 @@ QueueHandle_t feedbackQueue;
 #if CG_GATEWAY_ROLE == 0 && CG_GATEWAY_EVENT_MODE
 GatewaySegmentQueue segments;
 portMUX_TYPE segmentMux = portMUX_INITIALIZER_UNLOCKED;
+// Hub main loop only (gatewaySample, gatewayPoll, gatewaySegment*): no lock needed.
+GatewayHistory history;
+GatewayNodeClock nodeClock[GATEWAY_SENSORS]; // indexed by history sensor (1 off-hand, 2 torso)
+// An accepted stroke whose window is not complete yet: its last row is still in the future, or
+// node samples for it may still be on the radio.
+struct PendingWindow {
+    bool active;
+    uint32_t id, end_ms;
+    uint8_t weapon;
+};
+const uint32_t kWindowMaxWaitMs = 400; // wait at most this past acceptance to centre the stroke
+const uint32_t kNodeLinkDelayMs = 80;  // node samples arrive this much after they were measured
+PendingWindow pending[GATEWAY_SEGMENT_SLOTS] = {};
+bool recording;
+uint32_t recordId, recordFirst, recordLast;
+uint16_t recordCount;
+uint8_t recordWeapon;
+
+// GatewaySample role (hub 0, torso 1, left 2) -> history sensor (0 dominant, 1 off-hand, 2 torso).
+unsigned sensorOfRole(uint8_t role) { return role == 2 ? 1 : role == 1 ? 2 : 0; }
+void buildReadyWindows(uint32_t now);
 #endif
 }
 
@@ -53,11 +74,10 @@ void gatewayBegin(uint8_t player, uint8_t role) {
 #endif
 }
 
+// Every board calls this for every IMU sample (100 Hz), in every phase. Nodes send one every 20 ms
+// to the hub in both modes (event mode needs them for the classifier window). The hub keeps its own
+// every sample: in event mode in the history, in continuous mode as the latest SENSOR_FRAME value.
 void gatewaySample(float ax, float ay, float az, float gx, float gy, float gz) {
-#if CG_GATEWAY_EVENT_MODE
-    // Event mode sends segments, not a stream: no node broadcast competes with the hub's BLE link.
-    (void)ax; (void)ay; (void)az; (void)gx; (void)gy; (void)gz;
-#else
     uint32_t now = millis();
     if (roleId && now - lastExport < 20) return;
     lastExport = now;
@@ -73,9 +93,13 @@ void gatewaySample(float ax, float ay, float az, float gx, float gy, float gz) {
         s.axes[i] = gatewayScale(values[i], i < 3 ? 2048.0f : 16.4f);
     }
     if (roleId == 0) {
+#if CG_GATEWAY_ROLE == 0 && CG_GATEWAY_EVENT_MODE
+        history.put(0, now, s.axes);
+#else
         portENTER_CRITICAL(&sampleMux);
         samples.accept(s, playerId, now);
         portEXIT_CRITICAL(&sampleMux);
+#endif
     } else {
 #if CG_GATEWAY_NODE_LINK
         IPAddress broadcast;
@@ -86,7 +110,6 @@ void gatewaySample(float ax, float ay, float az, float gx, float gy, float gz) {
         udp.write((uint8_t *)&s, sizeof(s));
         udp.endPacket();
     }
-#endif
 }
 
 void gatewayPoll(uint8_t locked_weapon) {
@@ -104,10 +127,22 @@ void gatewayPoll(uint8_t locked_weapon) {
             continue;
         }
         if (s.role != 1 && s.role != 2) continue;
+        uint32_t arrival = millis();
         portENTER_CRITICAL(&sampleMux);
-        samples.accept(s, playerId, millis());
+        bool fresh = samples.accept(s, playerId, arrival);
         portEXIT_CRITICAL(&sampleMux);
+#if CG_GATEWAY_ROLE == 0 && CG_GATEWAY_EVENT_MODE
+        if (fresh) {
+            unsigned sensor = sensorOfRole(s.role);
+            history.put(sensor, nodeClock[sensor].toHub(s.source_ms, arrival, s.boot), s.axes);
+        }
+#else
+        (void)fresh;
+#endif
     }
+#if CG_GATEWAY_ROLE == 0 && CG_GATEWAY_EVENT_MODE
+    buildReadyWindows(millis());
+#endif
 }
 
 uint8_t gatewayWeapon() {
@@ -151,29 +186,78 @@ int gatewayFeedbackDuty() {
 }
 
 #if CG_GATEWAY_ROLE == 0 && CG_GATEWAY_EVENT_MODE
+// The segmenter hands over the samples of the stroke it accepted (plus its padding). Only their time
+// span is used: the window itself comes from the history, so it has all three sensors and real
+// samples on both sides of the stroke.
 void gatewaySegmentBegin(uint32_t segment_id, uint8_t weapon, uint16_t source_samples) {
-    portENTER_CRITICAL(&segmentMux);
-    uint32_t dropped = segments.dropped;
-    segments.begin(segment_id, weapon <= 3 ? weapon : 0, source_samples, millis());
-    bool lostOne = segments.dropped != dropped;
-    uint32_t lost = segments.last_dropped_id;
-    portEXIT_CRITICAL(&segmentMux);
-    if (lostOne)
-        Serial.printf("[segment] queue full, dropped unsent seg=%lu\n", (unsigned long)lost);
+    (void)source_samples;
+    recording = true;
+    recordId = segment_id;
+    recordWeapon = weapon <= 3 ? weapon : 0;
+    recordCount = 0;
 }
-// Touches only the FILLING slot, which the BLE task never reads: no lock needed.
-void gatewaySegmentSample(uint32_t t_ms, float ax, float ay, float az, float gx, float gy, float gz) {
-    const float values[] = {ax, ay, az, gx, gy, gz};
-    int16_t axes[6];
-    for (unsigned i = 0; i < 6; ++i) axes[i] = gatewayScale(values[i], i < 3 ? 2048.0f : 16.4f);
-    segments.add(t_ms, axes);
+void gatewaySegmentSample(uint32_t t_ms, float, float, float, float, float, float) {
+    if (!recording) return;
+    if (!recordCount++) recordFirst = t_ms;
+    recordLast = t_ms;
 }
 bool gatewaySegmentEnd() {
-    portENTER_CRITICAL(&segmentMux);
-    bool queued = segments.end();
-    portEXIT_CRITICAL(&segmentMux);
-    return queued;
+    if (!recording) return false;
+    recording = false;
+    if (!recordCount) return false;
+    uint32_t now = millis();
+    int slot = -1;
+    for (int i = 0; i < GATEWAY_SEGMENT_SLOTS; i++)
+        if (!pending[i].active && slot < 0) slot = i;
+    if (slot < 0) { // three strokes still waiting: the oldest gives way
+        slot = 0;
+        for (int i = 1; i < GATEWAY_SEGMENT_SLOTS; i++)
+            if ((int32_t)(pending[i].end_ms - pending[slot].end_ms) < 0) slot = i;
+        Serial.printf("[segment] too many waiting, dropped seg=%lu\n", (unsigned long)pending[slot].id);
+    }
+    pending[slot] = {true, recordId, gatewayWindowEndMs(recordFirst, recordLast, now, kWindowMaxWaitMs),
+                     recordWeapon};
+    return true;
 }
+
+namespace {
+// Main loop: a window whose last row (plus the node-link delay) is in the past is copied out of the
+// history into the relay queue, oldest first.
+void buildReadyWindows(uint32_t now) {
+    for (;;) {
+        int next = -1;
+        for (int i = 0; i < GATEWAY_SEGMENT_SLOTS; i++)
+            if (pending[i].active && (int32_t)(now - (pending[i].end_ms + kNodeLinkDelayMs)) >= 0 &&
+                (next < 0 || (int32_t)(pending[i].end_ms - pending[next].end_ms) < 0))
+                next = i;
+        if (next < 0) return;
+        PendingWindow p = pending[next];
+        pending[next].active = false;
+
+        portENTER_CRITICAL(&segmentMux);
+        uint32_t dropped = segments.dropped;
+        GatewaySegment *seg = segments.begin(p.id, p.weapon, now);
+        bool lostOne = segments.dropped != dropped;
+        uint32_t lost = segments.last_dropped_id;
+        portEXIT_CRITICAL(&segmentMux);
+        if (lostOne)
+            Serial.printf("[segment] queue full, dropped unsent seg=%lu\n", (unsigned long)lost);
+        if (!seg) continue;
+        // FILLING: the BLE task never reads this slot, so it is filled outside the lock.
+        uint32_t endGrid = GatewayHistory::gridOf(p.end_ms);
+        seg->valid = history.window(endGrid, seg->rows);
+        seg->first_ms = (endGrid - (GATEWAY_WINDOW_ROWS - 1)) * GATEWAY_GRID_MS;
+        seg->count = GATEWAY_WINDOW_ROWS;
+        portENTER_CRITICAL(&segmentMux);
+        segments.end();
+        portEXIT_CRITICAL(&segmentMux);
+        Serial.printf("[segment] window seg=%lu right=%d left=%d torso=%d\n", (unsigned long)p.id,
+                      !!(seg->valid & CG_SEGMENT_FLAG_DOM_VALID), !!(seg->valid & CG_SEGMENT_FLAG_OFF_VALID),
+                      !!(seg->valid & CG_SEGMENT_FLAG_TORSO_VALID));
+    }
+}
+}
+
 const GatewaySegment *gatewaySegmentTake(uint32_t now, uint32_t max_age_ms, int &slot) {
     portENTER_CRITICAL(&segmentMux);
     uint32_t dropped = segments.dropped;

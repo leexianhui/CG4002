@@ -52,24 +52,37 @@ feedback queue. Sensor reads, UDP and motor writes stay on the hardware main thr
 
 - Existing BLE v1 framing, encryption, UUIDs, sequences, reliable weapon/feedback and time sync.
   Firmware version 5; packet range 0x40–0x4F stays reserved.
-- **Event mode (default, `CG_GATEWAY_EVENT_MODE=1`).** The hub sends nothing periodic but a 1 Hz
-  heartbeat. Its own segmenter's `acceptSegment()` calls `sendSegmentToUltra96()`, which hands the
-  accepted samples (the stroke plus its 25% padding, right wrist only) to the BLE task through
-  `gatewaySegmentBegin/Sample/End`. The hub keeps them at 50 Hz (every other 100 Hz sample) in a
-  3-slot queue (one sending, one waiting, one filling; when full, the oldest unsent segment is dropped
-  and logged; one older than 1.5 s is discarded unsent). It sends each segment once as `SEGMENT_CHUNK`s
-  (wire_protocol.md §3): 16 samples per 234-byte frame, up to 4 unACKed, each retried with identical
-  ciphertext (150 ms, doubling, five sends). Segments longer than 4 s keep their centre. The relay
-  ACKs each chunk, reassembles, and sends exactly one classifier request per segment
-  (`relay/segments.py`: resampled to 50 Hz, centred, edge-padded or trimmed to 100 samples).
-  Torso and left wrist do not export samples in this mode, so the hub's radio carries only the
-  hardware team's own packets and short segment bursts. The off-hand rows the classifier requires are
-  a fixed at-rest placeholder, counted as stale, until a GUARD model needs them.
+- **Event mode (default, `CG_GATEWAY_EVENT_MODE=1`).** One classifier window per accepted action,
+  holding exactly what `ai/models/ACTION_FINAL` takes: 100 rows at 50 Hz (2 s), 18 axes per row =
+  right wrist, left wrist, torso. Since 2026-11-04 (before that, only the right wrist reached the AI):
+  - **All three boards feed the hub.** Torso and left wrist send their 30-byte sample every 20 ms over
+    the node link (the same packet as continuous mode). The hub puts its own 100 Hz samples and the
+    nodes' into `GatewayHistory` (`include/gateway_segments.h`): the last 4 s on a 20 ms grid in hub
+    time. Node samples are moved onto the hub clock by `GatewayNodeClock` (smallest recent
+    arrival-minus-source offset, so radio jitter doesn't shift them).
+  - **The hardware team's segmenter still decides what is an action.** Its `acceptSegment()` calls
+    `sendSegmentToUltra96()`, which hands over the accepted stroke (plus its 25% padding). The hub
+    uses only its time span: the window ends so the stroke's midpoint is row 50 (1.0 s), the position
+    the AI's training data has. It waits at most 400 ms past acceptance for that (otherwise the window
+    ends 400 ms after acceptance), plus 80 ms for node samples still on the radio, then copies the
+    100 rows out of the history. Real samples on both sides, no padding.
+  - **Validity.** A sensor present in fewer than 80 of the 100 rows is flagged not valid; the relay then
+    sends the left wrist as its at-rest placeholder and the torso as absent, and the AI fills them with
+    its training mean. A short gap repeats the sensor's previous row. Serial prints
+    `[segment] window seg=... right=1 left=1 torso=1` for every window.
+  - **Uplink.** A 3-slot queue (one sending, one waiting, one filling; when full, the oldest unsent
+    window is dropped and logged; one older than 1.5 s is discarded unsent). Each window goes once as
+    20 three-IMU `SEGMENT_CHUNK`s (wire_protocol.md §3, flags bit 0): 5 rows of 18 axes per 234-byte
+    frame, up to 4 unACKed, each retried with identical ciphertext (150 ms, doubling, five sends). The
+    relay ACKs each chunk, reassembles, and sends exactly one classifier request with `dominant`,
+    `offhand` and `torso`. It still accepts an old hub's dominant-only segments (flags 0).
+  - **Cost.** Hub static RAM 88,788 -> 101,316 bytes (history 8.8 KB, window queue 10.8 KB). Node links
+    carry 50 Hz samples from both nodes (the torso also keeps its 50 Hz beacons).
 - **Continuous mode (`-DCG_GATEWAY_EVENT_MODE=0` on hub and nodes, `segment_mode: false` on the
   relay).** Right/left wrist and torso channels in 50 Hz `SENSOR_FRAME`s, windowed by stride on the
   relay. Axes preserve the original board orientation; accel uses 2048 counts/g, gyro 16.4
   counts/degree/second, with int16 saturation.
-- Continuous mode only: internal port 4215 (P1) / 4225 (P2) (a node-link tag over BLE) carries one
+- Both modes: internal port 4215 (P1) / 4225 (P2) (a node-link tag over BLE) carries one
   30-byte sample at 50 Hz from each non-hub node. Packed little-endian: magic u16=0x4743, version u8=1, player u8, role u8,
   reserved u8=0, boot u32, sequence u32, source_ms u32, six int16 axes. Roles: hub=0, torso=1,
   left=2. Existing diagnostic RAW streams and ports remain unchanged.
@@ -78,9 +91,9 @@ feedback queue. Sensor reads, UDP and motor writes stay on the hardware main thr
   are set. This is arrival-age detection, not synchronized acquisition: peer clocks are retained
   internally but current BLE frames use the hub clock and latest received samples. Radio buffering
   and cross-board alignment must be measured before agreeing the real AI input contract.
-- BLE v1 has no torso stale flag. Missing torso slots are zero; the current classifier consumes
-  only the two wrists. Do not extend AI to torso using this layout without adding validity handling.
-  Missing wrist slots are zero **and marked stale**, never silently treated as measurements.
+- Continuous mode: BLE v1 has no torso stale flag. Missing torso slots are zero, which the classifier
+  treats as an absent sensor (a constant block). Missing wrist slots are zero **and marked stale**,
+  never silently treated as measurements. (Event mode has per-sensor valid flags instead.)
 - The real locked posture selection is sent using the existing weapon-event packet. UID is all
   zeros because this hardware does not supply RFID. Selection is announced again after reconnect.
 - Engine feedback codes 0–3 drive hub vibration using supplied intensity, duration and repeat count
@@ -147,9 +160,12 @@ real relays: that launcher also creates simulated devices and relay sessions for
 
 ## Physical acceptance still required
 
-1. Build/upload the three matching profiles for one player, choose a weapon, verify the BLE
-   handshake, that `ble_connected mtu_payload` is at least 234, and that each accepted swing on the
-   hub gives exactly one `segment_received` and one `segment_classified` on the relay. In continuous
+1. Build/upload the three matching profiles for one player (**all three**: the nodes must be reflashed
+   too, or they send no samples in event mode), choose a weapon, verify the BLE handshake, that
+   `[ble] free heap after init` stays healthy with the larger hub RAM, that `ble_connected
+   mtu_payload` is at least 234, and that each accepted swing gives `[segment] window ... right=1
+   left=1 torso=1` on the hub and exactly one `segment_received` (with `left=True torso=True`) and one
+   `segment_classified` on the relay. In continuous
    mode instead verify 50 Hz reception and move each wrist separately to verify role/axis mapping.
 2. Swing repeatedly as fast as possible: watch for `[segment] queue full` / `undelivered` on the hub
    and `segment_abandoned` on the relay. Repeat for hub/relay reconnect and weapon reannouncement.

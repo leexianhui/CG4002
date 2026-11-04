@@ -81,7 +81,9 @@ SENSOR_FRAME         (42 B)  deviceTimestampMs u32 | flags u8 | weaponId u8 |
 RFID_EVENT           (12 B)  deviceTimestampMs u32 | weaponId u8 | reserved u8 | tagUid[6]
 SEGMENT_CHUNK       (208 B)  segmentId u32 | chunkIndex u8 | chunkCount u8 | weaponId u8 | flags u8 |
                              sampleRateHz u16 | firstSampleMs u32 | sampleCount u8 | reserved u8 |
-                             samples[16][6] i16   (ax ay az gx gy gz; rows >= sampleCount are 0)
+                             samples 96 x i16: flags bit 0 set -> [5][18] (dominant | off-hand |
+                             torso, each ax ay az gx gy gz); clear -> [16][6] dominant only.
+                             Rows >= sampleCount are 0
 HEARTBEAT            (12 B)  deviceTimestampMs u32 | vbatBelt_mV u16 | vbatDom_mV u16 |
                              vbatOff_mV u16 | statusFlags u16
 ACK                   (2 B)  ackedSeq u16
@@ -89,11 +91,23 @@ COMBAT_FEEDBACK       (6 B)  feedbackCode u8 | intensityPct u8 | durationMs u16 
 ```
 
 `SEGMENT_CHUNK` is the event-mode uplink of the hardware hub (`hardware/gateway`): instead of a
-50 Hz `SENSOR_FRAME` stream, the hub sends the dominant-wrist samples of each action segment its own
-segmenter accepted, once, as `chunkCount` (1–32) chunks of up to 16 samples. Chunk *i* holds samples
-`[16·i, 16·i + sampleCount)`; `firstSampleMs` is that chunk's first sample on the device clock.
-`flags` is reserved (0). The frame is 234 bytes on the wire (8 + 208 + 16 + 2), inside the 244-byte
-BLE payload MTU. The relay ACKs every chunk (duplicates included), reassembles by `segmentId`,
+50 Hz `SENSOR_FRAME` stream, the hub sends one window per action its own segmenter accepted, once,
+as `chunkCount` (1–32) chunks. Current hubs send exactly the classifier's input: 100 rows at 50 Hz
+(2 s) of all three IMUs, the accepted stroke centred, in 20 chunks of 5 rows × 18 axes.
+
+| `flags` bit | Meaning |
+|---|---|
+| 0 `THREE_IMU` | Rows are 18 axes (dominant, off-hand, torso), 5 per chunk. Clear: legacy hub, 6-axis dominant-only rows, 16 per chunk |
+| 1 `DOM_VALID` | Three-IMU only: the dominant columns are measurements |
+| 2 `OFF_VALID` | … the off-hand columns are (a sensor present in under 80 of 100 rows is not) |
+| 3 `TORSO_VALID` | … the torso columns are |
+| 4–7 | reserved, 0 |
+
+Chunk *i* holds rows `[i·rowsPerChunk, i·rowsPerChunk + sampleCount)`; `firstSampleMs` is that
+chunk's first row on the device clock. Every chunk of a segment carries the same `flags`. The relay
+sends an unmeasured off-hand as its at-rest placeholder and an unmeasured torso as absent
+(`SENSOR_WINDOW.torso` null). The frame is 234 bytes on the wire (8 + 208 + 16 + 2) in both
+layouts, inside the 244-byte BLE payload MTU. The relay ACKs every chunk (duplicates included), reassembles by `segmentId`,
 abandons a segment that is not complete within its timeout, and sends exactly one `SENSOR_WINDOW` per
 complete segment. The device keeps at most a few segments queued and drops the oldest when full.
 

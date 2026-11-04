@@ -159,6 +159,8 @@ class SensorWindow(_Envelope):
     sample_rate_hz: float = Field(alias="sampleRateHz", gt=0.0)
     dominant: list[ImuSample] = Field(min_length=1)
     offhand: list[ImuSample] = Field(min_length=1)
+    # Optional: absent/None when the torso was not measured (app_messages.md §3.1).
+    torso: Annotated[list[ImuSample], Field(min_length=1)] | None = None
     stale_pct: float = Field(alias="stalePct", ge=0.0, le=100.0)
     trigger_id: int | None = Field(alias="triggerId", default=None, ge=0, le=7)
 

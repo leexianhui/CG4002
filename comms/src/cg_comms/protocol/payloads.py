@@ -99,7 +99,8 @@ PAYLOAD_TABLES: dict[PacketType, tuple[Field, ...]] = {
         Field("first_sample_ms", FieldKind.U32),
         Field("sample_count", FieldKind.U8),
         Field("reserved", FieldKind.U8),
-        # SEGMENT_CHUNK_SAMPLES rows of (ax, ay, az, gx, gy, gz), flattened; unused rows are zero.
+        # 96 int16, flattened. flags & SEGMENT_FLAG_THREE_IMU: 5 rows of 18 axes (dominant, off-hand,
+        # torso); otherwise 16 rows of (ax, ay, az, gx, gy, gz). Unused slots are zero.
         Field("samples", FieldKind.I16_ARRAY, SEGMENT_CHUNK_SAMPLES * 6),
     ),
     PacketType.HEARTBEAT: (

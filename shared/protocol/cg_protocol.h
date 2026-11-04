@@ -172,22 +172,34 @@ typedef struct CG_PACKED {
 } cg_payload_rfid_event_t;
 
 /* device -> laptop, one action segment split into chunks (event mode, hardware hub). 208 bytes.
- * A segment is `chunk_count` chunks sharing `segment_id`; chunk i carries samples
- * [i*CG_SEGMENT_CHUNK_SAMPLES, i*CG_SEGMENT_CHUNK_SAMPLES + sample_count). Unused sample slots are 0.
- * Each sample is one dominant-wrist IMU reading: ax ay az (1/2048 g) gx gy gz (1/16.4 deg/s). */
-#define CG_SEGMENT_CHUNK_SAMPLES 16
-#define CG_SEGMENT_MAX_CHUNKS    32
+ * A segment is `chunk_count` chunks sharing `segment_id`; chunk i carries rows
+ * [i*rows_per_chunk, i*rows_per_chunk + sample_count). Unused slots are 0. IMU units on the wire:
+ * ax ay az (1/2048 g) gx gy gz (1/16.4 deg/s).
+ *   flags & CG_SEGMENT_FLAG_THREE_IMU == 0: legacy layout, dominant wrist only, 16 rows of 6 axes.
+ *   flags & CG_SEGMENT_FLAG_THREE_IMU != 0: 5 rows of 18 axes (dominant, off-hand, torso), in
+ *     `samples3`; the *_VALID bits say which sensors' columns are measurements. All chunks of a
+ *     segment carry the same flags. */
+#define CG_SEGMENT_CHUNK_SAMPLES      16 /* legacy rows per chunk */
+#define CG_SEGMENT_CHUNK_SAMPLES_3IMU 5  /* three-IMU rows per chunk (5 x 36 B in the 192-B area) */
+#define CG_SEGMENT_MAX_CHUNKS         32
+#define CG_SEGMENT_FLAG_THREE_IMU     (1u << 0)
+#define CG_SEGMENT_FLAG_DOM_VALID     (1u << 1)
+#define CG_SEGMENT_FLAG_OFF_VALID     (1u << 2)
+#define CG_SEGMENT_FLAG_TORSO_VALID   (1u << 3)
 typedef struct CG_PACKED {
     uint32_t segment_id;
     uint8_t  chunk_index;     /* 0 .. chunk_count-1 */
     uint8_t  chunk_count;     /* 1 .. CG_SEGMENT_MAX_CHUNKS, same on every chunk of a segment */
     uint8_t  weapon_id;       /* weapon locked when the segment was accepted */
-    uint8_t  flags;           /* reserved, 0 */
+    uint8_t  flags;           /* CG_SEGMENT_FLAG_*; 0 = legacy dominant-only layout */
     uint16_t sample_rate_hz;  /* nominal spacing of the samples in this chunk */
     uint32_t first_sample_ms; /* device clock of this chunk's first sample */
-    uint8_t  sample_count;    /* 1 .. CG_SEGMENT_CHUNK_SAMPLES */
+    uint8_t  sample_count;    /* rows in this chunk: 1 .. 16 (legacy) or 1 .. 5 (three-IMU) */
     uint8_t  reserved;
-    int16_t  samples[CG_SEGMENT_CHUNK_SAMPLES][6];
+    union {
+        int16_t samples[CG_SEGMENT_CHUNK_SAMPLES][6];
+        int16_t samples3[CG_SEGMENT_CHUNK_SAMPLES_3IMU][18];
+    };
 } cg_payload_segment_chunk_t;
 
 /* both directions, 1 Hz, best-effort. 12 bytes. */

@@ -1,9 +1,11 @@
 """SEGMENT_CHUNK reassembly -> one SENSOR_WINDOW per action segment (wire_protocol.md §3).
 
 Event mode of the hardware hub (hardware/gateway, CG_GATEWAY_EVENT_MODE): instead of a 50 Hz
-SENSOR_FRAME stream, the hub's own segmenter decides when an action happened and sends that
-segment's dominant-wrist samples once, split into chunks. This module rebuilds each segment and fits
-it to the classifier's input: `window_samples` rows at `frame_rate_hz` (ai/config.py WINDOW/FS).
+SENSOR_FRAME stream, the hub's own segmenter decides when an action happened and sends one window
+for it, split into chunks. Current hubs send the classifier's exact input: 100 rows at 50 Hz of all
+three IMUs (right wrist, left wrist, torso), with flags saying which sensors were measured. Older hubs
+(flags 0) sent the right wrist only. This module rebuilds each segment and fits every sensor to the
+classifier's input: `window_samples` rows at `frame_rate_hz` (ai/config.py WINDOW/FS).
 
 Each chunk is ACKed by the session (duplicates included) before it reaches `SegmentAssembler`, so
 this layer only has to tolerate duplicates, reordering and abandoned segments, never ask for resends.
@@ -17,18 +19,37 @@ from dataclasses import dataclass, field
 
 import structlog
 
-from cg_comms.protocol.constants import SEGMENT_CHUNK_SAMPLES, SEGMENT_MAX_CHUNKS
+from cg_comms.protocol.constants import (
+    SEGMENT_CHUNK_SAMPLES,
+    SEGMENT_CHUNK_SAMPLES_3IMU,
+    SEGMENT_FLAG_DOM_VALID,
+    SEGMENT_FLAG_OFF_VALID,
+    SEGMENT_FLAG_THREE_IMU,
+    SEGMENT_FLAG_TORSO_VALID,
+    SEGMENT_MAX_CHUNKS,
+)
 from cg_comms.relay.windowing import scale_sample
 
 logger = structlog.get_logger(__name__)
 
-_AXES = 6
+_IMU_AXES = 6
+# Column blocks of a three-IMU row, and the flag that says each one was measured.
+DOMINANT, OFFHAND, TORSO = 0, 1, 2
+_VALID_FLAG = {DOMINANT: SEGMENT_FLAG_DOM_VALID, OFFHAND: SEGMENT_FLAG_OFF_VALID,
+               TORSO: SEGMENT_FLAG_TORSO_VALID}
 
-# Placeholder off-hand row: the hub sends the dominant wrist only, and SENSOR_WINDOW requires an
-# offhand array. Gravity-down at rest, zero rotation. ai/classifier_server.py treats a constant block as
-# absent and feeds the models their training mean instead. Counted as stale in stalePct, never
-# presented as a measurement.
+# Placeholder off-hand row for a window without a measured left wrist (a legacy hub, or a left
+# wrist that dropped out): SENSOR_WINDOW requires an offhand array. Gravity-down at rest, zero
+# rotation. ai/classifier_server.py treats a constant block as absent and feeds the model its
+# training mean instead. Counted as stale in stalePct, never presented as a measurement.
 OFFHAND_PLACEHOLDER: tuple[float, ...] = (0.0, 0.0, 1.0, 0.0, 0.0, 0.0)
+
+
+def _layout(flags: int) -> tuple[int, int]:
+    """(axes per row, max rows per chunk) for a chunk's flags."""
+    if flags & SEGMENT_FLAG_THREE_IMU:
+        return 3 * _IMU_AXES, SEGMENT_CHUNK_SAMPLES_3IMU
+    return _IMU_AXES, SEGMENT_CHUNK_SAMPLES
 
 
 @dataclass(frozen=True)
@@ -37,9 +58,22 @@ class Segment:
     weapon_id: int
     sample_rate_hz: int
     first_sample_ms: int  # device clock
-    samples: list[tuple[int, ...]]  # raw int16 rows (ax, ay, az, gx, gy, gz)
+    # raw int16 rows: (ax, ay, az, gx, gy, gz) for a legacy segment; three-IMU segments append the
+    # off-hand and torso blocks (18 values per row)
+    samples: list[tuple[int, ...]]
     chunk_count: int
     assembly_ms: float  # first chunk received -> last chunk received, relay clock
+    flags: int = 0  # SEGMENT_CHUNK.flags, the same on every chunk
+
+    @property
+    def three_imu(self) -> bool:
+        return bool(self.flags & SEGMENT_FLAG_THREE_IMU)
+
+    def measured(self, block: int) -> bool:
+        """Whether this sensor's columns are measurements (legacy: only the dominant wrist exists)."""
+        if not self.three_imu:
+            return block == DOMINANT
+        return bool(self.flags & _VALID_FLAG[block])
 
 
 @dataclass
@@ -48,6 +82,7 @@ class _Partial:
     weapon_id: int
     sample_rate_hz: int
     started: float
+    flags: int
     chunks: dict[int, tuple[int, list[tuple[int, ...]]]] = field(default_factory=dict)
 
 
@@ -68,8 +103,10 @@ class SegmentAssembler:
         index, count = int(fields["chunk_index"]), int(fields["chunk_count"])
         sample_count = int(fields["sample_count"])
         rate = int(fields["sample_rate_hz"])
+        flags = int(fields.get("flags", 0))
+        axes, max_rows = _layout(flags)
         if not (1 <= count <= SEGMENT_MAX_CHUNKS and index < count
-                and 1 <= sample_count <= SEGMENT_CHUNK_SAMPLES and rate > 0):
+                and 1 <= sample_count <= max_rows and rate > 0):
             logger.warning("segment_chunk_invalid", segment_id=segment_id, chunk_index=index,
                            chunk_count=count, sample_count=sample_count, sample_rate_hz=rate)
             return None
@@ -80,15 +117,15 @@ class SegmentAssembler:
             if len(self._partials) >= self.max_partials:
                 oldest = min(self._partials, key=lambda k: self._partials[k].started)
                 self._abandon(oldest, "capacity")
-            partial = _Partial(count, int(fields["weapon_id"]), rate, now)
+            partial = _Partial(count, int(fields["weapon_id"]), rate, now, flags)
             self._partials[segment_id] = partial
-        elif (count, rate) != (partial.chunk_count, partial.sample_rate_hz):
+        elif (count, rate, flags) != (partial.chunk_count, partial.sample_rate_hz, partial.flags):
             logger.warning("segment_chunk_inconsistent", segment_id=segment_id, chunk_index=index)
             return None
         if index in partial.chunks:
             return None
         flat = fields["samples"]
-        rows = [tuple(flat[i * _AXES:(i + 1) * _AXES]) for i in range(sample_count)]
+        rows = [tuple(flat[i * axes:(i + 1) * axes]) for i in range(sample_count)]
         partial.chunks[index] = (int(fields["first_sample_ms"]), rows)
         if len(partial.chunks) < partial.chunk_count:
             return None
@@ -104,6 +141,7 @@ class SegmentAssembler:
             samples=samples,
             chunk_count=partial.chunk_count,
             assembly_ms=1000.0 * (now - partial.started),
+            flags=partial.flags,
         )
 
     def expire(self, now: float) -> None:
@@ -146,7 +184,32 @@ def fit_length(rows: list[list[float]], n: int) -> list[list[float]]:
     return [list(rows[0])] * before + [list(r) for r in rows] + [list(rows[-1])] * after
 
 
-def classifier_rows(segment: Segment, rate_hz: float, n: int) -> list[list[float]]:
-    """Segment -> `n` dominant rows in g / deg/s at `rate_hz`, the classifier's input shape."""
-    scaled = [scale_sample(row) for row in segment.samples]
+def classifier_rows(
+    segment: Segment, rate_hz: float, n: int, block: int = DOMINANT
+) -> list[list[float]]:
+    """Segment -> `n` rows of one sensor (`block`) in g / deg/s at `rate_hz`, the classifier's input
+    shape. A current hub's window already is exactly that; resample/fit only touch legacy segments."""
+    lo = block * _IMU_AXES
+    scaled = [scale_sample(row[lo:lo + _IMU_AXES]) for row in segment.samples]
     return fit_length(resample(scaled, float(segment.sample_rate_hz), rate_hz), n)
+
+
+@dataclass(frozen=True)
+class ClassifierInput:
+    dominant: list[list[float]]
+    offhand: list[list[float]]  # OFFHAND_PLACEHOLDER rows when the left wrist was not measured
+    torso: list[list[float]] | None  # None when the torso was not measured
+    stale_pct: float  # share of the three sensors not measured
+
+
+def classifier_input(segment: Segment, rate_hz: float, n: int) -> ClassifierInput:
+    """All three sensors of a segment, as SENSOR_WINDOW carries them."""
+    measured = [segment.measured(b) for b in (DOMINANT, OFFHAND, TORSO)]
+    offhand = (classifier_rows(segment, rate_hz, n, OFFHAND) if measured[OFFHAND]
+               else [list(OFFHAND_PLACEHOLDER) for _ in range(n)])
+    torso = classifier_rows(segment, rate_hz, n, TORSO) if measured[TORSO] else None
+    if segment.three_imu:
+        stale_pct = 100.0 * measured.count(False) / 3
+    else:
+        stale_pct = 50.0  # legacy: dominant + placeholder off-hand, the historical value
+    return ClassifierInput(classifier_rows(segment, rate_hz, n, DOMINANT), offhand, torso, stale_pct)

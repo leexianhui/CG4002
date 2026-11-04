@@ -340,7 +340,7 @@ device → laptop   SENSOR_FRAME @ 50 Hz, RFID_EVENT on change, HEARTBEAT @ 1 Hz
 laptop → device   COMBAT_FEEDBACK on event, HEARTBEAT @ 1 Hz
 ```
 
-Reject `HELLO` if `protocolVersion != shared/protocol/VERSION` — respond with a `HELLO_ACK` carrying
+Reject `HELLO` if `protocolVersion != shared/protocol/VERSION.txt` — respond with a `HELLO_ACK` carrying
 `sessionId = 0` meaning refusal, and log loudly. A silent version mismatch is the classic integration-day
 time sink.
 
@@ -476,7 +476,7 @@ avatar's animation state.
 ## 9. Application message schemas
 
 Every message: `{ "type", "version", "timestamp", ... }` where `timestamp` is engine-time int64 ms and
-`version` is `shared/protocol/VERSION`. Unknown `version` → log and drop.
+`version` is `shared/protocol/VERSION.txt`. Unknown `version` → log and drop.
 
 ```jsonc
 // relay → engine
@@ -847,7 +847,7 @@ Expected to change once the other subsystems land — keep churn confined to exa
    firmware layout change then edits one table and regenerates the golden vectors.
 3. **Parse `ACTION_RESULT` behind an adapter** that tolerates both a single class and a probability
    vector, and ignores unknown keys. Do not let raw Ultra96 JSON reach the engine.
-4. **Bump `shared/protocol/VERSION` on any breaking change** and let the receiver drop unknown versions
+4. **Bump `shared/protocol/VERSION.txt` on any breaking change** and let the receiver drop unknown versions
    loudly. Two subsystems disagreeing on a schema should fail with a log line, not with a plausible
    wrong number.
 5. **Regenerate, never hand-edit** anything under `shared/generated/`.

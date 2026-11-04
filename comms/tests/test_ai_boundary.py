@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from cg_comms.messages.enums import ActionClass, GuardState
+from cg_comms.messages.enums import ActionClass, GuardState, Weapon
 from cg_comms.messages.models import SensorWindow
 from cg_comms.relay.ultra96 import Ultra96Client
 
@@ -67,11 +67,12 @@ async def test_relay_client_round_trips_through_ai_model(ai, fixed):
         await server.wait_closed()
 
 
-def _confident(ai, model, index):
-    """Softmax output that picks class `index` of `model` with 0.99."""
-    p = [0.01 / (len(ai.C.CLASSES[model]) - 1)] * len(ai.C.CLASSES[model])
-    p[index] = 0.99
+def _confident(ai, index):
+    """Softmax output that picks ACTION class `index` with 0.99."""
     import numpy as np
+    n = len(ai.C.CLASSES[ai.ACTION_MODEL])
+    p = [0.01 / (n - 1)] * n
+    p[index] = 0.99
     return np.asarray(p)
 
 
@@ -79,30 +80,24 @@ def test_ai_only_classes_become_idle(ai, monkeypatch):
     backend = ai.NumpyBackend(str(AI_DIR / "models"))
     for ai_class in ("SPIN_ATTACK", "UPPERCUT"):
         index = ai.C.CLASSES[ai.ACTION_MODEL].index(ai_class)
-        monkeypatch.setattr(ai, "probs_for", lambda b, model, x, missing, i=index: (
-            _confident(ai, model, i) if model == ai.ACTION_MODEL else _confident(ai, model, 0)))
+        monkeypatch.setattr(ai, "probs_for", lambda b, model, x, missing, i=index: _confident(ai, i))
         out = ai.handle_request(backend, _wire(_window(1)))
         assert out["action"] == "IDLE" and out["rawAction"] == ai_class
 
 
-def test_guard_has_priority_and_maps_to_comms_names(ai, monkeypatch):
-    """GUARD_FINAL says GUARDING twice in a row -> guard-only report (action IDLE + GUARDING);
-    NOT_GUARDING goes out as the comms name IDLE."""
+def test_guard_is_never_reported_by_the_ai(ai):
+    """Guard comes from the hardware: the AI service loads ACTION_FINAL only and always says IDLE."""
     backend = ai.NumpyBackend(str(AI_DIR / "models"))
-    thrust = ai.C.CLASSES[ai.ACTION_MODEL].index("THRUST")
-    monkeypatch.setattr(ai, "probs_for", lambda b, model, x, missing: (
-        _confident(ai, model, thrust) if model == ai.ACTION_MODEL else _confident(ai, model, 1)))
-    monkeypatch.setattr(ai, "_guard_state", {})
-    first = ai.handle_request(backend, _wire(_window(1)))
-    assert (first["action"], first["guardState"]) == ("THRUST", "IDLE")  # hysteresis: needs 2 windows
-    second = ai.handle_request(backend, _wire(_window(2)))
-    assert (second["action"], second["guardState"]) == ("IDLE", "GUARDING")
+    assert list(backend.W) == ["ACTION_FINAL"]
+    out = ai.handle_request(backend, _wire(_window(1)))
+    assert (out["guardState"], out["guardConfidence"]) == ("IDLE", 0.0)
 
 
 def test_placeholder_offhand_and_absent_torso_count_as_missing(ai):
-    """Segment mode: the hub sends the right wrist only; the relay's constant off-hand placeholder
-    and the absent torso must reach the model as the training mean, not as fake motion."""
+    """A window without a measured left wrist / torso: the relay's constant off-hand placeholder and
+    the absent torso must reach the model as the training mean, not as fake motion."""
     window = _wire(_window(5))
+    assert window["torso"] is None
     x, missing = ai.build_window(window)
     assert x.shape == (100, 18) and missing == (6, 12)
     out = ai.handle_request(ai.NumpyBackend(str(AI_DIR / "models")), window, debug=True)
@@ -118,8 +113,8 @@ def test_bad_requests_return_error_not_crash(ai):
         "type": "ERROR", "error": "unknown weapon 'AXE'", "requestId": 3}
 
 
-def test_segment_mode_window_is_accepted_by_ai_model(ai):
-    """A hub segment (100 Hz source decimated to 50 Hz, 1.5 s) -> relay window -> AI model."""
+def test_legacy_segment_window_is_accepted_by_ai_model(ai):
+    """An old hub's dominant-only segment (1.5 s) -> relay window -> AI model still works."""
     from test_segments import SegmentAssembler, segment_chunks, session
 
     subject = session()
@@ -129,4 +124,29 @@ def test_segment_mode_window_is_accepted_by_ai_model(ai):
     window = subject._segment_window(segment)
     out = ai.handle_request(ai.NumpyBackend(str(AI_DIR / "models")), _wire(window))
     assert out["type"] == "ACTION_RESULT" and out["requestId"] == window.request_id
-    assert out["guardState"] in ("IDLE", "GUARDING")
+
+
+def test_ai_teams_test_windows_survive_the_whole_relay_path(ai):
+    """End to end on real data: the AI team's held-out windows, quantised to wire units exactly as
+    the hub does (int16, 2048 counts/g, 16.4 counts/deg/s), split into three-IMU SEGMENT_CHUNKs,
+    reassembled by the relay, turned into a SENSOR_WINDOW, sent as JSON and classified in fixed point
+    (the FPGA's maths). Every channel must land where the model expects it: accuracy stays at the
+    AI team's level instead of the 39/68 seen with the right wrist alone."""
+    import numpy as np
+    from test_segments import assemble, imu3_chunks, session
+
+    backend = ai.NumpyBackend(str(AI_DIR / "models"), fixed=True)
+    test = np.load(AI_DIR / "models" / "ACTION_FINAL" / "test_data.npz")
+    mean, std = backend.norm["ACTION_FINAL"]
+    scale = np.array([2048.0] * 3 + [16.4] * 3)
+    subject = session()
+    subject.windower.on_weapon_confirmed(Weapon.SWORD)
+    correct = 0
+    for i, (x, label) in enumerate(zip(test["X"] * std + mean, test["y"], strict=True)):
+        counts = np.clip(np.round(x.reshape(100, 3, 6) * scale), -32768, 32767).astype(int)
+        rows = [tuple(r) for r in counts.reshape(100, 18).tolist()]
+        window = subject._segment_window(assemble(imu3_chunks(1000 + i, rows)))
+        out = ai.handle_request(backend, _wire(window), debug=True)
+        assert out["missingSensors"] == []
+        correct += out["rawAction"] == ai.C.ACTION_CLASSES[int(label)]
+    assert correct >= 63, correct  # 64/68 straight from the floats; quantisation may cost one

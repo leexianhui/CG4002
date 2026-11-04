@@ -243,7 +243,7 @@ more than the hour it costs to maintain them.
   to the Game Engine clock. Comms does the normalization on ingest; no other subsystem does clock maths.
 - **Player IDs** are `1` and `2`. Never `0`, never strings — `0` is reserved as "unset" in the binary header.
 - **Every app-layer JSON message** carries `{ "type", "version", "timestamp", "playerId" }` plus its own
-  fields. `version` is `shared/protocol/VERSION`. A receiver that sees a version it does not know logs
+  fields. `version` is `shared/protocol/VERSION.txt`. A receiver that sees a version it does not know logs
   and drops rather than guessing.
 - **Enum values on the wire are UPPER_SNAKE strings** in JSON (`"HORIZONTAL_SWING"`) and `uint8` in the
   binary protocol. `enums.yaml` defines both mappings; the codegen emits both.

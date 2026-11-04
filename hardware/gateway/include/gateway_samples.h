@@ -52,7 +52,8 @@ struct GatewaySamples {
         if (fresh(2, now)) memcpy(f.offhand, latest[2].axes, 12);
         else f.flags |= CG_FLAG_OFF_STALE;
         if (fresh(1, now)) memcpy(f.torso, latest[1].axes, 12);
-        // There is no torso stale bit in protocol v1. Torso is not a classifier input.
+        // There is no torso stale bit in protocol v1: a missing torso is all zeros, which the
+        // classifier treats as an absent sensor (a constant block).
         if (!weapon) f.flags |= CG_FLAG_CALIBRATING;
         return f;
     }
