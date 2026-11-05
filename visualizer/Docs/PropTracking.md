@@ -77,10 +77,12 @@ exactly the printed area.
 | `Mace` | `Fissure.png` | 7 × 12 cm | the mace: a flat card on the handle between the hands |
 | `SwordBackup` | `two.png` | 9 × 9 cm | the previous sword marker, until the sword prop is reprinted |
 
-`PropTracker` draws the model of the weapon this player holds (from the engine) on that weapon's
-marker: Sword/SwordBackup → sword, Spear → spear, Mace → mace. The shield marker is detected and
-shown by the TRACKING overlay but drives no model yet. The images are © PTC (Vuforia samples):
-fine for this project, not ours to redistribute.
+`PropTracker` draws a prop's own weapon whenever that prop's marker is seen: Sword/SwordBackup →
+sword, Spear → spear, Mace → mace, whatever weapon is selected (so you see the prop you're actually
+holding, even before the hub locks a weapon). If several are seen at once, the one already shown
+stays, then the selected weapon is preferred. The shield marker is detected and shown by the
+TRACKING overlay but drives no model yet. The images are © PTC (Vuforia samples): fine for this
+project, not ours to redistribute.
 
 - **Measure each prop.** Each weapon has its own *Props* entry on the Prop Tracker: *Marker To Grip
   Centre* (marker centre back to the middle of the weapon hand's grip) and *Marker To Tip*. The

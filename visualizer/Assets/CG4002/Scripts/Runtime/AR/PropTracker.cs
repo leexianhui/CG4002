@@ -14,8 +14,9 @@ namespace CG4002.AR
     /// prop. ARKit gives the marker's pose; this works out where the grip and tip are from the
     /// prop's measurements, scales the model to the prop's length, and smooths the result.
     ///
-    /// Each weapon's prop has its own marker and measurements (Props). Only the weapon this player
-    /// holds (GameState, from the engine) is drawn.
+    /// Each weapon's prop has its own marker and measurements (Props). The marker decides: whichever
+    /// prop's marker is seen gets its own weapon drawn, whatever weapon is selected. If several are
+    /// seen, the one already shown stays, then the selected weapon (GameState) is preferred.
     ///
     /// Marker frame (from AR Foundation): +Y out of the print, +Z towards the top of the picture,
     /// which is glued pointing toward the weapon's tip. Weapon frame: pivot at the weapon hand's
@@ -41,7 +42,7 @@ namespace CG4002.AR
         }
 
         [SerializeField] ARTrackedImageManager manager;
-        [Tooltip("Optional. Draws the prop of the weapon this player holds; without it, the first prop.")]
+        [Tooltip("Optional. When several props' markers are seen at once, prefer the weapon this player holds.")]
         [SerializeField] GameState gameState;
         [SerializeField] Prop[] props = Array.Empty<Prop>();
 
@@ -56,7 +57,7 @@ namespace CG4002.AR
         Prop current;
         float lastTrackedTime = float.NegativeInfinity;
 
-        /// <summary>The held weapon's model, or null before its prop is first drawn.</summary>
+        /// <summary>The model on the prop being tracked, or null before any prop is seen.</summary>
         public WeaponView Weapon { get; private set; }
 
         /// <summary>
@@ -87,13 +88,13 @@ namespace CG4002.AR
 
         void Update()
         {
-            var selected = SelectedProp();
-            if (selected != current)
+            var seen = SeenProp();
+            if (seen != null && seen != current)
             {
                 if (Weapon != null)
                     Weapon.gameObject.SetActive(false);
-                current = selected;
-                Weapon = current != null ? ModelFor(current) : null;
+                current = seen;
+                Weapon = ModelFor(current);
                 lastTrackedTime = float.NegativeInfinity;
             }
             if (current == null)
@@ -108,18 +109,21 @@ namespace CG4002.AR
             Weapon.gameObject.SetActive(!Suppressed && Time.time - lastTrackedTime <= holdSeconds);
         }
 
-        Prop SelectedProp()
+        /// <summary>The prop whose marker is tracked now: the one already shown, else the selected weapon's, else any.</summary>
+        Prop SeenProp()
         {
-            if (props.Length == 0)
-                return null;
-            if (gameState == null)
-                return props[0];
+            Prop selected = null, any = null;
             foreach (var prop in props)
             {
-                if (prop.weapon == gameState.Self.weapon)
+                if (TrackedMarker(prop) == null)
+                    continue;
+                if (prop == current)
                     return prop;
+                if (gameState != null && prop.weapon == gameState.Self.weapon)
+                    selected = prop;
+                any ??= prop;
             }
-            return null;
+            return selected ?? any;
         }
 
         ARTrackedImage TrackedMarker(Prop prop)
