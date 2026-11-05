@@ -114,8 +114,8 @@ $env:CG_GATEWAY_PSK_HEX = "<the 32-hex PSK from comms/.env.relay>"   # once per 
 **Player 2**: same window (same PSK), with `p2_hub` / `p2_torso` / `p2_left` and the P2 ports.
 
 Reflash **all three** boards of a player together. Hub and nodes must agree on the uplink mode. By
-default (event mode) the hub sends the relay one segment per swing its own segmenter accepts, and
-the torso/left wrist do not stream samples to it. The old continuous 50 Hz stream is still there:
+default (event mode) the torso and left wrist stream their samples to the hub, and for each swing
+its own segmenter accepts, the hub sends the relay one 2 s window of all three boards (100 rows x 18). The old continuous 50 Hz stream is still there:
 add `-DCG_GATEWAY_EVENT_MODE=0` to the `build_flags` of all three envs, and set
 `segment_mode: false` in that player's relay YAML.
 
