@@ -12,7 +12,7 @@ unused). Their model code is unchanged. For integration, Comms changed only the 
 | `data_utils_lite.py` | `fit_window` / `load_norm_json` | **Added** by Comms (reconstruction) |
 | `fixedpoint_ref.py`, `config.py` | CNN maths, channels / classes / model ids | no |
 | `fpga_infer.py` | FPGA driver + self-test | Self-test defaults to ACTION_FINAL only |
-| `cnn.bit`, `cnn.hwh` | FPGA bitstream (2026-11-04) + hardware description (Git LFS; keep them together) | no |
+| `cnn.bit`, `cnn.hwh` | FPGA bitstream + hardware description, one Vivado build (2026-11-05; Git LFS; keep them together) | no |
 | `models/ACTION_FINAL/` | model_id 0: IDLE + 6 attacks, 94 % (64/68) on the AI team's test set | no |
 | `hls/board_testset.npz` | ACTION_FINAL's held-out windows, the default input of `fpga_infer.py` | **Added** by Comms from `models/ACTION_FINAL/test_data.npz` |
 
@@ -65,8 +65,11 @@ The contract is `shared/protocol/app_messages.md` §3.1/§3.2.
    the relay turns into an `ACTION` with `guardState: GUARDING`).
 2. **Game meaning for `SPIN_ATTACK` and `UPPERCUT`.** Either map them in `COMMS_ACTION_MAP` or add
    the moves to `shared/config/weapons.yaml`.
-3. **`cnn.hwh` is from the 2026-09-28 build.** Same `design_1`, part and DMA, so it should load the new
-   bitstream, but ask the AI team for the matching `.hwh`. If `fpga_infer.py` isn't bit-exact, suspect this first.
+3. **FPGA: confirm the 2026-11-05 bitstream on the board.** The 2026-11-04 `cnn.bit` still held the old
+   6-channel CNN: its DMA finished after exactly 1 + 600 words, so 1801-word ACTION_FINAL windows timed
+   out. The 2026-11-05 `cnn.bit` + `cnn.hwh` come from one rebuild (the CNN core's latency changed,
+   632,106 -> 397,962 cycles; the rest of the design is identical). `fpga_infer.py` must print bit-exact
+   68 / 68 before using `--backend fpga`; until then `--backend fixed` runs the same maths on the CPU.
 4. **Matched to the training recordings (2026-11-04).** Same boards and mounting; the AI team's
    collector (`imu_stream_3sensor.ino`) read the chip at 50 Hz with `0x1A = 4`, so its gyro was low-passed
    at ~20 Hz and its accelerometer was not. The gateway now gives the AI's gyro the same 20 Hz low-pass
