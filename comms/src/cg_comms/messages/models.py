@@ -36,6 +36,8 @@ CombatAction = Literal[
     ActionClass.CHARGED_ATTACK,
     ActionClass.CHARGED_THRUST,
     ActionClass.SWING,
+    ActionClass.SPIN_ATTACK,
+    ActionClass.UPPERCUT,
 ]
 WireCombatOutcome = Literal[
     CombatOutcome.MISS, CombatOutcome.HIT, CombatOutcome.BLOCK, CombatOutcome.PARRY

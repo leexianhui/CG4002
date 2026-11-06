@@ -15,7 +15,7 @@ triggers:
     2: { action: THRUST,           action_confidence: 0.91 }
     3: { action: IDLE, action_confidence: 1.0, guard_state: GUARDING, guard_confidence: 0.88 }
   SPEAR:
-    1: { action: SWING,            action_confidence: 0.90 }
+    1: { action: HORIZONTAL_SWING, action_confidence: 0.90 }  # SWING retired 2026-11-06 (not an AI class)
     2: { action: THRUST,           action_confidence: 0.93 }
     3: { action: IDLE, action_confidence: 1.0, guard_state: GUARDING, guard_confidence: 0.88 }
   MACE:

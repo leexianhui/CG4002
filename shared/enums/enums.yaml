@@ -26,6 +26,8 @@ ActionClass:
     meaning "no action" — resolver step 2 treats it as a state update, not a combat event). This set
     is expected to change once the AI dataset's final class list lands (COMMS_IMPLEMENTATION_PLAN.md
     §16.2) — regenerate, do not hand-edit weapons.yaml's move names out of sync with this list.
+    2026-11-06: the moves are the 6 ACTION_FINAL attacks, the same for every weapon. CHARGED_ATTACK,
+    CHARGED_THRUST and SWING are kept for wire compatibility but no weapon has them any more.
   values:
     - { name: IDLE,            wire: 0 }
     - { name: HORIZONTAL_SWING, wire: 1 }
@@ -35,6 +37,8 @@ ActionClass:
     - { name: CHARGED_ATTACK,   wire: 5 }
     - { name: CHARGED_THRUST,   wire: 6 }
     - { name: SWING,            wire: 7 }
+    - { name: SPIN_ATTACK,      wire: 8 }
+    - { name: UPPERCUT,         wire: 9 }
 
 GuardState:
   description: >

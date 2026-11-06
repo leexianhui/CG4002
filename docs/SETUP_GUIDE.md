@@ -214,8 +214,10 @@ What healthy looks like in each relay:
 1. `session_streaming`, then `weapon_changed` once that player holds the weapon-selection pose
    (the hub locks the weapon until it reboots).
 2. Nothing while standing still. Each swing the hub accepts gives exactly one
-   `segment_received` → `classifier_request` → `segment_classified` (the AI's answer, with
-   `passes_gate`), then `action_classified` if it cleared the confidence gate. On the hub's serial
+   `segment_received` (the window the hub sent: weapon, which sensors were measured) and one
+   `segment_classified` (the AI's answer: `action`, `confidence`, `forwarded=True` if it cleared the
+   confidence gate and went to the engine, `ai_ms`). The per-request `classifier_request`/
+   `classifier_response` timing lines are DEBUG (`--log-level DEBUG`). On the hub's serial
    monitor the same swing shows `[Ultra96 send queued] ...` then `[segment] sent seg=...`.
 3. `ble_mtu_too_small_for_segments` at connect means Windows refused the larger BLE packet size;
    every segment will then fail. Report it: the uplink has to be split smaller.
@@ -311,8 +313,8 @@ Reset the match (Ultra96, from `comms/`):
 | All three boards stay yellow | The hub has no node links. Check the hub serial for `[link]` lines; reflash all three boards of that player from the current repo (old node builds still wait for a Wi-Fi hotspot) |
 | `window_dropped reason=classifier offline` | Terminal A (AI) is not running, or the SSH tunnel is down |
 | `classifier correlation mismatch` | Something other than `ai/classifier_server.py` (or `cg-ultra96-sim`) is on port 8888, or an old copy of the AI server that does not echo `requestId`/`timestamp` |
-| Always `IDLE` while swinging | Normal at low confidence: the gate is 0.6 (`min_confidence`). Check the AI terminal for replies, and see `ai/README.md` known gaps |
-| `SPIN_ATTACK` / `UPPERCUT` swings do nothing | Expected: there are no game rules for them yet, so they map to `IDLE` (the AI label is in `rawAction`) |
+| Always `IDLE` while swinging | The model itself says IDLE: the AI terminal's `[pred]` line shows it with the runner-up classes. Check `missing:` there (a sensor that sent nothing) and the relay's `segment_received` `left=`/`torso=` |
+| Relay shows `forwarded=False` | Below the 0.6 confidence gate (`min_confidence`); the `[pred]` line on the Ultra96 shows what the model was torn between |
 | Never guards | Guard comes from the hardware now, not the AI, and has no path to the engine yet (`ai/README.md` known gaps) |
 | Poor recognition; relay logs `segment_received ... left=False` or `torso=False` | That board's samples aren't reaching the hub: check the hub's `[segment] window ... left=1 torso=1` line, and that the torso and left wrist were reflashed with the current `hardware/gateway` build (old node builds send nothing in event mode) |
 | Engine stuck in WAITING or PAUSED | A phone isn't ready or calibrated, a relay is disconnected, or a position is more than 1 s old. Check the setup readings in the panel |

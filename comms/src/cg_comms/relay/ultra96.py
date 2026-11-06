@@ -142,7 +142,7 @@ class Ultra96Client:
                         request_bytes=request_bytes, timeout_ms=self.request_timeout_ms)
 
         try:
-            logger.info("classifier_request", player_id=window.player_id,
+            logger.debug("classifier_request", player_id=window.player_id,
                         request_id=window.request_id, trigger_id=window.trigger_id,
                         window_timestamp_ms=window.timestamp,
                         window_age_ms=monotonic_ms() - window.timestamp,
@@ -162,7 +162,7 @@ class Ultra96Client:
                 raise Ultra96Unavailable(
                     "classifier correlation mismatch: "
                     + ", ".join(f"{n} not echoed unchanged" for n in mismatched))
-            logger.info("classifier_response", **timing())
+            logger.debug("classifier_response", **timing())
             return result
         except asyncio.TimeoutError:
             self.timeouts += 1

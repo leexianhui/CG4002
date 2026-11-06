@@ -16,7 +16,7 @@
       "description": "Never IDLE — COMBAT_EVENT is only emitted for a resolved discrete action.",
       "enum": [
         "HORIZONTAL_SWING", "VERTICAL_SWING", "DIAGONAL_SWING",
-        "THRUST", "CHARGED_ATTACK", "CHARGED_THRUST", "SWING"
+        "THRUST", "CHARGED_ATTACK", "CHARGED_THRUST", "SWING", "SPIN_ATTACK", "UPPERCUT"
       ]
     },
     "outcome": {

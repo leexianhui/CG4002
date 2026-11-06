@@ -17,8 +17,7 @@ namespace CG4002.Net
             ["VERTICAL_SWING"] = ActionType.VerticalSwing, ["DIAGONAL_SWING"] = ActionType.DiagonalSwing,
             ["THRUST"] = ActionType.Thrust, ["CHARGED_ATTACK"] = ActionType.ChargedAttack,
             ["CHARGED_THRUST"] = ActionType.ChargedThrust, ["SWING"] = ActionType.Swing,
-            // Classified by the AI but not yet in the engine's ActionClass (the AI server reports
-            // them as IDLE); decoded here so they animate as soon as the engine sends them.
+            // Game moves of every weapon since 2026-11-06 (engine ActionClass wire 8/9).
             ["SPIN_ATTACK"] = ActionType.SpinAttack, ["UPPERCUT"] = ActionType.Uppercut,
         };
 

@@ -22,8 +22,14 @@ Boundary rules (Comms, 2026-11-04):
     placeholder when the left wrist was not measured), is filled with the model's training mean,
     i.e. 0 after normalisation, instead of being fed as fake motion.
   * guardState is always IDLE with guardConfidence 0: guard comes from the hardware.
-  * Action classes the game has no rules for (COMMS_ACTION_MAP) are reported as IDLE; the AI label
-    stays in "rawAction".
+  * The model's top class is reported as-is with its confidence. The confidence floor is applied
+    downstream (relay ultra96.min_confidence, engine shared/config/match.yaml min_confidence, both
+    0.6), so a weak answer is dropped there under its real name instead of being renamed IDLE here.
+  * SPIN_ATTACK and UPPERCUT are game moves (shared/config/weapons.yaml) since 2026-11-06; before
+    that they were reported as IDLE, which turned a third of real attacks into IDLE.
+
+Every prediction prints one line, whichever backend runs it (FPGA or CPU):
+  [pred] P1 req=42 SWORD -> HORIZONTAL_SWING 0.94 | 2nd DIAGONAL_SWING 0.04 3rd VERTICAL_SWING 0.01 | fpga 3.1 ms
 
 Backends:
   python3 classifier_server.py --backend stub                     random answers, no model
@@ -47,19 +53,18 @@ PROTOCOL_VERSION=1
 ACTION_MODEL="ACTION_FINAL"
 MODELS=[ACTION_MODEL]   # GUARD_FINAL retired: guard is detected by the hardware
 
-ATTACK_THRESHOLD=0.70
-
 # Action names the comms engine accepts (comms ActionClass / shared/schemas/action_result.schema.json).
 COMMS_ACTIONS={"IDLE","HORIZONTAL_SWING","VERTICAL_SWING","DIAGONAL_SWING","THRUST",
-               "CHARGED_ATTACK","CHARGED_THRUST","SWING"}
-# AI classes with no game rule yet -> what the engine is told. To make one count, map it to a game
-# action here (or add the move to shared/config/weapons.yaml and COMMS_ACTIONS).
-COMMS_ACTION_MAP={"SPIN_ATTACK":"IDLE","UPPERCUT":"IDLE"}
+               "CHARGED_ATTACK","CHARGED_THRUST","SWING","SPIN_ATTACK","UPPERCUT"}
+# AI class -> game action, for an AI class the game has no move for. Empty: every ACTION_FINAL class
+# is a game action. Anything not in COMMS_ACTIONS after this map is reported as IDLE.
+COMMS_ACTION_MAP={}
 
 # 18-channel layout of config.CHANNELS: which request field fills which columns.
 SENSOR_BLOCKS=(("dominant",0),("offhand",6),("torso",12))
 
 class StubBackend(object):
+    label="stub"
     def logits(self,model,x_raw):
         n=len(C.CLASSES[model])
         z=np.full(n,-2.0); z[random.randrange(n)]=3.0
@@ -70,6 +75,7 @@ class NumpyBackend(object):
         self.W={n:load_weights(os.path.join(models_dir,n,"weights.npz")) for n in MODELS}
         self.norm={n:load_norm_json(os.path.join(models_dir,n,"norm.json")) for n in MODELS}
         self.fixed=fixed
+        self.label="cpu-fixed" if fixed else "cpu-float"
         self.cfg=FxCfg(*fx) if fx else FxCfg()
         if fixed:
             self.W={n:pad_out(w,C.NOUT) for n,w in self.W.items()}
@@ -92,6 +98,7 @@ class FpgaBackend(NumpyBackend):
         NumpyBackend.__init__(self,models_dir)
         from fpga_infer import FpgaEngine
         self.eng=FpgaEngine(bit)
+        self.label="fpga"
 
     def logits(self,model,x_raw,missing=()):
         x=self.normalise(model,x_raw,missing)
@@ -125,7 +132,21 @@ def probs_for(backend,model,x,missing):
         z=backend.logits(model,x,missing)
     return softmax(np.asarray(z,dtype=np.float64))
 
-def handle_request(backend,req,debug=False):
+def prediction_line(backend,req,out,probs,latency_ms):
+    """One human-readable line per prediction, for the Ultra96 console."""
+    names=C.CLASSES[ACTION_MODEL]
+    order=[int(i) for i in np.argsort(probs)[::-1]]
+    runners=" ".join("%s %s %.2f"%(rank,names[i],probs[i]) for rank,i in zip(("2nd","3rd"),order[1:3]))
+    line="[pred] P%s req=%s %s -> %s %.2f | %s | %s %.1f ms"%(
+        req["playerId"],req["requestId"],out["weapon"],out["action"],out["actionConfidence"],
+        runners,getattr(backend,"label",type(backend).__name__),latency_ms)
+    if out["rawAction"]!=out["action"]:
+        line+=" | model said %s"%out["rawAction"]
+    if out.get("missingSensors"):
+        line+=" | missing: %s"%",".join(out["missingSensors"])
+    return line
+
+def handle_request(backend,req,debug=False,log=None):
     if req.get("type")=="PING":
         return {"type":"PONG","timestamp":int(time.time()*1000)}
     if req.get("type")!="SENSOR_WINDOW":
@@ -148,11 +169,7 @@ def handle_request(backend,req,debug=False):
     raw_action=C.CLASSES[ACTION_MODEL][ai]
     a_conf=float(ap[ai])
 
-    action=raw_action
-    if raw_action!="IDLE" and a_conf<ATTACK_THRESHOLD:
-        action="IDLE"
-
-    comms_action=COMMS_ACTION_MAP.get(action,action)
+    comms_action=COMMS_ACTION_MAP.get(raw_action,raw_action)
     if comms_action not in COMMS_ACTIONS:
         comms_action="IDLE"
 
@@ -169,33 +186,42 @@ def handle_request(backend,req,debug=False):
         "guardState":"IDLE",
         "guardConfidence":0.0,
     }
+    latency_ms=(time.perf_counter()-t0)*1000
+    missing_names=[f for f,s in SENSOR_BLOCKS if s in missing]
+    if log is not None:
+        log(prediction_line(backend,req,dict(out,missingSensors=missing_names),ap,latency_ms))
     if debug:
-        out["latencyMs"]=round((time.perf_counter()-t0)*1000,3)
-        out["missingSensors"]=[f for f,s in SENSOR_BLOCKS if s in missing]
+        out["latencyMs"]=round(latency_ms,3)
+        out["missingSensors"]=missing_names
     return out
+
+def log(line):
+    print(line,flush=True)   # flush: under nohup/ssh stdout is block-buffered otherwise
 
 def make_server(backend,debug):
     async def client(reader,writer):
         peer=writer.get_extra_info("peername")
-        print("client connected:",peer)
+        log("client connected: %s"%(peer,))
         try:
             while True:
                 line=await reader.readline()
                 if not line: break
                 try:
-                    resp=handle_request(backend,json.loads(line.decode()),debug)
+                    resp=handle_request(backend,json.loads(line.decode()),debug,log)
                 except Exception as e:  # one bad packet must not kill the service
                     resp={"type":"ERROR","error":"%s: %s"%(type(e).__name__,e)}
+                if resp.get("type")=="ERROR":
+                    log("[pred] ERROR %s"%resp["error"])
                 writer.write((json.dumps(resp)+"\n").encode())
                 await writer.drain()
         finally:
             writer.close()
-            print("client disconnected:",peer)
+            log("client disconnected: %s"%(peer,))
     return client
 
 async def serve(host,port,backend,debug):
     await asyncio.start_server(make_server(backend,debug),host,port)
-    print("classifier service listening on %s:%d backend=%s"%(host,port,type(backend).__name__))
+    log("classifier service listening on %s:%d backend=%s"%(host,port,getattr(backend,"label",type(backend).__name__)))
     await asyncio.Future()
 
 def main():

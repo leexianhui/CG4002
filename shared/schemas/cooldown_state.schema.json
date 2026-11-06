@@ -19,7 +19,7 @@
             "type": "string",
             "enum": [
               "HORIZONTAL_SWING", "VERTICAL_SWING", "DIAGONAL_SWING",
-              "THRUST", "CHARGED_ATTACK", "CHARGED_THRUST", "SWING"
+              "THRUST", "CHARGED_ATTACK", "CHARGED_THRUST", "SWING", "SPIN_ATTACK", "UPPERCUT"
             ]
           },
           "remainingMs": { "type": "integer", "minimum": 0 },

@@ -224,10 +224,12 @@ async def test_one_segment_one_classifier_request_every_chunk_acked():
     assert subject._send_ack.await_count == len(frames) + 1  # the duplicate is ACKed again
     action = subject.on_action_result.call_args.args[0]
     assert action.action.value == "VERTICAL_SWING" and action.weapon == Weapon.SPEAR
-    events = [e["event"] for e in logs]
-    assert events.count("segment_received") == 1 and events.count("segment_classified") == 1
+    # Exactly two INFO lines per hub action: what the hub sent, and what the classifier answered.
+    events = [e["event"] for e in logs if e["log_level"] == "info"]
+    assert events == ["segment_received", "segment_classified"]
     classified = next(e for e in logs if e["event"] == "segment_classified")
-    assert classified["segment_id"] == 99 and classified["passes_gate"] is True
+    assert classified["segment_id"] == 99 and classified["forwarded"] is True
+    assert (classified["action"], classified["weapon"]) == ("VERTICAL_SWING", "SPEAR")
     assert subject._segment_requests == {}
 
 

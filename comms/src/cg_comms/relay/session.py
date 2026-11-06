@@ -547,6 +547,7 @@ class Session:
 
     async def _classify(self, window: SensorWindow) -> None:
         segment_id = self._segment_requests.get(window.request_id)
+        started = time.monotonic()
         try:
             result = await self.ultra96.request(window)
         except Ultra96Unavailable as exc:
@@ -563,33 +564,40 @@ class Session:
                 reason="classifier_timeout",
             )
             return
+        passes_gate = passes_confidence_gate(result, self.config.min_action_confidence)
         if segment_id is not None:
+            # Segment mode logs exactly two lines per hub action: segment_received (what the hub
+            # sent) and this one (what the classifier answered, and whether it goes to the engine).
             logger.info(
                 "segment_classified",
                 player_id=result.player_id,
                 request_id=result.request_id,
                 segment_id=segment_id,
+                weapon=window.weapon.value,
                 action=result.action.value,
                 confidence=result.action_confidence,
-                passes_gate=passes_confidence_gate(result, self.config.min_action_confidence),
+                forwarded=passes_gate,
+                ai_ms=round(1000.0 * (time.monotonic() - started), 1),
             )
-        if not passes_confidence_gate(result, self.config.min_action_confidence):
+        elif not passes_gate:
             logger.info(
                 "action_below_confidence_gate",
                 action=result.action.value,
                 confidence=result.action_confidence,
                 request_id=window.request_id,
             )
+        else:
+            logger.info(
+                "action_classified",
+                player_id=result.player_id,
+                request_id=result.request_id,
+                trigger_id=window.trigger_id,
+                window_timestamp_ms=window.timestamp,
+                action=result.action.value,
+                confidence=result.action_confidence,
+            )
+        if not passes_gate:
             return
-        logger.info(
-            "action_classified",
-            player_id=result.player_id,
-            request_id=result.request_id,
-            trigger_id=window.trigger_id,
-            window_timestamp_ms=window.timestamp,
-            action=result.action.value,
-            confidence=result.action_confidence,
-        )
         await self.on_action_result(
             Action(
                 timestamp=window.timestamp,

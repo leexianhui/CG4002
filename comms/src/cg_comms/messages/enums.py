@@ -50,6 +50,8 @@ class ActionClass(_WireEnum):
     CHARGED_ATTACK = "CHARGED_ATTACK"
     CHARGED_THRUST = "CHARGED_THRUST"
     SWING = "SWING"
+    SPIN_ATTACK = "SPIN_ATTACK"
+    UPPERCUT = "UPPERCUT"
 
 
 class GuardState(_WireEnum):
@@ -104,6 +106,8 @@ WIRE_VALUES: dict[_WireEnum, int] = {
     ActionClass.CHARGED_ATTACK: 5,
     ActionClass.CHARGED_THRUST: 6,
     ActionClass.SWING: 7,
+    ActionClass.SPIN_ATTACK: 8,
+    ActionClass.UPPERCUT: 9,
     GuardState.IDLE: 0,
     GuardState.GUARDING: 1,
     CombatOutcome.IGNORED: 0,

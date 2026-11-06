@@ -76,13 +76,53 @@ def _confident(ai, index):
     return np.asarray(p)
 
 
-def test_ai_only_classes_become_idle(ai, monkeypatch):
+def test_every_ai_class_reaches_the_game_under_its_own_name(ai, monkeypatch):
+    """SPIN_ATTACK/UPPERCUT used to be renamed IDLE; every ACTION_FINAL class is now a game action
+    that the comms ActionClass parses, and those two are moves of every weapon."""
+    from cg_comms.config import RulesConfig
+    from cg_comms.messages.enums import ActionClass
     backend = ai.NumpyBackend(str(AI_DIR / "models"))
-    for ai_class in ("SPIN_ATTACK", "UPPERCUT"):
-        index = ai.C.CLASSES[ai.ACTION_MODEL].index(ai_class)
+    moves = RulesConfig.load().moves
+    for index, ai_class in enumerate(ai.C.CLASSES[ai.ACTION_MODEL]):
         monkeypatch.setattr(ai, "probs_for", lambda b, model, x, missing, i=index: _confident(ai, i))
         out = ai.handle_request(backend, _wire(_window(1)))
-        assert out["action"] == "IDLE" and out["rawAction"] == ai_class
+        assert out["action"] == out["rawAction"] == ai_class
+        assert ActionClass(ai_class)
+    attacks = set(ai.C.CLASSES[ai.ACTION_MODEL]) - {"IDLE"}
+    for weapon, weapon_moves in moves.items():
+        assert set(weapon_moves) == attacks, weapon  # one model, same 6 attacks for every weapon
+
+
+def test_every_ai_attack_lands_as_a_combat_event_for_every_weapon():
+    """An AI attack must survive the whole engine path: a valid move for the weapon, and a legal
+    COMBAT_EVENT.action / cooldownAction (CombatAction once lacked SPIN_ATTACK/UPPERCUT)."""
+    from cg_comms.config import RulesConfig
+    from cg_comms.messages.models import CombatAction
+    from typing import get_args
+    combat = {a.value for a in get_args(CombatAction)}
+    for weapon_moves in RulesConfig.load().moves.values():
+        assert set(weapon_moves) <= combat
+
+
+def test_low_confidence_attack_keeps_its_name(ai, monkeypatch):
+    """The 0.6 floor lives in the relay/engine. The AI no longer renames a 0.65 swing IDLE."""
+    import numpy as np
+    backend = ai.NumpyBackend(str(AI_DIR / "models"))
+    names = ai.C.CLASSES[ai.ACTION_MODEL]
+    p = np.full(len(names), 0.35 / (len(names) - 1))
+    p[names.index("HORIZONTAL_SWING")] = 0.65
+    monkeypatch.setattr(ai, "probs_for", lambda *a: p)
+    out = ai.handle_request(backend, _wire(_window(1)))
+    assert (out["action"], out["actionConfidence"]) == ("HORIZONTAL_SWING", 0.65)
+
+
+def test_every_prediction_logs_one_line(ai):
+    lines = []
+    backend = ai.NumpyBackend(str(AI_DIR / "models"), fixed=True)
+    out = ai.handle_request(backend, _wire(_window(1)), log=lines.append)
+    assert len(lines) == 1
+    assert lines[0].startswith("[pred] P2 req=1 SPEAR -> ") and " -> %s " % out["action"] in lines[0]
+    assert "cpu-fixed" in lines[0] and "2nd " in lines[0] and "3rd " in lines[0]
 
 
 def test_guard_is_never_reported_by_the_ai(ai):

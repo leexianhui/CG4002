@@ -55,16 +55,24 @@ The contract is `shared/protocol/app_messages.md` §3.1/§3.2.
 - **Out:** `requestId`, `playerId` and `timestamp` are echoed unchanged; the relay drops any reply
   where they differ.
 - **Guard:** always `guardState: IDLE`, `guardConfidence: 0`. Guard comes from the hardware.
-- **Action names:** an attack under 0.70 confidence becomes `IDLE`. Classes the game has no rules for
-  are sent as `IDLE` via `COMMS_ACTION_MAP` (`SPIN_ATTACK`, `UPPERCUT`); the AI label stays in `rawAction`.
+- **Action names:** the model's top class, as-is, with its confidence. All seven ACTION_FINAL classes
+  are game actions (`SPIN_ATTACK` and `UPPERCUT` are moves of every weapon since 2026-11-06). There is
+  no confidence threshold here: the relay and engine drop anything under 0.6 (`min_confidence`), under
+  its real name. Before 2026-11-06 the server renamed SPIN_ATTACK/UPPERCUT and every attack under 0.70
+  to `IDLE`; on the AI team's test set that was 20 of 59 attacks.
+- **Log:** every prediction prints one line on the Ultra96, for every backend (`fpga`, `cpu-float`,
+  `cpu-fixed`, `stub`):
+  `[pred] P1 req=42 SWORD -> HORIZONTAL_SWING 0.94 | 2nd DIAGONAL_SWING 0.04 3rd VERTICAL_SWING 0.01 | fpga 3.1 ms`
+  plus `| missing: torso` when a sensor carried no data.
 
 ## Known gaps
 
 1. **Hardware guard has no path to the game yet.** The AI no longer reports guard, and the hardware
    sketches don't detect it yet. When they do, it needs a way to the engine (e.g. a hub packet that
    the relay turns into an `ACTION` with `guardState: GUARDING`).
-2. **Game meaning for `SPIN_ATTACK` and `UPPERCUT`.** Either map them in `COMMS_ACTION_MAP` or add
-   the moves to `shared/config/weapons.yaml`.
+2. **One model for all weapons.** ACTION_FINAL was trained on all three weapons together for the same
+   7 classes (each weapon is gripped slightly differently, the motion is the same), so every weapon in
+   `shared/config/weapons.yaml` has the same 6 attacks; the `weapon` field only picks damage/range/cooldown.
 3. **FPGA: confirm the 2026-11-05 bitstream on the board.** The 2026-11-04 `cnn.bit` still held the old
    6-channel CNN: its DMA finished after exactly 1 + 600 words, so 1801-word ACTION_FINAL windows timed
    out. The 2026-11-05 `cnn.bit` + `cnn.hwh` come from one rebuild (the CNN core's latency changed,

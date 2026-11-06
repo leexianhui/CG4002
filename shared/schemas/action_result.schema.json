@@ -14,7 +14,7 @@
       "type": "string",
       "enum": [
         "IDLE", "HORIZONTAL_SWING", "VERTICAL_SWING", "DIAGONAL_SWING",
-        "THRUST", "CHARGED_ATTACK", "CHARGED_THRUST", "SWING"
+        "THRUST", "CHARGED_ATTACK", "CHARGED_THRUST", "SWING", "SPIN_ATTACK", "UPPERCUT"
       ]
     },
     "actionConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
