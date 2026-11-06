@@ -444,7 +444,8 @@ def thrust_distances(push, thr):
 
 
 def decide(rep, model, max_dist=STRIKE_MAX_DIST, score=None, dist=None, thrust=None,
-           thrust_max=THRUST_MAX_DIST, thrust_min_reach=THRUST_MIN_REACH_M):
+           thrust_max=THRUST_MAX_DIST, thrust_min_reach=THRUST_MIN_REACH_M,
+           thrust_score=None):
     """Applies the models in time order, per session.
 
     Rotation strokes are scored against the rotation templates (model,
@@ -487,10 +488,21 @@ def decide(rep, model, max_dist=STRIKE_MAX_DIST, score=None, dist=None, thrust=N
             rep.loc[rot, "dist"] = [r[2] for r in res]
     push = ~rot
     if push.any() and thrust is not None:
-        dd = thrust_distances(rep[push], thrust)
+        if thrust_score is None:
+            dd = thrust_distances(rep[push], thrust)
+        else:
+            scored = [thrust_score(r) for _, r in rep[push].iterrows()]
+            dd = pd.DataFrame({
+                "nearest": THRUST_ACTION,
+                "dist": [v[1] for v in scored],
+                "d_axis": [v[2] for v in scored],
+                "d_reach": [v[3] for v in scored],
+                "d_rot": [v[4] for v in scored],
+            }, index=rep.index[push])
         for c in dd.columns:
             rep.loc[push, c] = dd[c].to_numpy()
-        ok_all[push.to_numpy()] = (dd.dist <= thrust_max).to_numpy()
+        ok_all[push.to_numpy()] = ((dd.dist <= thrust_max).to_numpy() if thrust_score is None
+                                   else np.array([v[0] for v in scored], bool))
 
     sess = rep.session.to_numpy()
     kind = rep.kind.to_numpy()
@@ -678,6 +690,95 @@ _WEAPON_THRUST_RE = re.compile(
 MODEL_COLS = ["ux", "uy", "uz", "axis_spread", "px", "py", "pz", "push_spread", "rot_mean", "rot_spread",
               "torso_ref", "torso_spread"]
 THRUST_COLS = ["ux", "uy", "uz", "dir_spread", "reach_mean", "reach_spread", "rot_ref", "rot_spread"]
+
+
+def firmware_rotation_score(row, model, limit, weapon, player_id):
+    """Runtime rotation allowances from the two-player hub sketches."""
+    u = np.array([row.ux, row.uy, row.uz], float)
+    h = np.array([row.hx, row.hy, row.hz], float)
+    torso = float(row.torso_ratio)
+    no_push = not np.any(h)
+
+    def distance(m, axis=None, push=None, axis_spread=None, push_spread=None):
+        action = m.action
+        if action == "spin" and abs(row.rot) < 250:
+            return np.inf
+        bid = bool(m.bidirectional)
+        axis = np.array(axis if axis is not None else [m.ux, m.uy, m.uz])
+        push = np.array(push if push is not None else [m.px, m.py, m.pz])
+        a_spread = axis_spread or max(m.axis_spread, 35 if action == "uppercut" else
+                                      45 if action == "spin" else 0)
+        p_spread = push_spread or max(m.push_spread, 60 if action == "spin" else 0)
+        da = _angle_deg(u, axis, bid) / a_spread
+        dp = (180 if no_push else _angle_deg(h, push, bid)) / p_spread
+        if action == "uppercut":
+            dr = (row.rot - np.clip(row.rot, 60, 220)) / 45
+        elif action == "spin":
+            dr = (row.rot - np.clip(row.rot, 250, 720)) / m.rot_spread
+        else:
+            dr = (row.rot - m.rot_mean) / m.rot_spread
+        dr = np.clip(dr, -0.75, 0.75)
+        dt = max(0, torso - m.torso_ref) / m.torso_spread if np.isfinite(torso) else 0
+        return float(np.sqrt(da * da + dp * dp + dr * dr + dt * dt))
+
+    best = min(((m.action, distance(m), False) for _, m in model.iterrows()),
+               key=lambda value: value[1])
+    def allowed(match):
+        action, _, relaxed = match
+        if action == "spin":
+            return max(limit, 2.25)
+        if weapon == "sword_shield":
+            if relaxed:
+                return 2.25
+            if action in ("horizontal", "diagonal"):
+                return 1.75
+        return limit
+
+    if weapon == "sword_shield" and best[1] > allowed(best):
+        upper = model[model.action == "uppercut"]
+        if (row.peak >= 250 and row.rot >= 60 and torso >= 0.070 and len(upper)):
+            m = upper.iloc[0]
+            alt = ("uppercut", distance(m, axis_spread=35), True)
+            if alt[1] <= 2.25 and alt[1] < best[1]:
+                best = alt
+        if (player_id == 2 and row.peak >= 350 and row.rot >= 60 and
+                torso >= 0.070 and len(upper)):
+            m = upper.iloc[0]
+            alt = ("uppercut", distance(m, axis=(0.702, 0, 0.712),
+                                         push=(0.655, 0.504, -0.554),
+                                         axis_spread=35, push_spread=30), True)
+            if alt[1] <= 1.50 and alt[1] < best[1]:
+                best = alt
+    return best[1] <= allowed(best), best[0], best[1]
+
+
+def firmware_thrust_score(row, thrust, limit, weapon, min_reach):
+    """Runtime thrust allowances, including the sword's weak-push rule."""
+    u = np.array([row.ux, row.uy, row.uz], float)
+    direction = np.array([thrust[k] for k in ("ux", "uy", "uz")])
+    rot_ref = max(thrust["rot_ref"], 65) if weapon == "sword_shield" else thrust["rot_ref"]
+    rot_spread = max(thrust["rot_spread"], 16.25) if weapon == "sword_shield" else thrust["rot_spread"]
+    da = _angle_deg(u, direction, False) / thrust["dir_spread"]
+    dr = max(0, row.rot - rot_ref) / rot_spread
+    reach = (row.reach - thrust["reach_mean"]) / thrust["reach_spread"]
+    distance = float(np.sqrt(da * da + reach * reach + dr * dr))
+    allowed = ((1.50 if row.peak >= 1.50 else 1.10) if weapon == "sword_shield"
+               else max(limit, 0.95) if weapon == "mace" else limit)
+    enough = row.reach >= min_reach and not (
+        weapon == "sword_shield" and row.rot > 55 and row.reach < 0.65)
+    return enough and distance <= allowed, distance, da, reach, dr
+
+
+def firmware_decide(rep, sketch, weapon, player_id):
+    """Score raw replay strokes with the current hub's runtime allowances."""
+    model, limit, thrust, thrust_limit = model_from_sketch(sketch, weapon)
+    min_reach = reach_limit_from_sketch(sketch, weapon)
+    return decide(
+        rep, model, max_dist=limit,
+        score=lambda row: firmware_rotation_score(row, model, limit, weapon, player_id),
+        thrust=thrust, thrust_max=thrust_limit, thrust_min_reach=min_reach,
+        thrust_score=(lambda row: firmware_thrust_score(
+            row, thrust, thrust_limit, weapon, min_reach)) if thrust is not None else None)
 
 
 def model_from_sketch(path, weapon="sword_shield"):

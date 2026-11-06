@@ -122,6 +122,8 @@ SPLITS = ("train", "val")
 def recording_metadata(suffix):
     """Read weapon and optional split; weapon recordings default to training."""
     parts = f"_{suffix or ''}_"
+    if suffix and suffix.startswith("sword_"):
+        parts += "sword_shield_"
     weapons = [w for w in WEAPONS if f"_{w}_" in parts]
     splits = [v for v in SPLITS if f"_{v}_" in parts]
     if len(weapons) > 1 or len(splits) > 1:

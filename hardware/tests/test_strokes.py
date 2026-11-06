@@ -16,6 +16,7 @@ from figpipe import parsers as P
 from figpipe import raw
 from figpipe import replay as R
 from figpipe import debug_fit as D
+from figpipe import logs
 
 DT = 10  # ms, 100 Hz like the hub
 A_STRIKE = np.array([0.6, 0.0, -0.8])     # strike rotation axis
@@ -258,7 +259,35 @@ class TestModelRoundTrip(unittest.TestCase):
             self.assertAlmostEqual(back_thrust[c], models["spear"][2][c], places=3)
         self.assertTrue(F.BLOCK_RE.search(src))
 
+    def test_runtime_score_matches_recorded_p2_stroke(self):
+        model, limit, _, _ = R.model_from_sketch(F.SKETCHES[1], "sword_shield")
+        # First sword vertical stroke in the November P2 capture. The hub
+        # accepted it as uppercut at distance 0.76.
+        stroke = pd.Series(dict(ux=-0.078, uy=0.130, uz=0.988,
+                                hx=0.898, hy=0.337, hz=0.282,
+                                rot=144.4, torso_ratio=0.074, peak=416.8))
+        accepted, action, distance = R.firmware_rotation_score(
+            stroke, model, limit, "sword_shield", 2)
+        self.assertTrue(accepted)
+        self.assertEqual(action, "uppercut")
+        self.assertAlmostEqual(distance, 0.76, delta=0.02)
+
+    def test_mace_thrust_limit_covers_lins_forward_push(self):
+        _, _, thrust, limit = R.model_from_sketch(F.SKETCHES[1], "mace")
+        stroke = pd.Series(dict(ux=0.197, uy=0.980, uz=0.005,
+                                rot=51.6, reach=0.670, peak=2.22))
+        accepted, distance, *_ = R.firmware_thrust_score(
+            stroke, thrust, limit, "mace", 0.15)
+        self.assertTrue(accepted)
+        self.assertAlmostEqual(distance, 0.90, delta=0.03)
+
     def test_recording_label_and_lock_cross_check(self):
+        self.assertEqual(logs.label_from_suffix("sword_vertical"), "vertical")
+        self.assertEqual(logs.label_from_suffix("sword_shield_vertical"), "vertical")
+        self.assertEqual(logs.label_from_suffix("mace_horizontal"), "horizontal")
+        self.assertEqual(logs.label_from_suffix("spear_thrust"), "thrust")
+        self.assertEqual(raw.recording_metadata("sword_vertical"), ("sword_shield", "train"))
+        self.assertEqual(raw.recording_metadata("mace_horizontal"), ("mace", "train"))
         self.assertEqual(raw.recording_metadata("vertical_slow_sword_shield_train"),
                          ("sword_shield", "train"))
         self.assertEqual(raw.recording_metadata("vertical_slow_sword_shield"),

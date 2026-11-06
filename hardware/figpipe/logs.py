@@ -36,6 +36,13 @@ def label_from_suffix(suffix):
     """'vertical' / 'vertical_round2' -> 'vertical'; unknown -> None. Longest match wins."""
     if not suffix:
         return None
+    # The November P2 captures put the weapon before the action (for example
+    # sword_vertical). Keep older action-first recording names valid.
+    if suffix.startswith("sword_shield_"):
+        suffix = suffix[len("sword_shield_"):]
+    parts = suffix.split("_")
+    if parts[0] in ("sword", "spear", "mace"):
+        suffix = "_".join(parts[1:])
     # The listener label used for this recording is more descriptive than the
     # canonical fake-action name used by the classifier.  Keep both spellings
     # usable so the session is included in offline fitting and validation.

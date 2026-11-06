@@ -59,7 +59,7 @@ const char *password = "12345678";
 // offline waveform analysis (listener writes raw_<time>_<label>.csv). Must
 // match the right wrist sketch to get both streams. 0 for normal play.
 #ifndef RAW_STREAM
-#define RAW_STREAM 0
+#define RAW_STREAM 1
 #endif
 
 #include <Wire.h>

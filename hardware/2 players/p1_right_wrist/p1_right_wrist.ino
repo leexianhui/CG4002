@@ -301,6 +301,22 @@ struct StrikeTemplate
     bool bidirectional; // v and -v count as the same direction (spin)
 };
 
+struct LenientTemplate
+{
+    WeaponType weapon;
+    const char *hint;
+    bool push;
+    float ux, uy, uz, px, py, pz, rotDeg, reachM;
+};
+
+struct CombinedCandidate
+{
+    const LenientTemplate *pattern;
+    int stroke;
+    bool push;
+    float dist;
+};
+
 // Nearest template for a stroke — see nearestTemplate().
 struct TemplateMatch
 {
@@ -1764,6 +1780,88 @@ const WeaponThrustTemplate THRUST_MODEL[] = {
 };
 // ===== STRIKE_MODEL — END =====
 
+// Additional recorded P2 attack shapes. Score these alongside the fitted
+// model for each stroke, then give original accepts priority when emitting.
+// Keep this bank outside the fitter-generated block.
+// ===== P2_LENIENT_MODEL BEGIN =====
+// Combined-model variants from forward strokes in the P2 recordings.
+// Regenerate with: python lenient_p2.py --write
+const LenientTemplate P2_LENIENT_MODEL[] = {
+    {WEAPON_SWORD_SHIELD, "vertical", false, 0.056f, 0.299f, 0.953f, 0.810f, -0.580f, -0.086f, 154.700f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "vertical", false, 0.106f, 0.439f, 0.892f, 0.428f, -0.891f, 0.153f, 151.200f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "vertical", false, -0.023f, 0.620f, 0.784f, 0.857f, -0.511f, 0.062f, 149.600f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "vertical", false, -0.036f, 0.619f, 0.785f, 0.947f, -0.137f, 0.289f, 141.400f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "horizontal", false, -0.085f, -0.172f, -0.982f, 0.227f, 0.757f, -0.613f, 157.600f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "horizontal", false, 0.056f, -0.347f, -0.936f, 0.156f, 0.826f, -0.542f, 168.000f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "horizontal", false, -0.063f, -0.298f, -0.952f, 0.173f, 0.774f, -0.609f, 155.400f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "horizontal", false, -0.312f, -0.416f, -0.854f, 0.301f, 0.725f, -0.619f, 155.500f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "horizontal", false, -0.169f, -0.437f, -0.884f, 0.008f, 0.911f, -0.413f, 163.800f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "horizontal", false, -0.088f, -0.326f, -0.941f, 0.179f, 0.874f, -0.453f, 175.400f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, -0.568f, 0.204f, 0.797f, -0.120f, 0.278f, -0.953f, 172.900f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, -0.546f, -0.015f, 0.838f, -0.541f, 0.708f, -0.453f, 177.900f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, -0.301f, 0.028f, 0.953f, 0.705f, 0.037f, 0.708f, 100.500f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "thrust", true, 0.081f, 0.924f, -0.372f, 0.000f, 0.000f, 0.000f, 78.400f, 0.611f},
+    {WEAPON_SWORD_SHIELD, "thrust", true, -0.724f, 0.676f, -0.136f, 0.000f, 0.000f, 0.000f, 47.200f, 0.216f},
+    {WEAPON_SWORD_SHIELD, "thrust", true, -0.625f, 0.759f, -0.182f, 0.000f, 0.000f, 0.000f, 32.600f, 1.134f},
+    {WEAPON_SWORD_SHIELD, "thrust", true, -0.633f, 0.774f, -0.032f, 0.000f, 0.000f, 0.000f, 48.000f, 0.208f},
+    {WEAPON_SWORD_SHIELD, "thrust", true, -0.543f, 0.839f, -0.048f, 0.000f, 0.000f, 0.000f, 31.300f, 0.931f},
+    {WEAPON_SWORD_SHIELD, "thrust", true, -0.729f, 0.680f, 0.083f, 0.000f, 0.000f, 0.000f, 51.400f, 0.254f},
+    {WEAPON_SWORD_SHIELD, "thrust", true, -0.452f, 0.891f, -0.029f, 0.000f, 0.000f, 0.000f, 30.500f, 1.029f},
+    {WEAPON_SWORD_SHIELD, "thrust", true, -0.696f, 0.697f, -0.173f, 0.000f, 0.000f, 0.000f, 46.100f, 0.155f},
+    {WEAPON_SWORD_SHIELD, "thrust", true, -0.061f, 0.762f, 0.645f, 0.000f, 0.000f, 0.000f, 67.500f, 0.303f},
+    {WEAPON_SWORD_SHIELD, "uppercut", false, 0.248f, 0.393f, 0.886f, 0.645f, 0.650f, -0.401f, 134.500f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "spin", false, 0.429f, -0.390f, 0.815f, 0.939f, -0.141f, -0.312f, 56.300f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "spin", false, 0.016f, 0.998f, -0.057f, -0.299f, 0.857f, 0.420f, 66.500f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "spin", false, 0.573f, 0.006f, -0.820f, 0.682f, 0.731f, 0.035f, 118.400f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "spin", false, -0.024f, 0.997f, 0.068f, -0.664f, 0.663f, 0.344f, 65.100f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "spin", false, 0.183f, -0.932f, 0.314f, 0.201f, 0.114f, -0.973f, 59.200f, 0.000f},
+    {WEAPON_MACE, "vertical", false, 0.117f, -0.491f, -0.863f, 0.137f, 0.781f, -0.610f, 166.400f, 0.000f},
+    {WEAPON_MACE, "vertical", false, 0.111f, -0.462f, -0.880f, 0.088f, 0.907f, -0.411f, 162.900f, 0.000f},
+    {WEAPON_MACE, "vertical", false, 0.030f, -0.489f, -0.872f, -0.084f, 0.864f, -0.497f, 151.100f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, -0.219f, -0.454f, -0.864f, 0.036f, 0.518f, -0.855f, 159.100f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, -0.162f, -0.633f, -0.757f, 0.307f, 0.397f, -0.865f, 133.100f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, -0.228f, -0.594f, -0.771f, 0.352f, 0.145f, -0.925f, 157.300f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, -0.374f, -0.495f, -0.784f, 0.298f, 0.158f, -0.941f, 164.400f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, -0.318f, -0.650f, -0.690f, 0.366f, 0.152f, -0.918f, 154.400f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, -0.330f, -0.683f, -0.652f, 0.152f, 0.044f, -0.987f, 149.300f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, -0.345f, -0.698f, -0.627f, 0.356f, 0.233f, -0.905f, 153.900f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, -0.220f, -0.524f, -0.823f, 0.141f, 0.180f, -0.973f, 144.700f, 0.000f},
+    {WEAPON_MACE, "diagonal", false, 0.137f, 0.721f, 0.679f, -0.246f, 0.456f, -0.855f, 64.200f, 0.000f},
+    {WEAPON_MACE, "diagonal", false, -0.541f, 0.377f, 0.752f, -0.492f, 0.431f, -0.757f, 130.900f, 0.000f},
+    {WEAPON_MACE, "diagonal", false, -0.436f, 0.549f, 0.713f, -0.771f, 0.091f, -0.630f, 118.200f, 0.000f},
+    {WEAPON_MACE, "thrust", true, -0.584f, 0.512f, -0.630f, 0.000f, 0.000f, 0.000f, 66.100f, 0.834f},
+    {WEAPON_MACE, "thrust", true, -0.474f, 0.835f, -0.280f, 0.000f, 0.000f, 0.000f, 99.000f, 1.801f},
+    {WEAPON_MACE, "thrust", true, -0.577f, 0.765f, -0.286f, 0.000f, 0.000f, 0.000f, 91.000f, 0.893f},
+    {WEAPON_MACE, "uppercut", false, 0.472f, 0.648f, 0.598f, 0.105f, 0.465f, -0.879f, 131.500f, 0.000f},
+    {WEAPON_MACE, "uppercut", false, 0.616f, 0.725f, 0.308f, 0.033f, 0.440f, -0.897f, 137.800f, 0.000f},
+    {WEAPON_MACE, "uppercut", false, 0.568f, 0.641f, 0.516f, 0.008f, 0.784f, -0.621f, 128.800f, 0.000f},
+    {WEAPON_MACE, "uppercut", false, 0.507f, 0.633f, 0.585f, 0.115f, 0.500f, -0.858f, 136.500f, 0.000f},
+    {WEAPON_MACE, "uppercut", false, 0.519f, 0.550f, 0.654f, 0.281f, 0.691f, -0.666f, 123.600f, 0.000f},
+    {WEAPON_MACE, "uppercut", false, 0.531f, 0.728f, 0.434f, 0.244f, 0.494f, -0.834f, 135.300f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.891f, 0.453f, 0.016f, 0.012f, 0.239f, -0.971f, 171.500f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.719f, 0.690f, -0.080f, 0.219f, 0.528f, -0.820f, 139.100f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.703f, 0.711f, -0.020f, 0.064f, 0.367f, -0.928f, 147.500f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.741f, 0.656f, 0.143f, -0.018f, 0.516f, -0.856f, 159.600f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.705f, 0.709f, 0.025f, 0.219f, 0.619f, -0.754f, 149.900f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.819f, 0.566f, -0.096f, 0.343f, 0.779f, -0.524f, 134.700f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.821f, 0.559f, 0.116f, 0.265f, 0.556f, -0.788f, 143.600f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.925f, 0.380f, 0.023f, 0.189f, 0.116f, -0.975f, 58.800f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.846f, 0.517f, 0.129f, -0.179f, 0.951f, -0.252f, 111.900f, 0.000f},
+    {WEAPON_SPEAR, "uppercut", false, -0.208f, 0.539f, 0.817f, 0.849f, 0.528f, -0.025f, 120.400f, 0.000f},
+    {WEAPON_SPEAR, "diagonal", false, 0.701f, -0.021f, -0.713f, 0.418f, 0.672f, -0.611f, 144.900f, 0.000f},
+    {WEAPON_SPEAR, "diagonal", false, 0.651f, 0.613f, -0.448f, 0.502f, 0.855f, -0.130f, 116.700f, 0.000f},
+    {WEAPON_SPEAR, "diagonal", false, 0.604f, 0.537f, -0.589f, 0.391f, 0.844f, -0.367f, 124.300f, 0.000f},
+    {WEAPON_SPEAR, "diagonal", false, 0.506f, 0.716f, -0.481f, 0.579f, 0.796f, 0.178f, 120.700f, 0.000f},
+    {WEAPON_SPEAR, "diagonal", false, 0.661f, 0.375f, -0.650f, -0.052f, 0.783f, -0.620f, 143.700f, 0.000f},
+    {WEAPON_SPEAR, "diagonal", false, 0.598f, 0.533f, -0.599f, 0.393f, 0.869f, -0.300f, 127.000f, 0.000f},
+    {WEAPON_SPEAR, "thrust", true, -0.428f, 0.819f, -0.382f, 0.000f, 0.000f, 0.000f, 26.000f, 1.007f},
+    {WEAPON_SPEAR, "thrust", true, -0.300f, 0.858f, -0.417f, 0.000f, 0.000f, 0.000f, 29.800f, 1.232f},
+    {WEAPON_SPEAR, "thrust", true, -0.698f, 0.621f, -0.356f, 0.000f, 0.000f, 0.000f, 30.600f, 0.503f},
+    {WEAPON_MACE, "thrust", true, -0.088f, 0.986f, -0.142f, 0.000f, 0.000f, 0.000f, 124.400f, 1.270f},
+};
+const int P2_LENIENT_COUNT = sizeof(P2_LENIENT_MODEL) / sizeof(P2_LENIENT_MODEL[0]);
+// ===== P2_LENIENT_MODEL END =====
+
 const WeaponActionLimits *activeActionLimits()
 {
     for (unsigned int i = 0; i < sizeof(ACTION_LIMITS) / sizeof(ACTION_LIMITS[0]); i++)
@@ -1818,6 +1916,9 @@ const float SWORD_THRUST_ROT_REF_DEG = 65.0f;
 const float SWORD_THRUST_ROT_SPREAD_DEG = 16.25f;
 const float SWORD_THRUST_HIGH_ROT_DEG = 55.0f;
 const float SWORD_THRUST_HIGH_ROT_MIN_REACH_M = 0.65f;
+// Lin's 2026-11-06 mace thrust at t=195021 scored 0.90 while the fitted
+// mace limit is 0.75. Keep this allowance outside the generated model.
+const float MACE_THRUST_MAX_DIST = 0.95f;
 
 // A spin is a full-body rotation, not an ordinary ~110-200 degree swing
 // whose axis happens to resemble the spin axis. Keep this outside the
@@ -2226,6 +2327,110 @@ const char *pushContextReject(const PushStroke &p)
     return nullptr;
 }
 
+// The additive path has its own history. New accepts must never change a
+// later decision made by the original matcher or its return suppression.
+bool lenientHistoryValid = false;
+void acceptSegment(int a, int b, const char *hint, float dist);
+bool lenientHistoryPush = false;
+bool lenientHistorySpin = false;
+uint32_t lenientHistoryEndMs = 0;
+uint32_t lenientHistoryDurMs = 0;
+float lenientHistoryUx = 0, lenientHistoryUy = 0, lenientHistoryUz = 0;
+float lenientHistoryVx = 0, lenientHistoryVy = 0, lenientHistoryVz = 0;
+
+// Score old and recorded variants while visiting each stroke once. The
+// original decision still has priority when the candidate is committed.
+TemplateMatch combinedRotationMatch(const Stroke &s, int index, CombinedCandidate &best)
+{
+    TemplateMatch original = nearestTemplate(s);
+    if (s.torsoBeacons == 0 || s.peakDps < 100.0f || s.rotDeg < 35.0f)
+        return original;
+    for (int k = 0; k < P2_LENIENT_COUNT; k++)
+    {
+        const LenientTemplate &m = P2_LENIENT_MODEL[k];
+        if (m.weapon != lockedWeapon || m.push)
+            continue;
+        if (lenientHistoryValid && !lenientHistoryPush &&
+            returnOf(lenientHistoryEndMs, lenientHistoryDurMs, lenientHistorySpin,
+                     buffer[s.a].t,
+                     s.ux * lenientHistoryUx + s.uy * lenientHistoryUy + s.uz * lenientHistoryUz))
+            continue;
+        if (fabs(s.rotDeg - m.rotDeg) >= best.dist * 50.0f)
+            continue;
+        bool spin = strcmp(m.hint, "spin") == 0;
+        float dA = angleBetweenDeg(s.ux, s.uy, s.uz, m.ux, m.uy, m.uz, spin) / 25.0f;
+        if (dA >= best.dist)
+            continue;
+        float dP = angleBetweenDeg(s.hx, s.hy, s.hz, m.px, m.py, m.pz, spin) / 45.0f;
+        float dR = fabs(s.rotDeg - m.rotDeg) / 50.0f;
+        float d = sqrt(dA * dA + dP * dP + dR * dR);
+        if (d < best.dist)
+            best = {&m, index, false, d};
+    }
+    return original;
+}
+
+float combinedPushMatch(const PushStroke &s, int index, float &dDir, float &dReach,
+                        float &dRot, CombinedCandidate &best)
+{
+    float original = thrustDistance(s, dDir, dReach, dRot);
+    const char *context = pushContextReject(s);
+    if (s.torsoBeacons == 0 || s.peakG < 0.3f || s.reachM < 0.15f ||
+        (context && strcmp(context, "return") != 0))
+        return original;
+    uint32_t t0 = buffer[s.a].t;
+    if (lenientHistoryValid &&
+        returnOf(lenientHistoryEndMs, lenientHistoryDurMs, lenientHistorySpin, t0,
+                 s.ux * lenientHistoryVx + s.uy * lenientHistoryVy + s.uz * lenientHistoryVz))
+        return original;
+    for (int k = 0; k < P2_LENIENT_COUNT; k++)
+    {
+        const LenientTemplate &m = P2_LENIENT_MODEL[k];
+        if (m.weapon != lockedWeapon || !m.push)
+            continue;
+        float dr = (s.rotDeg - m.rotDeg) / 45.0f;
+        float reach = (s.reachM - m.reachM) / 0.40f;
+        if (fabs(dr) >= best.dist || fabs(reach) >= best.dist)
+            continue;
+        float da = angleBetweenDeg(s.ux, s.uy, s.uz, m.ux, m.uy, m.uz, false) / 25.0f;
+        float d = sqrt(da * da + reach * reach + dr * dr);
+        if (d < best.dist)
+            best = {&m, index, true, d};
+    }
+    return original;
+}
+
+bool acceptAdditionalPattern(const CombinedCandidate &best)
+{
+    if (!best.pattern)
+        return false;
+    int a, b;
+    if (best.push)
+    {
+        const PushStroke &s = pushes[best.stroke];
+        a = s.a, b = s.e;
+        lenientHistoryUx = s.ux, lenientHistoryUy = s.uy, lenientHistoryUz = s.uz;
+        lenientHistoryVx = s.ux, lenientHistoryVy = s.uy, lenientHistoryVz = s.uz;
+    }
+    else
+    {
+        const Stroke &s = strokes[best.stroke];
+        a = s.a, b = s.b;
+        lenientHistoryUx = s.ux, lenientHistoryUy = s.uy, lenientHistoryUz = s.uz;
+        lenientHistoryVx = s.hx, lenientHistoryVy = s.hy, lenientHistoryVz = s.hz;
+    }
+    lenientHistoryValid = true;
+    lenientHistoryPush = best.push;
+    lenientHistorySpin = strcmp(best.pattern->hint, "spin") == 0;
+    lenientHistoryEndMs = buffer[b].t;
+    lenientHistoryDurMs = buffer[b].t - buffer[a].t;
+    debugLog("Combined kind=" + String(best.push ? "push" : "rot") +
+             " t0=" + String(buffer[a].t) + " t1=" + String(buffer[b].t) +
+             " hint=" + String(best.pattern->hint) + " dist=" + String(best.dist, 2));
+    acceptSegment(a, b, best.pattern->hint, best.dist);
+    return true;
+}
+
 // ---------------- Segment -> Ultra96 ----------------
 // Samples for this segment live in buffer[sendStart..sendEnd] — the accepted
 // stroke plus SEND_PAD_FRAC of its duration either side (see acceptSegment()).
@@ -2289,13 +2494,14 @@ void onMotionEnd(const char *closeReason)
     uint32_t closeMs = buffer[sampleCount - 1].t;
     unsigned long rawDurationMs = (sampleCount > 1) ? (buffer[sampleCount - 1].t - buffer[0].t) : 0;
     int accepted = 0;
+    CombinedCandidate combined = {nullptr, -1, false, 0.35f};
 
     findStrokes();
     for (int k = 0; k < strokeCount; k++)
     {
         Stroke &s = strokes[k];
         computeStrokeFeatures(s, closeMs);
-        TemplateMatch m = nearestTemplate(s);
+        TemplateMatch m = combinedRotationMatch(s, k, combined);
         bool relaxedUppercut = false;
         if (lockedWeapon == WEAPON_SWORD_SHIELD && m.dist > strikeDistanceLimit(m, false))
         {
@@ -2349,7 +2555,7 @@ void onMotionEnd(const char *closeReason)
     {
         PushStroke &p = pushes[k];
         float dDir, dReach, dRot;
-        float d = thrustDistance(p, dDir, dReach, dRot);
+        float d = combinedPushMatch(p, k, dDir, dReach, dRot, combined);
 
         const char *reason = nullptr;
         if (p.torsoBeacons == 0)
@@ -2365,6 +2571,8 @@ void onMotionEnd(const char *closeReason)
             float maxDist = activeActionLimits()->thrustMaxDist;
             if (lockedWeapon == WEAPON_SWORD_SHIELD)
                 maxDist = p.peakG >= SWORD_THRUST_RELAX_MIN_PEAK_G ? SWORD_THRUST_MAX_DIST : SWORD_THRUST_WEAK_MAX_DIST;
+            else if (lockedWeapon == WEAPON_MACE)
+                maxDist = max(maxDist, MACE_THRUST_MAX_DIST);
             reason = d > maxDist ? "far" : "ok";
         }
         bool ok = strcmp(reason, "ok") == 0;
@@ -2381,6 +2589,9 @@ void onMotionEnd(const char *closeReason)
         accepted++;
         acceptSegment(p.a, p.e, "thrust", d);
     }
+
+    if (accepted == 0 && acceptAdditionalPattern(combined))
+        accepted++;
 
     debugLog("Candidate ENDED weapon=" + String(weaponName(lockedWeapon)) + " raw=" + String(sampleCount) +
              " rawDur=" + String(rawDurationMs) + " strokes=" + String(strokeCount) + " pushes=" + String(pushCount) +
