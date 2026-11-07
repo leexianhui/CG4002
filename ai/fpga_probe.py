@@ -1,18 +1,12 @@
-"""
-FPGA probe: what does the CNN core inside cnn.bit actually expect?
+"""Diagnose AXI DMA transfers to the CG4002 CNN on Ultra96.
 
-  sudo -E python3 fpga_probe.py            (from ai/, next to cnn.bit + cnn.hwh)
+Run from ai/:
+    sudo -E python3 fpga_probe.py
+    sudo -E python3 fpga_probe.py --timeout 2
+    sudo -E python3 fpga_probe.py --compare 10
 
-fpga_infer.py sends [model_id] + 100x18 float32 = 1801 words and waits for 7 float32 logits. If the
-core was built for another input size, that DMA transfer hangs ("DMA timeout"). This finds the exact
-number of input words the core consumes before it answers, by bisection on the board:
-
-  input transfer done, reply not done  -> the core wants MORE words
-  reply done, input transfer not done  -> the core wants FEWER words
-  both done                            -> exact size
-
-Every trial reprograms the bitstream, which resets the core and the DMA. Read-only otherwise.
-If the size is 1801 it then checks the core against fixedpoint_ref on ACTION_FINAL's test windows.
+This tool reloads the overlay for each trial. It does not change files or
+boot configuration. Stop other applications using the FPGA before running.
 """
 import argparse
 import os
@@ -21,105 +15,167 @@ import time
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MM2S_SR, S2MM_SR, S2MM_LENGTH = 0x04, 0x34, 0x58
+MM2S_SR = 0x04
+S2MM_SR = 0x34
+S2MM_LENGTH = 0x58
+ERROR_BITS = 0x70
+REGISTERS = (
+    ("MM2S_DMACR", 0x00), ("MM2S_DMASR", 0x04),
+    ("MM2S_SA", 0x18), ("MM2S_SA_MSB", 0x1C),
+    ("MM2S_LENGTH", 0x28), ("S2MM_DMACR", 0x30),
+    ("S2MM_DMASR", 0x34), ("S2MM_DA", 0x48),
+    ("S2MM_DA_MSB", 0x4C), ("S2MM_LENGTH", 0x58),
+)
 
 
 def status(word):
     flags = []
-    if word & 0x1: flags.append("halted")
-    if word & 0x2: flags.append("idle")
-    if word & 0x10: flags.append("INTERNAL_ERR")
-    if word & 0x20: flags.append("SLAVE_ERR")
-    if word & 0x40: flags.append("DECODE_ERR")
-    return "%#06x(%s)" % (word, ",".join(flags) or "busy")
+    for bit, label in ((0x1, "halted"), (0x2, "idle"),
+                       (0x10, "INTERNAL_ERR"), (0x20, "SLAVE_ERR"),
+                       (0x40, "DECODE_ERR"), (0x1000, "IOC_IRQ"),
+                       (0x4000, "ERR_IRQ")):
+        if word & bit:
+            flags.append(label)
+    return "0x%08x(%s)" % (word, ",".join(flags) or "busy")
 
 
-def trial(bit, words, timeout_s, fill=None):
+def trial(bit, words, timeout_s, fill=None, verbose=True):
     from pynq import Overlay, allocate
-    ol = Overlay(bit, download=True)  # reprogram: a clean core and DMA every time
-    dma = ol.axi_dma_0
+
+    overlay = Overlay(bit, download=True)
+    dma = overlay.axi_dma_0
     ib = allocate(shape=(words,), dtype=np.uint32)
     ob = allocate(shape=(64,), dtype=np.float32)
-    ib[:] = 0 if fill is None else fill
-    ob[:] = np.nan
-    dma.recvchannel.transfer(ob)
-    dma.sendchannel.transfer(ib)
-    t0 = time.time()
-    while time.time() - t0 < timeout_s:
-        if dma.read(MM2S_SR) & 0x2 and dma.read(S2MM_SR) & 0x2:
+    try:
+        if fill is None:
+            ib.fill(0)
+        else:
+            payload = np.asarray(fill, dtype=np.uint32).reshape(-1)
+            if payload.size != words:
+                raise ValueError("Expected %d input words, got %d" % (words, payload.size))
+            ib[:] = payload
+        ob.fill(np.nan)
+        ib.flush()
+        ob.flush()
+
+        input_address = int(ib.physical_address)
+        output_address = int(ob.physical_address)
+        if verbose:
+            print("\n  INPUT  words=%d bytes=%d physical=%#x end=%#x" %
+                  (words, ib.nbytes, input_address, input_address + ib.nbytes - 1))
+            print("  OUTPUT capacity=%d bytes=%d physical=%#x end=%#x" %
+                  (ob.size, ob.nbytes, output_address, output_address + ob.nbytes - 1))
+
+        # Arm the receiver before sending input. Do not call .wait(): it can
+        # block forever when the core or DMA is stuck.
+        dma.recvchannel.transfer(ob)
+        dma.sendchannel.transfer(ib)
+
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            ms = dma.mmio.read(MM2S_SR)
+            ss = dma.mmio.read(S2MM_SR)
+            if (ms | ss) & ERROR_BITS:
+                break
+            if (ms & 0x2) and (ss & 0x2):
+                break
+            time.sleep(0.002)
+
+        ms = dma.mmio.read(MM2S_SR)
+        ss = dma.mmio.read(S2MM_SR)
+        sent = bool(ms & 0x2) and not bool(ms & ERROR_BITS)
+        replied = bool(ss & 0x2) and not bool(ss & ERROR_BITS)
+        nbytes = int(dma.mmio.read(S2MM_LENGTH)) if replied else 0
+
+        if verbose:
+            print("  DMA registers immediately after transfer attempt:")
+            for name, offset in REGISTERS:
+                value = int(dma.mmio.read(offset))
+                print("    %-17s 0x%08x%s" %
+                      (name, value, " (%d bytes)" % value if name.endswith("LENGTH") else ""))
+            print("  MM2S=%s S2MM=%s" % (status(ms), status(ss)))
+            print("  Programmed source matches input:",
+                  int(dma.mmio.read(0x18)) == (input_address & 0xFFFFFFFF))
+            print("  Programmed destination matches output:",
+                  int(dma.mmio.read(0x48)) == (output_address & 0xFFFFFFFF))
+
+        if replied and 0 <= nbytes <= ob.nbytes and nbytes % 4 == 0:
+            ob.invalidate()
+            result = np.array(ob[:nbytes // 4], copy=True)
+        else:
+            if replied and verbose:
+                print("  WARNING: invalid receive byte count:", nbytes)
+            result = np.empty(0, dtype=np.float32)
+        return sent, replied, ms, ss, result
+    finally:
+        ib.freebuffer()
+        ob.freebuffer()
+
+
+def compare_fixed(bit, timeout_s, count):
+    from fixedpoint_ref import FxCfg, forward_fixed, load_weights, pad_out
+
+    model_dir = os.path.join(HERE, "models", "ACTION_FINAL")
+    weights_path = os.path.join(model_dir, "weights.npz")
+    test_path = os.path.join(model_dir, "test_data.npz")
+    if not (os.path.isfile(weights_path) and os.path.isfile(test_path)):
+        print("Cannot compare: ACTION_FINAL weights.npz/test_data.npz missing")
+        return
+    weights = pad_out(load_weights(weights_path), 7)
+    test = np.load(test_path)
+    X = test["X"]
+    exact = 0
+    for i in range(min(count, len(X))):
+        x = np.asarray(X[i], dtype=np.float32)
+        if x.shape != (100, 18):
+            print("Unexpected test shape:", x.shape)
+            return
+        payload = np.concatenate((np.array([0], dtype=np.uint32),
+                                  x.reshape(-1).view(np.uint32)))
+        sent, replied, ms, ss, hw = trial(bit, 1801, timeout_s, fill=payload,
+                                          verbose=(i == 0))
+        if not (sent and replied and len(hw) == 7):
+            print("Window %d: DMA incomplete, stopping comparison" % i)
             break
-    ms, ss = dma.read(MM2S_SR), dma.read(S2MM_SR)
-    sent, replied = bool(ms & 0x2), bool(ss & 0x2)
-    nbytes = dma.read(S2MM_LENGTH) if replied else 0
-    out = np.array(ob[:nbytes // 4], dtype=np.float32)
-    ib.freebuffer()
-    ob.freebuffer()
-    return sent, replied, ms, ss, out
+        ref = np.asarray(forward_fixed(x, weights, FxCfg())).reshape(-1)
+        same = ref.shape == hw.shape and np.array_equal(hw, ref)
+        exact += int(same)
+        print("Window %d: %s; FPGA=%s reference=%s" %
+              (i, "bit-exact" if same else "DIFFERENT", hw.tolist(), ref.tolist()))
+    print("Bit-exact windows:", exact)
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--bit", default=os.path.join(HERE, "cnn.bit"))
-    ap.add_argument("--timeout", type=float, default=0.5)
-    a = ap.parse_args()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--bit", default=os.path.join(HERE, "cnn.bit"))
+    parser.add_argument("--timeout", type=float, default=1.5)
+    parser.add_argument("--compare", type=int, default=0,
+                        help="Compare N saved windows if 1801-word DMA succeeds")
+    args = parser.parse_args()
+    if args.timeout <= 0:
+        parser.error("--timeout must be positive")
 
-    print("Bisecting the core's input size (each line reprograms the FPGA)...")
-    lo, hi, found = 2, 4000, None
-    while lo <= hi:
-        n = (lo + hi) // 2
-        sent, replied, ms, ss, out = trial(a.bit, n, a.timeout)
-        print("  %5d words: input %-9s reply %-9s  MM2S=%s S2MM=%s reply_values=%d" % (
-            n, "done" if sent else "STUCK", "done" if replied else "none", status(ms), status(ss), len(out)))
-        if sent and replied:
-            found = (n, out)
-            break
-        if sent:
-            lo = n + 1
-        elif replied:
-            hi = n - 1
-        else:
-            print("  -> neither side finished at %d words: the core stopped reading without answering." % n)
-            print("     Retrying the sizes it is supposed to take:")
-            for m in (1801, 1800, 601, 600):
-                s2, r2, ms2, ss2, out2 = trial(a.bit, m, a.timeout)
-                print("     %5d words: input %-5s reply %-5s MM2S=%s S2MM=%s reply_values=%d" % (
-                    m, "done" if s2 else "STUCK", "done" if r2 else "none", status(ms2), status(ss2), len(out2)))
-            break
-
-    if not found:
-        print("\nRESULT: no input size completed cleanly. Send this whole output, plus the HLS source "
-              "(the cnn_top function), to the AI team.")
+    print("Testing expected 18-channel protocol first: 1 + 100*18 = 1801 words")
+    sent, replied, ms, ss, out = trial(args.bit, 1801, args.timeout)
+    print("1801 words: input=%s reply=%s outputs=%d" %
+          ("done" if sent else "STUCK", "done" if replied else "none", len(out)))
+    if (ms | ss) & ERROR_BITS:
+        print("\nDMA error detected. This is a memory/interconnect/transfer issue; "
+              "input-size bisection would not be meaningful.")
         return
-    n, out = found
-    print("\nRESULT: the core takes exactly %d input words and returns %d values." % (n, len(out)))
-    if n == 601:
-        print("  = 1 model_id + 100 x 6: the OLD right-wrist-only CNN. The bitstream was rebuilt without the")
-        print("    18-channel core: in Vivado, Report IP Status -> Upgrade cnn_top, then regenerate the bitstream.")
-        return
-    if n == 1800:
-        print("  = 100 x 18 with no model_id word: 18 channels. fpga_infer.py must stop sending the model_id.")
-        return
-    if n != 1801:
-        print("  = an unexpected layout (ACTION_FINAL needs 1 + 100 x 18 = 1801). Check the HLS top function.")
+    if sent and replied:
+        print("FPGA returned:", out.tolist())
+        if len(out) != 7:
+            print("WARNING: expected 7 logits, received", len(out))
+        elif args.compare:
+            compare_fixed(args.bit, args.timeout, args.compare)
         return
 
-    print("  = 1 model_id + 100 x 18: the ACTION_FINAL layout. Checking its answers against fixedpoint_ref...")
-    import sys
-    sys.path.insert(0, HERE)
-    from fixedpoint_ref import FxCfg, forward_fixed, load_weights, pad_out
-    W = pad_out(load_weights(os.path.join(HERE, "models", "ACTION_FINAL", "weights.npz")), 7)
-    test = np.load(os.path.join(HERE, "models", "ACTION_FINAL", "test_data.npz"))
-    exact = 0
-    for i in range(10):
-        x = test["X"][i].astype(np.float32)
-        words = np.concatenate([[0], x.ravel().view(np.uint32)]).astype(np.uint32)
-        sent, replied, ms, ss, hw = trial(a.bit, 1801, a.timeout, fill=words)
-        ref = forward_fixed(x, W, FxCfg())
-        same = replied and len(hw) == 7 and np.array_equal(hw, ref)
-        exact += same
-        print("  window %d: %s  hw=%s  ref=%s" % (i, "bit-exact" if same else "DIFFERENT",
-                                                  np.round(hw, 3).tolist(), np.round(ref, 3).tolist()))
-    print("\nRESULT: %d/10 windows bit-exact with ACTION_FINAL." % exact)
+    print("\nNo DMA error, but transfer incomplete. Testing 601 words as a diagnostic.")
+    sent, replied, ms, ss, out = trial(args.bit, 601, args.timeout)
+    print("601 words: input=%s reply=%s outputs=%d" %
+          ("done" if sent else "STUCK", "done" if replied else "none", len(out)))
+    print("A completed MM2S transfer alone does not identify the CNN input size.")
 
 
 if __name__ == "__main__":
