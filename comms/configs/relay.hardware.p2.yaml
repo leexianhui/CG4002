@@ -11,7 +11,11 @@ windowing:
   # the default); each complete segment becomes exactly one classifier request. A hub built with
   # -DCG_GATEWAY_EVENT_MODE=0 streams SENSOR_FRAMEs instead, which the stride settings below window.
   segment_mode: true
-  segment_timeout_ms: 2000
+  # How long the relay waits for all 20 chunks of one action after the first arrives. At 2000 the
+  # relay abandoned segments the hub was still delivering: P1's slow BLE link took ~3.2 s per action
+  # (2026-11-07), every chunk arriving. 12 s is ~4x that. The hub itself re-sends an unACKed chunk at
+  # 0/150/450/1050/2250 ms and gives up on the action ~4.6 s after that chunk's first send.
+  segment_timeout_ms: 12000
   frame_rate_hz: 50.0
   # 100 samples = 2.0 s at 50 Hz: the input length the supplied AI model was trained on
   # (ai/config.py WINDOW). Stride 10 = one classification every 200 ms.
