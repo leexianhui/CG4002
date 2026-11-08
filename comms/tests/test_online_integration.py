@@ -150,7 +150,7 @@ async def test_two_phone_combat_guard_release_reconnect_and_operator_reset():
             assert combat["defenderHp"] == 90 and combat["outcome"] == "HIT"
             state = await receive_until(v1, lambda m: snapshot()(m) and m["players"][1]["hp"] == 90)
             assert state["players"][0]["cooldownAction"] == "HORIZONTAL_SWING"
-            assert state["players"][0]["cooldowns"][0]["totalMs"] == 800
+            assert state["players"][0]["cooldowns"][0]["totalMs"] == 2400  # SWORD HORIZONTAL_SWING, weapons.yaml
             await v1.close()
             await receive_until(v2, snapshot("PAUSED"))
             replacement = await connect("/visualizer/1")
