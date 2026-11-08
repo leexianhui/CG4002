@@ -71,8 +71,27 @@ namespace CG4002.Tests
             Assert.That(gameState.Get(PlayerId.P1).health, Is.EqualTo(100));
         }
 
+        // Resolver step 11: a guard held longer than the parry window blocks; 25% of 10, rounded up.
         [UnityTest]
         public IEnumerator GuardingDefender_Blocks()
+        {
+            CombatOutcomeMessage outcome = null;
+            dispatcher.OutcomeReceived += m => outcome = m;
+
+            rules.SetGuard(PlayerId.P2, true);
+            yield return new WaitForSeconds(0.25f);  // past match.yaml's 150 ms parry window
+            rules.Attack(PlayerId.P1, ActionType.HorizontalSwing);
+            yield return null;
+
+            Assert.That(outcome.outcome, Is.EqualTo(Outcome.Block));
+            Assert.That(outcome.damage, Is.EqualTo(3));
+            Assert.That(gameState.Get(PlayerId.P2).health, Is.EqualTo(97));
+            Assert.That(gameState.Get(PlayerId.P2).guarding, Is.True);
+        }
+
+        // Resolver step 10: a guard raised just before the hit parries: no damage, attacker staggered.
+        [UnityTest]
+        public IEnumerator GuardRaisedJustBeforeTheHit_Parries()
         {
             CombatOutcomeMessage outcome = null;
             dispatcher.OutcomeReceived += m => outcome = m;
@@ -81,9 +100,96 @@ namespace CG4002.Tests
             rules.Attack(PlayerId.P1, ActionType.HorizontalSwing);
             yield return null;
 
-            Assert.That(outcome.outcome, Is.EqualTo(Outcome.Block));
+            Assert.That(outcome.outcome, Is.EqualTo(Outcome.Parry));
             Assert.That(gameState.Get(PlayerId.P2).health, Is.EqualTo(100));
-            Assert.That(gameState.Get(PlayerId.P2).guarding, Is.True);
+            Assert.That(gameState.Get(PlayerId.P1).TotalFor(ActionType.HorizontalSwing), Is.EqualTo(2.4f + 0.5f).Within(1e-4f),
+                "the move's own cooldown plus stagger_ms");
+        }
+
+        // Resolver step 8: further apart than the move's range_m (sword horizontal: 1.5 m) misses.
+        [UnityTest]
+        public IEnumerator BeyondTheMovesRange_Misses()
+        {
+            CombatOutcomeMessage outcome = null;
+            dispatcher.OutcomeReceived += m => outcome = m;
+
+            yield return ReportPosition(PlayerId.P1, new Vector3(0f, 1.5f, 2f), headingDegrees: 180f);
+            rules.Attack(PlayerId.P1, ActionType.HorizontalSwing);
+            yield return null;
+            Assert.That(outcome.outcome, Is.EqualTo(Outcome.Miss));
+            Assert.That(gameState.Get(PlayerId.P2).health, Is.EqualTo(100));
+            Assert.That(gameState.Get(PlayerId.P1).RemainingFor(ActionType.HorizontalSwing), Is.GreaterThan(0f),
+                "a miss still uses the move");
+
+            Assert.That(rules.Attack(PlayerId.P1, ActionType.Thrust), Is.True, "thrust reaches 1.8 m: still short");
+            yield return null;
+            Assert.That(outcome.outcome, Is.EqualTo(Outcome.Miss));
+
+            yield return ReportPosition(PlayerId.P1, new Vector3(0f, 1.5f, 1.2f), headingDegrees: 180f);
+            rules.Attack(PlayerId.P1, ActionType.VerticalSwing);
+            yield return null;
+            Assert.That(outcome.outcome, Is.EqualTo(Outcome.Hit));
+            Assert.That(gameState.Get(PlayerId.P2).health, Is.EqualTo(100 - 12));
+        }
+
+        // Resolver step 9: you only block what you face (guard arc 120 degrees). The enemy stands at
+        // the origin; you're 1 m along +Z, so facing it is a heading of 180.
+        [UnityTest]
+        public IEnumerator GuardFacingAway_DoesNotBlock()
+        {
+            CombatOutcomeMessage outcome = null;
+            dispatcher.OutcomeReceived += m => outcome = m;
+
+            yield return ReportPosition(PlayerId.P1, new Vector3(0f, 1.5f, 1f), headingDegrees: 0f);
+            rules.SetGuard(PlayerId.P1, true);
+            yield return new WaitForSeconds(0.25f);
+            rules.Attack(PlayerId.P2, ActionType.HorizontalSwing);
+            yield return null;
+            Assert.That(outcome.outcome, Is.EqualTo(Outcome.Hit), "facing away");
+
+            yield return ReportPosition(PlayerId.P1, new Vector3(0f, 1.5f, 1f), headingDegrees: 180f - 50f);
+            rules.Attack(PlayerId.P2, ActionType.Thrust);
+            yield return null;
+            Assert.That(outcome.outcome, Is.EqualTo(Outcome.Block), "facing it, within 60 degrees");
+        }
+
+        [Test]
+        public void GameRules_ReadTheEnginesConfigFiles()
+        {
+            var parsed = GameRules.Parse(
+                "weapons:\n  SWORD:      # balanced\n    moves:\n" +
+                "      HORIZONTAL_SWING: { damage: 10, range_m: 1.5, cooldown_ms: 2400 }\n" +
+                "  SPEAR:\n    moves:\n      THRUST:           { damage: 12, range_m: 2.5, cooldown_ms: 2100 }\n" +
+                "  BOW:\n    moves:\n      THRUST: { damage: 1, range_m: 9, cooldown_ms: 1 }\n",
+                "starting_hp: 120\nparry_window_ms: 200       # comment\nblock_multiplier: 0.5\nstagger_ms: 400\nguard_arc_deg: 90\n");
+
+            Assert.That(parsed.TryGetMove(WeaponType.SwordAndShield, ActionType.HorizontalSwing, out var swing), Is.True);
+            Assert.That((swing.damage, swing.range, swing.cooldown), Is.EqualTo((10, 1.5f, 2.4f)));
+            Assert.That(parsed.TryGetMove(WeaponType.Spear, ActionType.Thrust, out var thrust), Is.True);
+            Assert.That(thrust.range, Is.EqualTo(2.5f));
+            Assert.That(parsed.TryGetMove(WeaponType.Spear, ActionType.HorizontalSwing, out _), Is.False);
+            Assert.That((parsed.startingHp, parsed.parryWindow, parsed.blockMultiplier, parsed.stagger, parsed.guardArcDegrees),
+                Is.EqualTo((120, 0.2f, 0.5f, 0.4f, 90f)));
+        }
+
+        [Test]
+        public void ShippedRules_HaveEveryWeaponsSixMoves()
+        {
+            var shipped = GameRules.Load();
+            foreach (var weapon in new[] { WeaponType.SwordAndShield, WeaponType.Spear, WeaponType.Mace })
+            {
+                foreach (var action in new[] { ActionType.HorizontalSwing, ActionType.VerticalSwing, ActionType.DiagonalSwing,
+                             ActionType.Thrust, ActionType.SpinAttack, ActionType.Uppercut })
+                    Assert.That(shipped.TryGetMove(weapon, action, out var move) && move.damage > 0 && move.range > 0f,
+                        $"{weapon} {action}");
+            }
+            Assert.That(shipped.startingHp, Is.EqualTo(100));
+        }
+
+        IEnumerator ReportPosition(PlayerId player, Vector3 position, float headingDegrees)
+        {
+            dispatcher.Outbound.Enqueue(new PositionMessage { player = player, position = position, headingDegrees = headingDegrees });
+            yield return null;  // the offline engine reads Outbound
         }
 
         [UnityTest]
@@ -96,10 +202,35 @@ namespace CG4002.Tests
             Assert.That(gameState.Get(PlayerId.P1).CooldownRemaining, Is.GreaterThan(0f));
         }
 
+        // Like the engine: each move only blocks itself, with weapons.yaml's durations.
+        [UnityTest]
+        public IEnumerator EachMove_CoolsDownOnItsOwn()
+        {
+            Assert.That(rules.Attack(PlayerId.P1, ActionType.HorizontalSwing), Is.True);
+            Assert.That(rules.Attack(PlayerId.P1, ActionType.HorizontalSwing), Is.False, "same move, still cooling down");
+            Assert.That(rules.Attack(PlayerId.P1, ActionType.Thrust), Is.True, "a different move is ready");
+            yield return null;
+
+            var self = gameState.Get(PlayerId.P1);
+            Assert.That(self.TotalFor(ActionType.HorizontalSwing), Is.EqualTo(2.4f).Within(1e-4f));
+            Assert.That(self.TotalFor(ActionType.Thrust), Is.EqualTo(1.8f).Within(1e-4f));
+            Assert.That(self.RemainingFor(ActionType.HorizontalSwing), Is.GreaterThan(0f));
+            Assert.That(self.RemainingFor(ActionType.VerticalSwing), Is.EqualTo(0f), "never used: ready");
+        }
+
+        [UnityTest]
+        public IEnumerator MoveTheWeaponLacks_IsRecognisedButNotResolved()
+        {
+            Assert.That(rules.Attack(PlayerId.P1, ActionType.ChargedAttack), Is.False, "no weapon has a charged attack since 2026-11-06");
+            yield return null;
+            Assert.That(gameState.Get(PlayerId.P2).health, Is.EqualTo(100));
+            Assert.That(rules.Attack(PlayerId.P1, ActionType.SpinAttack), Is.True, "every weapon has the six AI moves");
+        }
+
         [UnityTest]
         public IEnumerator HealthReachingZero_EndsMatch()
         {
-            SetField(rules, "attackCooldown", 0f);
+            SetField(rules, "cooldownScale", 0f);
             for (int i = 0; i < 10; i++)
                 rules.Attack(PlayerId.P1, ActionType.HorizontalSwing);
             yield return null;

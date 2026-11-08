@@ -54,8 +54,8 @@ namespace CG4002.EditorTools
 
         /// <summary>
         /// Rebuilds the player-facing pieces in both scenes, touching nothing else: the weapon
-        /// selection screen, the first-person attack view, sound and music, and which prop each
-        /// weapon's marker drives.
+        /// selection screen, the first-person attack view, sound and music, demo mode's controls
+        /// (OnlineScene), and which prop each weapon's marker drives.
         /// </summary>
         [MenuItem("CG4002/Integration/Refresh Player Views")]
         public static void RefreshPlayerViews()
@@ -90,6 +90,9 @@ namespace CG4002.EditorTools
             if (client != null)
             {
                 client.weaponSelect = screen;
+                // Demo mode (Docs/DemoMode.md): its control bar drives the scene's offline engine.
+                var rules = client.offlineEngine != null ? client.offlineEngine.GetComponent<CG4002.Offline.LocalGameRules>() : null;
+                client.demoMode = rules != null ? HudBuilder.BuildDemoControls(rules, screen) : null;
                 EditorUtility.SetDirty(client);
             }
             HudBuilder.BuildFirstPerson();

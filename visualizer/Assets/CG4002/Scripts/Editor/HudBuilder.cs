@@ -22,8 +22,9 @@ namespace CG4002.EditorTools
     ///   ├─ Outcome      centre:    "HIT -10" / "BLOCKED", shown briefly
     ///   ├─ Result       centre:    "ENEMY DEFEATED"
     ///   └─ Debug        bottom-right: RESET, MOVE DUMMY, TRACKING buttons (DebugPanel)
-    ///   WeaponSelect (Canvas + WeaponSelectScreen): title and instruction, top centre; the
-    ///                   dummies themselves are spawned in the world at runtime
+    ///   WeaponSelect (Canvas + WeaponSelectScreen): title and instruction, top centre, and demo
+    ///                   mode's CHOOSE buttons; the dummies themselves are spawned in the world at runtime
+    ///   DemoControls (Canvas + DemoMode, OnlineScene only): demo mode's control bar, bottom-left
     ///   FirstPerson  (Canvas + FirstPersonAttack): the recognised move's name, lower centre; the
     ///                   first-person avatar is spawned under the AR camera at runtime
     ///   EventSystem     routes taps to the buttons
@@ -120,7 +121,8 @@ namespace CG4002.EditorTools
                 throw new System.InvalidOperationException("Run CG4002 > Setup Game Scene first: no GameState, DummyPlacer or HUD in the scene.");
             var placement = new SerializedObject(placer);
 
-            var canvasObject = new GameObject("WeaponSelect", typeof(Canvas), typeof(CanvasScaler));
+            // GraphicRaycaster: demo mode's pick buttons take taps.
+            var canvasObject = new GameObject("WeaponSelect", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
             var canvas = canvasObject.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             canvas.sortingOrder = 1;
@@ -140,8 +142,23 @@ namespace CG4002.EditorTools
                 rect.anchoredPosition = new Vector2(0f, y);
             }
 
+            // Demo mode: a CHOOSE button per weapon, moved under its dummy at runtime.
+            var weapons = new[] { "Spear", "SwordAndShield", "Mace" };  // WeaponSelectScreen.weapons' order
+            var picks = new Button[weapons.Length];
+            for (int i = 0; i < weapons.Length; i++)
+            {
+                picks[i] = FramedButton((RectTransform)canvasObject.transform, $"Pick {weapons[i]}", "CHOOSE", 28);
+                var rect = (RectTransform)picks[i].transform;
+                rect.pivot = new Vector2(0.5f, 1f);  // hangs below the point it's placed at
+                rect.sizeDelta = new Vector2(220f, 76f);
+            }
+
             var screen = canvasObject.AddComponent<WeaponSelectScreen>();
             var settings = new SerializedObject(screen);
+            var pickList = settings.FindProperty("pickButtons");
+            pickList.arraySize = picks.Length;
+            for (int i = 0; i < picks.Length; i++)
+                pickList.GetArrayElementAtIndex(i).objectReferenceValue = picks[i];
             settings.FindProperty("gameState").objectReferenceValue = gameState;
             settings.FindProperty("catalog").objectReferenceValue = LoadGenerated<CG4002.Models.WeaponCatalog>("Definitions/WeaponCatalog.asset");
             settings.FindProperty("dummyPrefab").objectReferenceValue = LoadGenerated<CG4002.Models.AvatarView>("Prefabs/OpponentAvatar.prefab");
@@ -195,6 +212,111 @@ namespace CG4002.EditorTools
             settings.FindProperty("moveLabel").objectReferenceValue = label;
             settings.ApplyModifiedPropertiesWithoutUndo();
             return view;
+        }
+
+        /// <summary>
+        /// Demo mode's control bar (CG4002.Offline.DemoMode), wired to the open scene and the given
+        /// demo engine. Bottom-left, over the HUD's cooldown icons (which it replaces while on):
+        ///   [ YOU | ENEMY ] [ CHANGE WEAPONS ]
+        ///   [6 attack icons, same frames and sweeps as the cooldowns] [ GUARD ]
+        /// Rebuilt from scratch each time; hidden until demo mode starts.
+        /// </summary>
+        public static CG4002.Offline.DemoMode BuildDemoControls(CG4002.Offline.LocalGameRules rules, WeaponSelectScreen weaponSelect)
+        {
+            var existing = GameObject.Find("DemoControls");
+            if (existing != null)
+                Object.DestroyImmediate(existing);
+
+            var gameState = Object.FindAnyObjectByType<GameState>();
+            var placer = Object.FindAnyObjectByType<DummyPlacer>();
+            var hud = Object.FindAnyObjectByType<HudController>();
+            if (gameState == null || placer == null || hud == null)
+                throw new System.InvalidOperationException("Run CG4002 > Setup Game Scene first: no GameState, DummyPlacer or HUD in the scene.");
+
+            var canvasObject = new GameObject("DemoControls", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+            var canvas = canvasObject.GetComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 2;
+            var scaler = canvasObject.GetComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920f, 1080f);
+            scaler.matchWidthOrHeight = 0.5f;
+            var view = (RectTransform)canvasObject.transform;
+
+            const float size = 108f, gap = 12f, rowGap = 16f, switchHeight = 64f;
+            var bar = NewRect(view, "Bar");
+            bar.anchorMin = bar.anchorMax = bar.pivot = new Vector2(0f, 0f);
+            bar.anchoredPosition = new Vector2(Margin, Margin);
+            bar.sizeDelta = new Vector2(CooldownMoves.Length * (size + gap) + 220f, size + rowGap + switchHeight);
+
+            Button BarButton(string name, string label, float x, float y, float width, float height, int fontSize)
+            {
+                var button = FramedButton(bar, name, label, fontSize);
+                var rect = (RectTransform)button.transform;
+                rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0f, 0f);
+                rect.anchoredPosition = new Vector2(x, y);
+                rect.sizeDelta = new Vector2(width, height);
+                return button;
+            }
+
+            float top = size + rowGap;
+            var you = BarButton("You", "YOU", 0f, top, 150f, switchHeight, 26);
+            var enemy = BarButton("Enemy", "ENEMY", 158f, top, 150f, switchHeight, 26);
+            var changeWeapons = BarButton("ChangeWeapons", "CHANGE WEAPONS", 158f * 2f + rowGap, top, 300f, switchHeight, 24);
+
+            var demo = canvasObject.AddComponent<CG4002.Offline.DemoMode>();
+            var settings = new SerializedObject(demo);
+            var attackList = settings.FindProperty("attacks");
+            attackList.arraySize = CooldownMoves.Length;
+            var inner = (min: new Vector2(22f / 160f, 22f / 160f), max: new Vector2(138f / 160f, 138f / 160f));
+            for (int i = 0; i < CooldownMoves.Length; i++)
+            {
+                var (action, icon) = CooldownMoves[i];
+                var slot = NewRect(bar, action.ToString());
+                slot.anchorMin = slot.anchorMax = slot.pivot = new Vector2(0f, 0f);
+                slot.anchoredPosition = new Vector2(i * (size + gap), 0f);
+                slot.sizeDelta = new Vector2(size, size);
+                var frame = Picture(slot, Art("Frames/IconFrame.png"), Color.white);
+                frame.raycastTarget = true;  // the frame takes the tap
+                var button = slot.gameObject.AddComponent<Button>();
+                button.targetGraphic = frame;
+
+                var glyph = NewRect(slot, "Icon");
+                Inset(glyph, inner.min, inner.max);
+                Picture(glyph, Art($"Icons/Icon_{icon}.png"), IconColour);
+                var shade = NewRect(slot, "Cooldown");
+                Inset(shade, inner.min, inner.max);
+                var overlay = Picture(shade, Art("Frames/White.png"), CooldownShade);
+                overlay.type = Image.Type.Filled;
+                overlay.fillMethod = Image.FillMethod.Radial360;
+                overlay.fillOrigin = (int)Image.Origin360.Top;
+                overlay.fillClockwise = true;
+                overlay.fillAmount = 0f;
+
+                var entry = attackList.GetArrayElementAtIndex(i);
+                entry.FindPropertyRelative("action").enumValueIndex = System.Array.IndexOf(System.Enum.GetValues(typeof(ActionType)), action);
+                entry.FindPropertyRelative("button").objectReferenceValue = button;
+                entry.FindPropertyRelative("overlay").objectReferenceValue = overlay;
+            }
+
+            // Hold to guard: a plain frame (no Button, so no click) with HoldButton.
+            var guard = BarButton("Guard", "GUARD", CooldownMoves.Length * (size + gap), 0f, 200f, size, 32);
+            var guardObject = guard.gameObject;
+            Object.DestroyImmediate(guard);
+            var hold = guardObject.AddComponent<HoldButton>();
+
+            settings.FindProperty("gameState").objectReferenceValue = gameState;
+            settings.FindProperty("rules").objectReferenceValue = rules;
+            settings.FindProperty("placer").objectReferenceValue = placer;
+            settings.FindProperty("weaponSelect").objectReferenceValue = weaponSelect;
+            settings.FindProperty("hudCooldowns").objectReferenceValue = hud.transform.Find("Cooldowns")?.gameObject;
+            settings.FindProperty("bar").objectReferenceValue = bar.gameObject;
+            settings.FindProperty("youButton").objectReferenceValue = you;
+            settings.FindProperty("enemyButton").objectReferenceValue = enemy;
+            settings.FindProperty("changeWeaponsButton").objectReferenceValue = changeWeapons;
+            settings.FindProperty("guardButton").objectReferenceValue = hold;
+            settings.ApplyModifiedPropertiesWithoutUndo();
+            return demo;
         }
 
         static T LoadGenerated<T>(string path) where T : Object =>

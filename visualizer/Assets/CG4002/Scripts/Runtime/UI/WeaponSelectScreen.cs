@@ -21,6 +21,9 @@ namespace CG4002.UI
     ///
     /// Opens only on an explicit "no weapon" from the engine, so it stays closed offline (unless
     /// LocalGameRules requires selection) and before the first snapshot.
+    ///
+    /// Demo mode (no hub): a button under each dummy picks instead of the pose, first for you, then
+    /// for the enemy (DemoMode sets PickWeapon).
     /// </summary>
     public class WeaponSelectScreen : MonoBehaviour
     {
@@ -45,6 +48,8 @@ namespace CG4002.UI
         [SerializeField] Text instruction;
         [Tooltip("Font for the weapon names above the dummies (the HUD's). Unity's built-in font if empty.")]
         [SerializeField] Font labelFont;
+        [Tooltip("Demo mode: one per offered weapon (same order), shown under its dummy.")]
+        [SerializeField] Button[] pickButtons = System.Array.Empty<Button>();
 
         [Header("Layout")]
         [Tooltip("Weapons offered, left to right as the player sees them.")]
@@ -67,48 +72,79 @@ namespace CG4002.UI
         float stageTimer;
         float outOfViewTime;
         WeaponType chosen;
+        PlayerId choosingFor;
 
         public bool IsSelecting => current != Stage.Closed;
 
-        /// <summary>The hub's lock arrived: this player's weapon is chosen (GameAudio plays the equip sound).</summary>
+        /// <summary>A weapon was locked (by the hub, or a demo pick) for the player choosing; GameAudio plays the equip sound.</summary>
         public event System.Action<WeaponType> WeaponLocked;
 
-        bool NeedsWeapon => gameState.Self.weaponInitialized && !gameState.Self.weaponSelected;
+        /// <summary>
+        /// Demo mode: what a pick button does (lock that weapon for that player). Null with the hub,
+        /// where only the hub picks; set, the enemy's weapon is chosen here too, after yours.
+        /// </summary>
+        public System.Action<PlayerId, WeaponType> PickWeapon { get; set; }
 
-        void Start() => SetText("", "");
+        static bool Needs(PlayerState player) => player.weaponInitialized && !player.weaponSelected;
+
+        /// <summary>Who chooses next: you first, then (demo mode only) the enemy.</summary>
+        PlayerId? NextChooser =>
+            Needs(gameState.Self) ? (PlayerId?)gameState.LocalPlayer
+            : PickWeapon != null && Needs(gameState.Opponent) ? gameState.OpponentPlayer
+            : null;
+
+        bool ChoosingForSelf => choosingFor == gameState.LocalPlayer;
+
+        void Start()
+        {
+            SetText("", "");
+            for (int i = 0; i < pickButtons.Length; i++)
+            {
+                int index = i;
+                pickButtons[i].onClick.AddListener(() => Pick(index));
+                pickButtons[i].gameObject.SetActive(false);
+            }
+        }
 
         void Update()
         {
             switch (current)
             {
                 case Stage.Closed:
-                    if (NeedsWeapon)
-                        Open();
+                    if (NextChooser is PlayerId next)
+                        Open(next);
                     else
                         ShowOpponentStatus();
                     break;
                 case Stage.Choosing:
-                    if (!NeedsWeapon)
-                        Confirm(gameState.Self.weapon);
+                    if (!Needs(gameState.Get(choosingFor)))
+                        Confirm(gameState.Get(choosingFor).weapon);
                     else
                         KeepInView();
                     break;
                 case Stage.Confirming:
                     stageTimer += Time.deltaTime;
                     Flash(stageTimer / confirmSeconds);
-                    if (NeedsWeapon)
-                        Open();  // the hub dropped the lock (e.g. rebooted): choose again
+                    if (Needs(gameState.Get(choosingFor)))
+                        Open(choosingFor);  // the hub dropped the lock (e.g. rebooted): choose again
                     else if (stageTimer >= confirmSeconds)
-                        Close();
+                    {
+                        if (NextChooser is PlayerId following)
+                            Open(following);  // demo mode: now the enemy's weapon
+                        else
+                            Close();
+                    }
                     break;
             }
             FaceLabelsToCamera();
+            PlacePickButtons();
         }
 
-        void Open()
+        void Open(PlayerId player)
         {
             Clear();
             current = Stage.Choosing;
+            choosingFor = player;
             if (placer != null)
             {
                 placer.BeginPlacement();
@@ -122,8 +158,45 @@ namespace CG4002.UI
                 SpawnDummy(weapons[i], i);
             PlaceInFrontOfCamera();
 
-            SetText(weapons.Length == 1 ? "COPY THIS POSE" : "CHOOSE YOUR WEAPON",
-                $"Hold the pose for {holdSeconds:0} seconds");
+            if (PickWeapon != null)
+                SetText(ChoosingForSelf ? "CHOOSE YOUR WEAPON" : "CHOOSE THE ENEMY'S WEAPON",
+                    "Tap the button under a weapon");
+            else
+                SetText(weapons.Length == 1 ? "COPY THIS POSE" : "CHOOSE YOUR WEAPON",
+                    $"Hold the pose for {holdSeconds:0} seconds");
+        }
+
+        void Pick(int index)
+        {
+            if (current == Stage.Choosing && PickWeapon != null && index < weapons.Length)
+                PickWeapon(choosingFor, weapons[index]);
+        }
+
+        /// <summary>Demo mode: each pick button sits on the screen just under its dummy's feet.</summary>
+        void PlacePickButtons()
+        {
+            bool show = current == Stage.Choosing && PickWeapon != null;
+            for (int i = 0; i < pickButtons.Length; i++)
+            {
+                var button = pickButtons[i];
+                bool visible = show && i < weapons.Length && dummies.ContainsKey(weapons[i]);
+                if (visible)
+                {
+                    // Just above the feet, kept inside the view when the floor is out of frame.
+                    Vector3 feet = dummies[weapons[i]].transform.parent.position + Vector3.up * 0.1f;
+                    Vector3 screen = arCamera.WorldToScreenPoint(feet);
+                    var parent = (RectTransform)button.transform.parent;
+                    Vector2 local = default;
+                    visible = screen.z > 0f && RectTransformUtility.ScreenPointToLocalPointInRectangle(parent, screen, null, out local);
+                    if (visible)
+                    {
+                        float lowest = parent.rect.yMin + ((RectTransform)button.transform).rect.height + 40f;
+                        button.transform.localPosition = new Vector3(local.x, Mathf.Max(local.y, lowest), 0f);
+                    }
+                }
+                if (button.gameObject.activeSelf != visible)
+                    button.gameObject.SetActive(visible);
+            }
         }
 
         void Confirm(WeaponType weapon)
@@ -174,8 +247,9 @@ namespace CG4002.UI
             var dummy = Instantiate(dummyPrefab, slot, false);
             dummy.Equip(definition);
             float scale = dummyHeight / ModelHeight;
-            // Mirrored: the dummy's weapon hand appears on the same side as the player's.
-            dummy.transform.localScale = new Vector3(-scale, scale, scale);
+            // Mirrored, so you copy it like a mirror: the dummy's weapon hand appears on the same side
+            // as yours. The enemy's weapon (demo mode) is shown as the enemy will hold it.
+            dummy.transform.localScale = new Vector3(ChoosingForSelf ? -scale : scale, scale, scale);
             MakeHologram(dummy, definition.accentColor);
             dummies[weapon] = dummy;
 

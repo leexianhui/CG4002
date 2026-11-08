@@ -22,6 +22,8 @@ namespace CG4002.Net
         [Tooltip("Optional. While it is open, calibration waits: the weapon is chosen first.")]
         public CG4002.UI.WeaponSelectScreen weaponSelect;
         public GameObject offlineEngine;
+        [Tooltip("Optional. Shows a DEMO MODE button: the whole game on this phone, no hardware or engine.")]
+        public CG4002.Offline.DemoMode demoMode;
         [Tooltip("Base URL without /visualizer/id. 127.0.0.1:8080 is served by the built-in tunnel (or Termux socat).")]
         public string endpoint = "ws://127.0.0.1:8080";
         public PlayerId player = PlayerId.P1;
@@ -57,7 +59,7 @@ namespace CG4002.Net
         int observedCalibration = -1;
         const float PanelWidth = 410;
         const float CollapsedWidth = 150, CollapsedHeight = 44;
-        float PanelHeight => 540 + 50 + (askTunnelPasswords && builtInTunnel ? 56 : 0);
+        float PanelHeight => 540 + 50 + (askTunnelPasswords && builtInTunnel ? 56 : 0) + (demoMode != null ? 50 : 0);
         // Scale is fixed by the full panel so the collapsed button keeps the same size.
         float PanelScale => Mathf.Max(0.5f, Mathf.Min(Screen.safeArea.width / (PanelWidth + 20),
             Screen.safeArea.height / (PanelHeight + 20)));
@@ -144,6 +146,15 @@ namespace CG4002.Net
             setupStatus = null;
             Status = "Disconnected";
             lastReady = null;
+        }
+
+        /// <summary>Hands the game to demo mode (Docs/DemoMode.md): this client disconnects and turns off.</summary>
+        void StartDemo()
+        {
+            Disconnect();
+            ConfigureIdentity();  // the player chosen in the panel; the enemy is the other one
+            demoMode.Begin();
+            enabled = false;
         }
 
         void OnDisable()
@@ -358,6 +369,7 @@ namespace CG4002.Net
                 }
                 player = GUILayout.SelectionGrid((int)player - 1, new[] { "Player 1", "Player 2" }, 2) == 0 ? PlayerId.P1 : PlayerId.P2;
                 if (GUILayout.Button("Connect")) Connect();
+                if (demoMode != null && GUILayout.Button("DEMO MODE (no hardware)", GUILayout.Height(44))) StartDemo();
             }
             else if (GUILayout.Button("Disconnect / settings")) { Disconnect(); showSettings = true; }
             if (weaponSelect != null && weaponSelect.IsSelecting)

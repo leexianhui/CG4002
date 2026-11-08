@@ -102,7 +102,7 @@ All under `Assets/CG4002/Scripts/Runtime/`.
 | `UI/DebugPanel.cs` | RESET (sends `START_MATCH_REQUEST`), MOVE DUMMY, TRACKING |
 | `AR/DummyPlacer.cs` | Tap-to-place the arena; sends `START_MATCH_REQUEST` once placed |
 | `AR/PositionReporter.cs` | Sends this player's `POSITION` 10×/s once placed |
-| `Offline/LocalGameRules.cs` | Stand-in Game Engine. Rule: refuse if not running or on cooldown (0.6 s); a guarding defender blocks; otherwise hit for 10 |
+| `Offline/LocalGameRules.cs` | Stand-in Game Engine (also demo mode's engine, DemoMode.md). The engine's resolver ported: ignored if not running, ON_COOLDOWN per move, MISS beyond the move's range, PARRY / BLOCK if guarding and facing, else HIT; numbers from `shared/config` via `GameRules` |
 | `Offline/MockDataInjector.cs` | Fake opponent (guards, side-steps) and editor keys |
 | `Offline/SwordHitDetector.cs` | Stand-in for the IMU: blade touches dummy → outbound `ACTION` (see PropTracking.md) |
 

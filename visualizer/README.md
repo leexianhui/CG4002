@@ -28,6 +28,9 @@ instruction below; the preview images are not required to build or run the proje
   (stand-in for the IMU).
 - **Online:** disable `OfflineEngine` and add a comms client that moves JSON between the
   network and the two queues. Nothing else changes.
+- **Demo mode** (one phone, no hardware): tap **DEMO MODE** in `OnlineScene`'s online panel. The same
+  `LocalGameRules` plays by the engine's rules from `shared/config`, and an on-screen bar plays both
+  players. See `Docs/DemoMode.md`.
 
 ## Running it
 

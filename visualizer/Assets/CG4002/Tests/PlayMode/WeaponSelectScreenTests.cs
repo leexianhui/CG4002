@@ -126,6 +126,45 @@ namespace CG4002.Tests
             Assert.That(screen.IsSelecting, Is.False);
         }
 
+        // Demo mode: buttons pick (PickWeapon), first yours, then the enemy's, then the screen closes.
+        [UnityTest]
+        public IEnumerator DemoMode_ChoosesYourWeaponThenTheEnemys()
+        {
+            var rules = root.AddComponent<LocalGameRules>();
+            SetField(rules, "dispatcher", dispatcher);
+            screen.PickWeapon = rules.LockWeapon;
+            yield return null;
+            rules.BeginWeaponSelection();
+            yield return null;
+            yield return null;
+            Assert.That(screen.IsSelecting, Is.True);
+
+            InvokePick(1);  // the middle button: sword & shield, for you
+            yield return null;
+            yield return null;
+            var gameState = root.GetComponent<GameState>();
+            Assert.That(gameState.Self.weapon, Is.EqualTo(WeaponType.SwordAndShield));
+            Assert.That(gameState.Self.weaponSelected, Is.True);
+
+            yield return new WaitForSeconds(ConfirmSeconds + 0.1f);
+            Assert.That(screen.IsSelecting, Is.True, "now the enemy's weapon");
+            var stage = GameObject.Find("Weapon Select Stage");
+            Assert.That(stage.GetComponentsInChildren<AvatarView>().All(d => d.transform.localScale.x > 0f),
+                "the enemy's choices aren't mirrored");
+
+            InvokePick(2);  // the right-hand button: mace, for the enemy
+            yield return null;
+            yield return null;
+            Assert.That(gameState.Opponent.weapon, Is.EqualTo(WeaponType.Mace));
+            yield return new WaitForSeconds(ConfirmSeconds + 0.1f);
+            Assert.That(screen.IsSelecting, Is.False);
+        }
+
+        void InvokePick(int index) =>
+            typeof(WeaponSelectScreen)
+                .GetMethod("Pick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                .Invoke(screen, new object[] { index });
+
         IEnumerator Send(Message message)
         {
             dispatcher.Inbound.Enqueue(message);
