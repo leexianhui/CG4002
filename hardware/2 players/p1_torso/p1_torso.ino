@@ -720,7 +720,8 @@ void runPoseTick(float ax_g, float ay_g, float az_g, float gyroMag, unsigned lon
     {
         lastPoseLogMs = now;
         debugLog("raw pitch=" + String(pitchEMA, 1) + " roll=" + String(rollEMA, 1) +
-                 " gyroMag=" + String(gyroMagEMA, 1) + " stable=" + String(stable ? 1 : 0));
+                 " gyroMag=" + String(gyroMagEMA, 1) + " stable=" + String(stable ? 1 : 0) +
+                 " ax=" + String(ax_g, 3) + " ay=" + String(ay_g, 3) + " az=" + String(az_g, 3));
     }
 #endif
 }
