@@ -54,7 +54,8 @@ namespace CG4002.EditorTools
 
         /// <summary>
         /// Rebuilds the player-facing pieces in both scenes, touching nothing else: the weapon
-        /// selection screen, the first-person attack view, and which prop each weapon's marker drives.
+        /// selection screen, the first-person attack view, sound and music, and which prop each
+        /// weapon's marker drives.
         /// </summary>
         [MenuItem("CG4002/Integration/Refresh Player Views")]
         public static void RefreshPlayerViews()
@@ -92,6 +93,7 @@ namespace CG4002.EditorTools
                 EditorUtility.SetDirty(client);
             }
             HudBuilder.BuildFirstPerson();
+            GameSceneSetup.BuildAudio();
             GameSceneSetup.WireProps(UnityEngine.Object.FindAnyObjectByType<PropTracker>(),
                 UnityEngine.Object.FindAnyObjectByType<GameState>());
 

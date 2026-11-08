@@ -30,6 +30,7 @@ namespace CG4002.EditorTools
     ///   HUD            Canvas + HudController + DebugPanel (layout from HudBuilder)
     ///   WeaponSelect   Canvas + WeaponSelectScreen (shown while the engine reports no weapon)
     ///   FirstPerson    Canvas + FirstPersonAttack (your recognised attacks, seen first-person)
+    ///   Audio          GameAudio: sound effects and music (clips from Assets/CG4002/Audio)
     ///
     /// Game, OfflineEngine and HUD are rebuilt from scratch each run. Run CG4002 > Setup Image
     /// Tracking first. Safe to re-run: CG4002 > Setup Game Scene.
@@ -156,6 +157,7 @@ namespace CG4002.EditorTools
             HudBuilder.Build(gameState, dispatcher, placer, trackingOverlay);
             HudBuilder.BuildWeaponSelect();
             HudBuilder.BuildFirstPerson();
+            BuildAudio();
 
             EditorSceneManager.MarkSceneDirty(scene);
             EditorSceneManager.SaveScene(scene);
@@ -214,6 +216,77 @@ namespace CG4002.EditorTools
             // The shield is tracked alongside the weapon; its size and offset are kept if already set.
             settings.FindProperty("shieldPrefab").objectReferenceValue = Load<ShieldView>("Prefabs/Weapon_Shield.prefab");
             settings.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        const string AudioDir = "Assets/CG4002/Audio";
+
+        /// <summary>
+        /// The Audio object: GameAudio wired to the open scene (dispatcher, state, enemy avatar, weapon
+        /// selection) with every clip from Assets/CG4002/Audio. Rebuilt from scratch each time.
+        /// </summary>
+        public static void BuildAudio()
+        {
+            var existing = GameObject.Find("Audio");
+            if (existing != null)
+                UnityEngine.Object.DestroyImmediate(existing);
+
+            var opponent = UnityEngine.Object.FindAnyObjectByType<AvatarController>(FindObjectsInactive.Include);
+            var audio = new GameObject("Audio").AddComponent<GameAudio>();
+            var settings = new SerializedObject(audio);
+            settings.FindProperty("dispatcher").objectReferenceValue = UnityEngine.Object.FindAnyObjectByType<MessageDispatcher>();
+            settings.FindProperty("gameState").objectReferenceValue = UnityEngine.Object.FindAnyObjectByType<GameState>();
+            settings.FindProperty("opponent").objectReferenceValue = opponent != null ? opponent.GetComponent<AvatarView>() : null;
+            settings.FindProperty("weaponSelect").objectReferenceValue = UnityEngine.Object.FindAnyObjectByType<CG4002.UI.WeaponSelectScreen>();
+
+            // Lighter to heavier: the mace's swings are also pitched down.
+            var swings = new[] { (WeaponType.SwordAndShield, "Sword", 1.08f), (WeaponType.Spear, "Spear", 1f), (WeaponType.Mace, "Mace", 0.85f) };
+            var swingList = settings.FindProperty("swings");
+            swingList.arraySize = swings.Length;
+            for (int i = 0; i < swings.Length; i++)
+            {
+                var (weapon, name, pitch) = swings[i];
+                var entry = swingList.GetArrayElementAtIndex(i);
+                entry.FindPropertyRelative("weapon").enumValueIndex = (int)weapon;
+                entry.FindPropertyRelative("pitch").floatValue = pitch;
+                SetClips(entry.FindPropertyRelative("clips"), $"Swing_{name}_1.wav", $"Swing_{name}_2.wav", $"Swing_{name}_3.wav");
+            }
+            SetClips(settings.FindProperty("hits"), "Hit_1.ogg", "Hit_2.ogg", "Hit_3.ogg");
+            SetClips(settings.FindProperty("shieldBlocks"), "Block_Shield_1.ogg", "Block_Shield_2.ogg");
+            SetClips(settings.FindProperty("weaponBlocks"), "Block_Clash_1.ogg", "Block_Clash_2.ogg");
+            foreach (var (field, file) in new[] { ("parry", "Parry.ogg"), ("miss", "Miss.wav"), ("guard", "Guard.ogg"),
+                         ("equip", "Equip.wav"), ("victory", "Victory.wav"), ("defeat", "Defeat.wav") })
+                settings.FindProperty(field).objectReferenceValue = Clip($"Sfx/{file}", music: false);
+            settings.FindProperty("calmMusic").objectReferenceValue = Clip("Music/Calm_MinstrelGuild.mp3", music: true);
+            settings.FindProperty("battleMusic").objectReferenceValue = Clip("Music/Battle_FiveArmies.mp3", music: true);
+            settings.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        static void SetClips(SerializedProperty list, params string[] files)
+        {
+            list.arraySize = files.Length;
+            for (int i = 0; i < files.Length; i++)
+                list.GetArrayElementAtIndex(i).objectReferenceValue = Clip($"Sfx/{files[i]}", music: false);
+        }
+
+        /// <summary>
+        /// Loads a clip, setting its import options once: music streams from storage (long, played
+        /// once at a time); effects are decompressed on load so they start instantly.
+        /// </summary>
+        static AudioClip Clip(string path, bool music)
+        {
+            string full = $"{AudioDir}/{path}";
+            var importer = AssetImporter.GetAtPath(full) as AudioImporter
+                ?? throw new InvalidOperationException($"Missing audio {full}.");
+            var wanted = importer.defaultSampleSettings;
+            wanted.loadType = music ? AudioClipLoadType.Streaming : AudioClipLoadType.DecompressOnLoad;
+            wanted.compressionFormat = AudioCompressionFormat.Vorbis;
+            wanted.quality = music ? 0.5f : 0.7f;
+            if (!importer.defaultSampleSettings.Equals(wanted))
+            {
+                importer.defaultSampleSettings = wanted;
+                importer.SaveAndReimport();
+            }
+            return AssetDatabase.LoadAssetAtPath<AudioClip>(full);
         }
 
         static T Load<T>(string path) where T : UnityEngine.Object =>

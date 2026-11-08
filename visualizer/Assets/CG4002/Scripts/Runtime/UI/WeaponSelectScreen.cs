@@ -70,6 +70,9 @@ namespace CG4002.UI
 
         public bool IsSelecting => current != Stage.Closed;
 
+        /// <summary>The hub's lock arrived: this player's weapon is chosen (GameAudio plays the equip sound).</summary>
+        public event System.Action<WeaponType> WeaponLocked;
+
         bool NeedsWeapon => gameState.Self.weaponInitialized && !gameState.Self.weaponSelected;
 
         void Start() => SetText("", "");
@@ -128,6 +131,7 @@ namespace CG4002.UI
             current = Stage.Confirming;
             stageTimer = 0f;
             chosen = weapon;
+            WeaponLocked?.Invoke(weapon);
             foreach (var (type, dummy) in dummies)
                 dummy.gameObject.SetActive(type == weapon);
             var definition = catalog.Get(weapon);
