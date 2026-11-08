@@ -179,8 +179,8 @@ before the first snapshot and in offline play.
   1. In `SampleScene`, select **OfflineEngine** and tick *Require Weapon Selection* on `LocalGameRules`.
   2. Press Play.
   3. Press **1** to play the hub locking the sword.
-- **Setup:** **CG4002 → Integration → Refresh Player Views** rebuilds it (with the first-person
-  view and prop wiring) in both scenes; **Setup Game Scene** also builds it.
+- **Setup:** **CG4002 → Integration → Refresh Player Views** rebuilds it (with the HUD, the
+  first-person view and prop wiring) in both scenes; **Setup Game Scene** also builds it.
 
 ### 3.4 Shared arena calibration (SharedArenaCalibration.cs)
 
@@ -314,6 +314,34 @@ Match tuning (HP, parry window, guard arc) lives in `shared/config/match.yaml`. 
   Because both phones share the arena frame, the avatar is drawn where the other player actually
   stands in the room.
 - **Your own player** is not drawn. You are the camera.
+- **The view area** (`AR/BorderedView.cs`, `UI/ViewArea.cs`), for the headset:
+  - The whole picture is drawn **10% smaller than the screen in each direction**, centred, with a
+    thin black border all round, so it fits inside the headset lens.
+  - It's the same shape as the screen, so the camera image is cropped exactly as it would be
+    full-screen. 3D objects stay lined up, and taps still place where you tap.
+  - The HUD and on-screen text are laid out inside the same area and shrink with it.
+  - The online connection panel is the exception: it stays in the screen corner, since it's only
+    used before you put the headset on.
+  - Change the size with *Scale* on the AR camera's **Bordered View** (0.90 now: 10% smaller each way).
+- **Split screen** (`AR/SplitScreen.cs`, `UI/SplitLayout.cs`), for the headset:
+  - Setup stays full view with the phone in hand: connect, weapon pose, tap the floor, calibrate.
+  - Once the arena is placed and calibrated, the view **splits**: the same image twice (mono, since the
+    phone has one camera), one per lens, each **40% of the screen wide and 90% tall** (80% wide in
+    all), side by side with **no gap in the middle**; the black border is at the outer edges.
+  - Each eye is about as wide as it is tall, so it shows a narrower slice of the camera picture than
+    full view. (Keeping the screen's shape at 40% width would make each eye only 40% tall.)
+  - It goes back to full view when the arena is picked up again (MOVE DUMMY, weapon selection). It
+    never splits in demo mode, which needs the touchscreen.
+  - **Double-tap anywhere** to switch between split and full view by hand (e.g. to reach RESET). The
+    next placement splits again.
+  - The HUD switches to a **split layout** that uses each eye's full width: the health bars sit a
+    little in from the eye's top corners, about 0.8x full-view size with a clear gap between them, the cooldown icons spread along the whole bottom edge, and the
+    RESET / MOVE DUMMY / TRACKING buttons are hidden. The HUD keeps its true proportions in each eye
+    (`UI/ViewArea.cs` corrects for the canvas being squeezed into the eye-shaped texture).
+  - How: the AR camera renders into an eye-sized texture (the HUD, first-person and weapon-select
+    canvases render into it too), which an overlay shows twice. Eye size: *Eye Size* on the AR camera's
+    **Split Screen** (0.4 × 0.9).
+  - The online connection panel isn't split: tap *Hide panel* before putting the phone in the headset.
 
 ### 3.10 Which animation an action plays
 
@@ -328,8 +356,7 @@ Match tuning (HP, parry window, guard arc) lives in `shared/config/match.yaml`. 
 | `THRUST` | Thrust | Elbow chambered back, straight lunge forward |
 | `SPIN_ATTACK` | Spin | Wind up to the right, a full turn left with the weapon out, end facing the opponent |
 | `UPPERCUT` | Uppercut | Dip low with the weapon at knee height, rise and drive it up overhead |
-| `CHARGED_ATTACK` (sword, mace), `CHARGED_THRUST` (spear) | Charged | Each weapon's own: glow, hold, heavy strike |
-| `SWING` (spear) | Horizontal | |
+| `CHARGED_ATTACK`, `CHARGED_THRUST`, `SWING` | Charged / Charged / Horizontal | Kept for wire compatibility; no weapon has them since 2026-11-06, so they never arrive |
 
 - **Where the clips come from:** generated from key poses in `Scripts/Editor/AnimationLibrary.cs`.
   - The six classifier attacks are shared motions.
@@ -348,15 +375,8 @@ Match tuning (HP, parry window, guard arc) lives in `shared/config/match.yaml`. 
   Sheets** writes a film strip of every attack per weapon (`Preview_<Weapon>_Attacks.png`).
 - **The spin** uses `Pose.rootYaw`, which turns the whole body, arms and feet included. The clip
   ends at −360°, so the avatar finishes facing the opponent without spinning back.
-- **Every weapon animates all six attacks,** because the AI classifies all six for every weapon
-  (`ai/config.py`, `MOVE_CLASSES`). Which ones can *land* is the engine's `weapons.yaml`.
-  Currently:
-  - sword: horizontal, vertical, diagonal, thrust;
-  - spear: thrust only;
-  - mace: vertical and diagonal.
-
-  Moves outside that list are resolved as IGNORED and never reach the opponent's phone as
-  combat, though they still play first-person on yours (3.11).
+- **Every weapon animates all six attacks,** and since 2026-11-06 every weapon also *has* all six
+  in the engine (`shared/config/weapons.yaml`); weapons differ only in damage, range and cooldown.
 
 ### 3.11 Your own attacks, first-person (Controllers/FirstPersonAttack.cs)
 
@@ -465,12 +485,5 @@ The full procedure is in [docs/INTEGRATION_RUNBOOK.md](../../docs/INTEGRATION_RU
 - **The wire format here supersedes the draft in StateEngine.md §6.** Differences: `version` instead
   of `schemaVersion`, upper-case enums, a 2-D `{x, y}` position, a counter-clockwise heading, and snapshots.
 - **iPhone builds** have the same iOS project settings as before. Only the scene list changed.
-- **Spin attack and uppercut don't reach the phone yet.** The visualizer animates and decodes them,
-  but upstream they're still dropped. To enable them (comms and AI owners):
-  1. `shared/enums/enums.yaml`: append `SPIN_ATTACK` and `UPPERCUT` to `ActionClass` (next free
-     wire values), then regenerate `shared/generated`. Update the action enums in
-     `shared/schemas/*.json`.
-  2. `shared/config/weapons.yaml`: give each weapon that may use them a `damage`, `range_m` and
-     `cooldown_ms`.
-  3. `ai/classifier_server.py`: remove both from `COMMS_ACTION_MAP`, which currently reports them
-     as `IDLE`, and update `comms/tests/test_ai_boundary.py::test_ai_only_classes_become_idle`.
+- **Spin attack and uppercut reach the phone** since 2026-11-06 (`eeadd66`): the engine's
+  `ActionClass` has them (wire 8/9) and every weapon has all six AI moves in `weapons.yaml`.

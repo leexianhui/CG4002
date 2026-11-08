@@ -94,6 +94,7 @@ namespace CG4002.EditorTools
             planeSettings.ApplyModifiedPropertiesWithoutUndo();
             var raycastManager = GetOrAdd<ARRaycastManager>(origin.gameObject);
 
+            GetOrAdd<BorderedView>(origin.Camera.gameObject);
             var placer = game.AddComponent<DummyPlacer>();
             var positionReporter = game.AddComponent<PositionReporter>();
             var swordTrail = game.AddComponent<SwordTrail>();
@@ -158,6 +159,7 @@ namespace CG4002.EditorTools
             HudBuilder.BuildWeaponSelect();
             HudBuilder.BuildFirstPerson();
             BuildAudio();
+            HudBuilder.WireSplitScreen();
 
             EditorSceneManager.MarkSceneDirty(scene);
             EditorSceneManager.SaveScene(scene);

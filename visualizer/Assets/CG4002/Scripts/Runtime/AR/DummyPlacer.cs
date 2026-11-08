@@ -26,7 +26,7 @@ namespace CG4002.AR
         [SerializeField] Transform dummy;
 
         [Tooltip("How tall to draw the dummy, metres. The model is 1.8 m; smaller keeps it in view at sword's reach.")]
-        [SerializeField] float dummyHeight = 1.44f;
+        [SerializeField] float dummyHeight = 1.6f;
 
         const float ModelHeight = 1.8f;
 
@@ -68,8 +68,12 @@ namespace CG4002.AR
             if (IsOverUi(screenPoint))
                 return;
 
-            // Only inside a detected plane's outline, not on an estimated surface.
-            if (raycastManager.Raycast(screenPoint, hits, TrackableType.PlaneWithinPolygon))
+            // Through the camera, not by screen position: the AR view may not fill the screen
+            // (BorderedView), so a tap on the bars hits nothing. Only inside a detected plane's
+            // outline, not on an estimated surface.
+            if (!arCamera.pixelRect.Contains(screenPoint))
+                return;
+            if (raycastManager.Raycast(arCamera.ScreenPointToRay(screenPoint), hits, TrackableType.PlaneWithinPolygon))
                 Place(hits[0].pose.position);
         }
 

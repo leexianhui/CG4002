@@ -53,9 +53,9 @@ namespace CG4002.EditorTools
         }
 
         /// <summary>
-        /// Rebuilds the player-facing pieces in both scenes, touching nothing else: the weapon
-        /// selection screen, the first-person attack view, sound and music, demo mode's controls
-        /// (OnlineScene), and which prop each weapon's marker drives.
+        /// Rebuilds the player-facing pieces in both scenes, touching nothing else: the HUD, the
+        /// weapon selection screen, the first-person attack view, sound and music, demo mode's
+        /// controls (OnlineScene), which prop each marker drives, and the bordered / split camera view.
         /// </summary>
         [MenuItem("CG4002/Integration/Refresh Player Views")]
         public static void RefreshPlayerViews()
@@ -85,6 +85,10 @@ namespace CG4002.EditorTools
             if (AssetDatabase.LoadAssetAtPath<SceneAsset>(path) == null) return;
             var scene = EditorSceneManager.OpenScene(path);
 
+            HudBuilder.Build(UnityEngine.Object.FindAnyObjectByType<GameState>(),
+                UnityEngine.Object.FindAnyObjectByType<MessageDispatcher>(),
+                UnityEngine.Object.FindAnyObjectByType<DummyPlacer>(),
+                UnityEngine.Object.FindAnyObjectByType<TrackedImageDebug>());
             var screen = HudBuilder.BuildWeaponSelect();
             var client = UnityEngine.Object.FindAnyObjectByType<OnlineEngineClient>(FindObjectsInactive.Include);
             if (client != null)
@@ -97,6 +101,10 @@ namespace CG4002.EditorTools
             }
             HudBuilder.BuildFirstPerson();
             GameSceneSetup.BuildAudio();
+            var origin = UnityEngine.Object.FindAnyObjectByType<Unity.XR.CoreUtils.XROrigin>();
+            if (origin != null && !origin.Camera.TryGetComponent<BorderedView>(out _))
+                origin.Camera.gameObject.AddComponent<BorderedView>();
+            HudBuilder.WireSplitScreen();
             GameSceneSetup.WireProps(UnityEngine.Object.FindAnyObjectByType<PropTracker>(),
                 UnityEngine.Object.FindAnyObjectByType<GameState>());
 

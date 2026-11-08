@@ -15,19 +15,23 @@ namespace CG4002.EditorTools
     /// GameSceneSetup. Rebuilds from scratch each time, so move things in the editor only after
     /// the last setup run, or change the numbers here.
     ///
-    ///   HUD (Canvas + GraphicRaycaster, 1920x1080 reference), medieval-styled
-    ///   ├─ You          top-left:  YOU, gold-framed health bar (HP inside), weapon
-    ///   ├─ Cooldowns    bottom-left: an icon per move (the six the AI recognises) with a grey radial sweep
-    ///   ├─ Opponent     top-right: ENEMY, gold-framed health bar, GUARDING
-    ///   ├─ Outcome      centre:    "HIT -10" / "BLOCKED", shown briefly
-    ///   ├─ Result       centre:    "ENEMY DEFEATED"
-    ///   └─ Debug        bottom-right: RESET, MOVE DUMMY, TRACKING buttons (DebugPanel)
-    ///   WeaponSelect (Canvas + WeaponSelectScreen): title and instruction, top centre, and demo
-    ///                   mode's CHOOSE buttons; the dummies themselves are spawned in the world at runtime
-    ///   DemoControls (Canvas + DemoMode, OnlineScene only): demo mode's control bar, bottom-left
-    ///   FirstPerson  (Canvas + FirstPersonAttack): the recognised move's name, lower centre; the
-    ///                   first-person avatar is spawned under the AR camera at runtime
+    ///   HUD (Canvas + GraphicRaycaster)
+    ///   └─ View           ViewArea: follows the AR camera's view area (smaller than the screen, with a
+    ///      │              border; see BorderedView) and scales with it, laid out 1080 units tall
+    ///      ├─ You          top-left:  YOU, gold-framed health bar (HP inside), weapon
+    ///      ├─ Cooldowns    bottom-left: an icon per move (the six the AI recognises) with a grey radial sweep
+    ///      ├─ Opponent     top-right: ENEMY, gold-framed health bar, GUARDING
+    ///      ├─ Outcome      centre:    "HIT -10" / "BLOCKED", shown briefly
+    ///      ├─ Result       centre:    "ENEMY DEFEATED"
+    ///      └─ Debug        bottom-right: RESET, MOVE DUMMY, TRACKING buttons (DebugPanel)
+    ///   WeaponSelect (Canvas + WeaponSelectScreen) └─ View: title and instruction, top centre, and
+    ///                   demo mode's CHOOSE buttons; the dummies are spawned in the world at runtime
+    ///   DemoControls (Canvas + DemoMode, OnlineScene only) └─ View: demo mode's control bar, bottom-left
+    ///   FirstPerson  (Canvas + FirstPersonAttack) └─ View: the recognised move's name, lower centre;
+    ///                   the first-person avatar is spawned under the AR camera at runtime
     ///   EventSystem     routes taps to the buttons
+    /// The HUD also has a SplitLayout (its layout while split screen is on), and the AR
+    /// camera a SplitScreen that shows the HUD, FirstPerson and WeaponSelect canvases in both eyes.
     /// </summary>
     static class HudBuilder
     {
@@ -67,7 +71,7 @@ namespace CG4002.EditorTools
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1920f, 1080f);
             scaler.matchWidthOrHeight = 0.5f;
-            var root = canvasObject.transform;
+            var root = ViewRoot(canvasObject, ArCamera(placer));
 
             // You: top-left.
             var self = Panel(root, "You", anchorX: 0f);
@@ -102,6 +106,84 @@ namespace CG4002.EditorTools
             settings.ApplyModifiedPropertiesWithoutUndo();
 
             BuildDebugPanel(root, gameState, dispatcher, placer, trackingOverlay);
+            BuildSplitLayout(canvasObject, root, self, opponent, outcome, result);
+        }
+
+        /// <summary>
+        /// The HUD's layout while split screen is on (UI/SplitLayout). Each eye is about as wide as it
+        /// is tall, so the layout spreads across the eye's whole width: the health panels sit a little
+        /// in from its top corners, about 0.8x full view with a clear gap between them, the cooldown
+        /// icons spread along the bottom edge, the centre messages shrink to fit, and the buttons are
+        /// hidden.
+        /// </summary>
+        static void BuildSplitLayout(GameObject canvasObject, RectTransform root, RectTransform self,
+            RectTransform opponent, Text outcome, Text result)
+        {
+            var layout = canvasObject.AddComponent<SplitLayout>();
+            const float edge = 24f;           // the cooldown row, from the eye's sides
+            const float healthBarWidth = 440f; // HealthBar's width at scale 1
+            // The health panels sit in from the eye's corners, toward the middle of the lens.
+            var healthInset = new Vector2(100f, 130f);
+            var placements = new (RectTransform target, bool hide, Vector2 anchor, Vector2 position, float scale,
+                bool stretch, float fitWidth, float widthShare)[]
+            {
+                // Each health bar takes up to 34% of the eye's width (about 0.8x full view on an iPhone,
+                // leaving a clear gap between the two), and up to 0.88x where the eye is wider.
+                (self, false, new Vector2(0f, 1f), new Vector2(healthInset.x, -healthInset.y), 0.88f, false, healthBarWidth, 0.344f),
+                (opponent, false, new Vector2(1f, 1f), new Vector2(-healthInset.x, -healthInset.y), 0.88f, false, healthBarWidth, 0.344f),
+                ((RectTransform)root.Find("Cooldowns"), false, new Vector2(0.5f, 0f), new Vector2(0f, 40f), 1f, true, 0f, 0f),
+                (outcome.rectTransform, false, new Vector2(0.5f, 0.5f), new Vector2(0f, 120f), 0.8f, false, 0f, 0f),
+                (result.rectTransform, false, new Vector2(0.5f, 0.5f), Vector2.zero, 0.75f, false, 0f, 0f),
+                ((RectTransform)root.Find("Debug"), true, Vector2.zero, Vector2.zero, 1f, false, 0f, 0f),
+            };
+            var settings = new SerializedObject(layout);
+            var list = settings.FindProperty("split");
+            list.arraySize = placements.Length;
+            for (int i = 0; i < placements.Length; i++)
+            {
+                var (target, hide, anchor, position, scale, stretch, fitWidth, widthShare) = placements[i];
+                var entry = list.GetArrayElementAtIndex(i);
+                entry.FindPropertyRelative("target").objectReferenceValue = target;
+                entry.FindPropertyRelative("hide").boolValue = hide;
+                entry.FindPropertyRelative("anchor").vector2Value = anchor;
+                entry.FindPropertyRelative("anchoredPosition").vector2Value = position;
+                entry.FindPropertyRelative("scale").floatValue = scale;
+                entry.FindPropertyRelative("stretch").boolValue = stretch;
+                entry.FindPropertyRelative("margin").floatValue = edge;
+                entry.FindPropertyRelative("fitWidth").floatValue = fitWidth;
+                entry.FindPropertyRelative("widthShare").floatValue = widthShare;
+            }
+            settings.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        /// <summary>
+        /// Split screen (AR/SplitScreen) on the AR camera, wired to the open scene: the placer, the
+        /// online calibration and demo mode if present, and the canvases shown in both eyes. Run after
+        /// the HUD, first-person view, weapon selection and demo controls are built.
+        /// </summary>
+        public static void WireSplitScreen()
+        {
+            var placer = Object.FindAnyObjectByType<DummyPlacer>();
+            var camera = ArCamera(placer);
+            if (!camera.TryGetComponent(out SplitScreen split))
+                split = camera.gameObject.AddComponent<SplitScreen>();
+            var settings = new SerializedObject(split);
+            settings.FindProperty("placer").objectReferenceValue = placer;
+            settings.FindProperty("calibration").objectReferenceValue =
+                Object.FindAnyObjectByType<CG4002.Net.SharedArenaCalibration>(FindObjectsInactive.Include);
+            settings.FindProperty("demo").objectReferenceValue = Object.FindAnyObjectByType<CG4002.Offline.DemoMode>(FindObjectsInactive.Include);
+            var names = new[] { "HUD", "FirstPerson", "WeaponSelect" };
+            var list = settings.FindProperty("canvases");
+            list.arraySize = 0;
+            foreach (var name in names)
+            {
+                var found = GameObject.Find(name);
+                if (found == null || !found.TryGetComponent(out Canvas canvas))
+                    continue;
+                list.arraySize++;
+                list.GetArrayElementAtIndex(list.arraySize - 1).objectReferenceValue = canvas;
+            }
+            settings.ApplyModifiedPropertiesWithoutUndo();
         }
 
         /// <summary>
@@ -131,8 +213,9 @@ namespace CG4002.EditorTools
             scaler.referenceResolution = new Vector2(1920f, 1080f);
             scaler.matchWidthOrHeight = 0.5f;
 
-            var title = CentreText(canvasObject.transform, "Title", 72, y: 0f);
-            var instruction = CentreText(canvasObject.transform, "Instruction", 40, y: 0f);
+            var view = ViewRoot(canvasObject, ArCamera(placer));
+            var title = CentreText(view, "Title", 72, y: 0f);
+            var instruction = CentreText(view, "Instruction", 40, y: 0f);
             title.color = Gold;
             instruction.color = Parchment;
             foreach (var (text, y) in new[] { (title, -Margin), (instruction, -Margin - 100f) })
@@ -147,7 +230,7 @@ namespace CG4002.EditorTools
             var picks = new Button[weapons.Length];
             for (int i = 0; i < weapons.Length; i++)
             {
-                picks[i] = FramedButton((RectTransform)canvasObject.transform, $"Pick {weapons[i]}", "CHOOSE", 28);
+                picks[i] = FramedButton(view, $"Pick {weapons[i]}", "CHOOSE", 28);
                 var rect = (RectTransform)picks[i].transform;
                 rect.pivot = new Vector2(0.5f, 1f);  // hangs below the point it's placed at
                 rect.sizeDelta = new Vector2(220f, 76f);
@@ -197,7 +280,7 @@ namespace CG4002.EditorTools
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1920f, 1080f);
             scaler.matchWidthOrHeight = 0.5f;
-            var label = CentreText(canvasObject.transform, "MoveName", 56, y: -300f);
+            var label = CentreText(ViewRoot(canvasObject, ArCamera(placer)), "MoveName", 56, y: -300f);
             label.color = Gold;
 
             var view = canvasObject.AddComponent<CG4002.Controllers.FirstPersonAttack>();
@@ -241,7 +324,7 @@ namespace CG4002.EditorTools
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1920f, 1080f);
             scaler.matchWidthOrHeight = 0.5f;
-            var view = (RectTransform)canvasObject.transform;
+            var view = ViewRoot(canvasObject, ArCamera(placer));
 
             const float size = 108f, gap = 12f, rowGap = 16f, switchHeight = 64f;
             var bar = NewRect(view, "Bar");
@@ -309,7 +392,7 @@ namespace CG4002.EditorTools
             settings.FindProperty("rules").objectReferenceValue = rules;
             settings.FindProperty("placer").objectReferenceValue = placer;
             settings.FindProperty("weaponSelect").objectReferenceValue = weaponSelect;
-            settings.FindProperty("hudCooldowns").objectReferenceValue = hud.transform.Find("Cooldowns")?.gameObject;
+            settings.FindProperty("hudCooldowns").objectReferenceValue = hud.transform.Find("View/Cooldowns")?.gameObject;
             settings.FindProperty("bar").objectReferenceValue = bar.gameObject;
             settings.FindProperty("youButton").objectReferenceValue = you;
             settings.FindProperty("enemyButton").objectReferenceValue = enemy;
@@ -318,6 +401,24 @@ namespace CG4002.EditorTools
             settings.ApplyModifiedPropertiesWithoutUndo();
             return demo;
         }
+
+        /// <summary>
+        /// The container a canvas's content goes in: it follows the AR camera's view area (smaller
+        /// than the screen, with a border) and scales with it, so the UI shrinks with the picture.
+        /// </summary>
+        static RectTransform ViewRoot(GameObject canvasObject, Camera arCamera)
+        {
+            var view = NewRect(canvasObject.transform, "View");
+            view.sizeDelta = new Vector2(1920f, ViewArea.ReferenceHeight);
+            var area = view.gameObject.AddComponent<ViewArea>();
+            var settings = new SerializedObject(area);
+            settings.FindProperty("arCamera").objectReferenceValue = arCamera;
+            settings.ApplyModifiedPropertiesWithoutUndo();
+            return view;
+        }
+
+        static Camera ArCamera(DummyPlacer placer) =>
+            (Camera)new SerializedObject(placer).FindProperty("arCamera").objectReferenceValue;
 
         static T LoadGenerated<T>(string path) where T : Object =>
             AssetDatabase.LoadAssetAtPath<T>($"{AssetIO.Root}/{path}")
@@ -352,8 +453,11 @@ namespace CG4002.EditorTools
             {
                 var (action, icon) = CooldownMoves[i];
                 var slot = NewRect(panel, action.ToString());
-                slot.anchorMin = slot.anchorMax = slot.pivot = new Vector2(0f, 0f);
-                slot.anchoredPosition = new Vector2(i * (size + gap), 0f);
+                // Anchored by fraction along the row, so at the row's own width the icons sit `gap`
+                // apart, and when split screen stretches the row they spread evenly across it.
+                float along = CooldownMoves.Length > 1 ? i / (CooldownMoves.Length - 1f) : 0f;
+                slot.anchorMin = slot.anchorMax = slot.pivot = new Vector2(along, 0f);
+                slot.anchoredPosition = Vector2.zero;
                 slot.sizeDelta = new Vector2(size, size);
                 Picture(slot, Art("Frames/IconFrame.png"), Color.white);
 
