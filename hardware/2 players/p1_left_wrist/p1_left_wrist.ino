@@ -36,6 +36,11 @@ const char *password = "12345678";
 #define WIFI_SLEEP_DISABLED 1
 #endif
 
+// 1 = stream every left-wrist IMU sample to the laptop on RAW_PORT.
+#ifndef RAW_STREAM
+#define RAW_STREAM 1
+#endif
+
 // Which player this set of boards belongs to. Must be the same on all three
 // boards of one player; packets carrying another PLAYER_ID are dropped.
 #ifndef PLAYER_ID
@@ -93,6 +98,12 @@ enum GamePhase
     PHASE_LOCKED
 };
 
+enum GuardState
+{
+    GUARD_IDLE,
+    GUARDING
+};
+
 // hdr.type values. 0 is deliberately unused so a zeroed buffer never parses.
 enum PacketType : uint8_t
 {
@@ -105,6 +116,7 @@ enum PacketType : uint8_t
     PKT_PING,            // hub -> torso, LINK_PORT (LATENCY_TEST builds)
     PKT_PONG,            // torso -> hub, LINK_PORT (LATENCY_TEST builds)
     PKT_SEGMENT_ACK,     // torso -> hub, LINK_PORT (reply to every SEGMENT_REQUEST)
+    PKT_GUARD_STATE,     // left wrist -> hub, POSE_PORT
     PKT_TYPE_COUNT
 };
 
@@ -173,6 +185,14 @@ struct __attribute__((packed)) SegmentAck
     uint32_t segId;
 };
 
+struct __attribute__((packed)) GuardStatePacket
+{
+    PacketHeader hdr;
+    uint32_t eventMs;
+    uint8_t weapon;
+    uint8_t state;
+};
+
 // Expected on-wire length, indexed by PacketType (order must match the enum).
 const uint8_t PACKET_SIZE[PKT_TYPE_COUNT] = {
     0,
@@ -184,11 +204,12 @@ const uint8_t PACKET_SIZE[PKT_TYPE_COUNT] = {
     sizeof(LatencyProbe),
     sizeof(LatencyProbe),
     sizeof(SegmentAck),
+    sizeof(GuardStatePacket),
 };
 
 // Names used in log lines, indexed by PacketType / deviceId.
 const char *const PACKET_NAME[PKT_TYPE_COUNT] = {
-    "INVALID", "HUB_STATUS", "WRIST_POSE", "TORSO_POSE", "BEACON", "SEG_REQ", "PING", "PONG", "SEG_ACK"};
+    "INVALID", "HUB_STATUS", "WRIST_POSE", "TORSO_POSE", "BEACON", "SEG_REQ", "PING", "PONG", "SEG_ACK", "GUARD_STATE"};
 const char *const DEVICE_NAME[DEVICE_COUNT] = {"right_wrist", "torso", "left_wrist"};
 
 static_assert(sizeof(PacketHeader) == 5, "PacketHeader size changed");
@@ -199,6 +220,7 @@ static_assert(sizeof(TorsoBeacon) == 13, "TorsoBeacon size changed");
 static_assert(sizeof(SegmentRequest) == 17, "SegmentRequest size changed");
 static_assert(sizeof(LatencyProbe) == 9, "LatencyProbe size changed");
 static_assert(sizeof(SegmentAck) == 9, "SegmentAck size changed");
+static_assert(sizeof(GuardStatePacket) == 11, "GuardStatePacket size changed");
 // ======================= SHARED WIRE PROTOCOL — END =========================
 
 // Declared up here so Arduino's auto-generated prototypes can see it.
@@ -217,6 +239,7 @@ enum LedMode
 IPAddress broadcastIP;                            // subnet broadcast, computed in setup() once connected
 const int DEBUG_PORT = 4211 + PLAYER_PORT_OFFSET; // -> laptop listener (debug lines)
 const int POSE_PORT = 4212 + PLAYER_PORT_OFFSET;  // <-> hub (WristPose out, HubStatus in)
+const int RAW_PORT = 4214 + PLAYER_PORT_OFFSET;   // -> laptop listener (RawBatch)
 
 #define DEBUG_LOG true
 
@@ -485,6 +508,43 @@ float gravElDeg()
 
 float gravAzDeg() { return atan2(gravY, gravX) * 180.0 / PI; }
 
+// Guard references. Recalibrate if the board mounting changes.
+struct GuardReference
+{
+    WeaponType weapon;
+    float el;
+    float az;
+};
+
+const GuardReference GUARD_REFS[] = {
+    {WEAPON_SWORD_SHIELD, -3.0f, 94.0f},
+    {WEAPON_SPEAR, 60.0f, -76.0f},
+    {WEAPON_MACE, 68.0f, -68.0f},
+};
+
+const float GUARD_ENTER_MAX_DEG = 25.0f;
+const float GUARD_EXIT_MAX_DEG = 35.0f;
+const unsigned long GUARD_HOLD_MS = 150;
+
+float angleDifferenceDeg(float a, float b)
+{
+    float d = fmodf(a - b + 540.0f, 360.0f) - 180.0f;
+    return fabsf(d);
+}
+
+float guardDistanceDeg(WeaponType weapon, float el, float az)
+{
+    for (unsigned int i = 0; i < sizeof(GUARD_REFS) / sizeof(GUARD_REFS[0]); i++)
+    {
+        if (GUARD_REFS[i].weapon != weapon)
+            continue;
+        float de = el - GUARD_REFS[i].el;
+        float da = angleDifferenceDeg(az, GUARD_REFS[i].az);
+        return sqrtf(de * de + da * da);
+    }
+    return 999.0f;
+}
+
 // ---------------- Debug logging ----------------
 void debugLog(String msg)
 {
@@ -494,6 +554,49 @@ void debugLog(String msg)
     debugUdp.print("[left_wrist] " + msg);
     debugUdp.endPacket();
 }
+
+#if RAW_STREAM
+#define RAW_BATCH 10
+const uint8_t RAW_MAGIC = 'R';
+struct __attribute__((packed)) RawSample
+{
+    uint32_t t;
+    int16_t ax, ay, az, gx, gy, gz;
+};
+struct __attribute__((packed)) RawBatch
+{
+    uint8_t magic;
+    uint8_t playerId;
+    uint8_t deviceId;
+    uint16_t seq;
+    uint8_t n;
+    RawSample s[RAW_BATCH];
+};
+static_assert(sizeof(RawBatch) == 166, "RawBatch size changed");
+RawBatch rawBatch;
+uint16_t rawSeq = 0;
+int16_t rawFixed(float v, float scale)
+{
+    return (int16_t)constrain(lroundf(v * scale), -32767L, 32767L);
+}
+void rawStreamPush(uint32_t t, float ax_g, float ay_g, float az_g,
+                   float gx_dps, float gy_dps, float gz_dps)
+{
+    RawSample &r = rawBatch.s[rawBatch.n++];
+    r = {t, rawFixed(ax_g, 1000), rawFixed(ay_g, 1000), rawFixed(az_g, 1000),
+         rawFixed(gx_dps, 10), rawFixed(gy_dps, 10), rawFixed(gz_dps, 10)};
+    if (rawBatch.n < RAW_BATCH)
+        return;
+    rawBatch.magic = RAW_MAGIC;
+    rawBatch.playerId = PLAYER_ID;
+    rawBatch.deviceId = THIS_DEVICE_ID;
+    rawBatch.seq = rawSeq++;
+    debugUdp.beginPacket(broadcastIP, RAW_PORT);
+    debugUdp.write((uint8_t *)&rawBatch, sizeof(rawBatch));
+    debugUdp.endPacket();
+    rawBatch.n = 0;
+}
+#endif
 
 // ---------------- Smoothing + stillness gate ----------------
 const float EMA_ALPHA = 0.2; // smoothing for gravity vector + gyroMag
@@ -520,6 +623,51 @@ unsigned long lastPoseBroadcastMs = 0;
 bool hubSeen = false;
 GamePhase hubPhase = PHASE_WAITING;
 bool hubHolding = false;
+WeaponType hubWeapon = WEAPON_UNKNOWN;
+GuardState guardState = GUARD_IDLE;
+unsigned long guardCandidateSinceMs = 0;
+
+void sendGuardState(GuardState state, unsigned long now, float distance)
+{
+    GuardStatePacket packet;
+    fillHeader(packet.hdr, PKT_GUARD_STATE);
+    packet.eventMs = (uint32_t)now;
+    packet.weapon = (uint8_t)hubWeapon;
+    packet.state = (uint8_t)state;
+    poseUdp.beginPacket(broadcastIP, POSE_PORT);
+    poseUdp.write((uint8_t *)&packet, sizeof(packet));
+    poseUdp.endPacket();
+    debugLog(String("guard_state=") + (state == GUARDING ? "GUARDING" : "IDLE") +
+             " weapon=" + String((int)hubWeapon) + " dist=" + String(distance, 1));
+}
+
+void updateGuardDetection(float el, float az, bool stable, unsigned long now)
+{
+    if (hubPhase != PHASE_LOCKED || hubWeapon == WEAPON_UNKNOWN)
+        return;
+    float distance = guardDistanceDeg(hubWeapon, el, az);
+    if (guardState == GUARD_IDLE)
+    {
+        if (stable && distance <= GUARD_ENTER_MAX_DEG)
+        {
+            if (guardCandidateSinceMs == 0)
+                guardCandidateSinceMs = now;
+            if (now - guardCandidateSinceMs >= GUARD_HOLD_MS)
+            {
+                guardState = GUARDING;
+                guardCandidateSinceMs = 0;
+                sendGuardState(guardState, now, distance);
+            }
+        }
+        else
+            guardCandidateSinceMs = 0;
+    }
+    else if (distance > GUARD_EXIT_MAX_DEG)
+    {
+        guardState = GUARD_IDLE;
+        sendGuardState(guardState, now, distance);
+    }
+}
 
 void checkIncomingHubStatus()
 {
@@ -547,6 +695,7 @@ void checkIncomingHubStatus()
     }
     hubSeen = true;
     hubPhase = newPhase;
+    hubWeapon = (WeaponType)status.weapon;
     hubHolding = status.holding;
 }
 
@@ -613,18 +762,12 @@ void loop()
     checkIncomingHubStatus();
     printLinkStats(millis());
 
-    // Locked until reboot: no IMU reads or pose broadcasts. The LED
-    // already shows the weapon colour (set on the lock edge).
-#ifndef CG_HARDWARE_GATEWAY
-    if (hubPhase == PHASE_LOCKED)
-        return;
-#endif
-
-    if (hubPhase != PHASE_LOCKED) {
-    if (!hubSeen || hubPhase == PHASE_WAITING)
-        setLedMode(LEDM_WAITING);
-    else
-        setLedMode(hubHolding ? LEDM_HOLDING : LEDM_SAMPLING);
+    if (hubPhase != PHASE_LOCKED)
+    {
+        if (!hubSeen || hubPhase == PHASE_WAITING)
+            setLedMode(LEDM_WAITING);
+        else
+            setLedMode(hubHolding ? LEDM_HOLDING : LEDM_SAMPLING);
     }
 
     unsigned long nowUs = micros();
@@ -652,8 +795,10 @@ void loop()
     float gz_dps = (raw[6] / GYRO_SCALE) - gyroZoffset;
 #ifdef CG_HARDWARE_GATEWAY
     gatewaySample(ax_g, ay_g, az_g, gx_dps, gy_dps, gz_dps);
-    // Keep raw export alive after lock, without restarting pose detection.
-    if (hubPhase == PHASE_LOCKED) return;
+#endif
+
+#if RAW_STREAM
+    rawStreamPush((uint32_t)millis(), ax_g, ay_g, az_g, gx_dps, gy_dps, gz_dps);
 #endif
 
     float gyroMag = sqrt(gx_dps * gx_dps + gy_dps * gy_dps + gz_dps * gz_dps);
@@ -688,7 +833,9 @@ void loop()
     }
     bool stable = (now - stillSinceMs) >= STILLNESS_HOLD_MS;
 
-    if (now - lastPoseBroadcastMs >= POSE_BROADCAST_INTERVAL_MS)
+    updateGuardDetection(el, az, stable, now);
+
+    if (hubPhase != PHASE_LOCKED && now - lastPoseBroadcastMs >= POSE_BROADCAST_INTERVAL_MS)
     {
         lastPoseBroadcastMs = now;
 
