@@ -8,11 +8,11 @@ floor, plus a HUD. Every state change comes from Game Engine messages.
 
 The integrated workspace uses `Assets/Scenes/OnlineScene.unity`; follow the
 [integration runbook](../docs/INTEGRATION_RUNBOOK.md) for online deployment.
-The imported archive lacked the contents of `Docs/PropMarkers.pdf` and four preview PNGs.
-Their original paths, SHA-256 hashes and sizes are preserved in
-[Docs/missing-assets.json](Docs/missing-assets.json) for recovery from the visualizer owner.
-All runtime assets are present. The marker PDF must be recovered before using the printing
-instruction below; the preview images are not required to build or run the project.
+The imported archive lacked the contents of four preview PNGs. Their original paths, SHA-256
+hashes and sizes are preserved in [Docs/missing-assets.json](Docs/missing-assets.json) for recovery
+from the visualizer owner; they are not required to build or run the project. (The marker PDF it
+also lacked is superseded: `Docs/PropMarkers.pdf` is now the new card sheet, made by
+`Tools/make_marker_cards.py`.)
 
 ## How it connects
 
@@ -39,7 +39,7 @@ instruction below; the preview images are not required to build or run the proje
   2. Click a detected floor plane to place the dummy.
   3. Keys: **H** hit the dummy · **2–6** your other attacks (vertical, diagonal, thrust, spin, uppercut) · **G** toggle its guard · **C** it hits you · **R** restart.
 - **Phone:** File → Build Profiles → iOS → Build, then run from Xcode. Tap the floor to place
-  the dummy and swing the prop into it. Print the markers from `Docs/PropMarkers_Mars.pdf` at 100% (7 × 12 cm each).
+  the dummy and swing the prop into it. Print the marker cards from `Docs/PropMarkers.pdf` at 100% (7 × 12 cm each).
 - **Tests:** Window → General → Test Runner → PlayMode → Run All. Or headless:
   `Unity -batchmode -projectPath . -runTests -testPlatform PlayMode -testResults results.xml`
 

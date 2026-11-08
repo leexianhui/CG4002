@@ -20,20 +20,22 @@ namespace CG4002.EditorTools
         const string LibraryPath = ArDir + "/PropMarkers.asset";
         const string DebugMaterialPath = ArDir + "/M_TrackingDebug.mat";
         const string ScenePath = "Assets/Scenes/SampleScene.unity";
-        const string ImageDir = "Assets/UnityXRContent/Common/ReferenceImages/";
+        const string CardDir = ArDir + "/Markers/";
+        const string SampleImageDir = "Assets/UnityXRContent/Common/ReferenceImages/";
 
         // Printed width of each marker in metres. ARKit infers distance from this, so it must
         // match the ruler measurement of the print, not the size it was meant to print at.
         // Height is derived from the source image's aspect ratio.
-        // Vuforia's Mars targets (print sheet: Docs/PropMarkers_Mars.pdf, at 100%, 7 x 12 cm each).
-        static readonly (string name, string file, float widthMetres)[] Markers =
+        // The prop cards: real weapons over the Unicorn Tapestries, made by Tools/make_marker_cards.py
+        // (print sheet: Docs/PropMarkers.pdf, at 100%, 7 x 12 cm each).
+        static readonly (string name, string path, float widthMetres)[] Markers =
         {
-            ("Sword", "Astronaut.png", 0.07f),
-            ("Shield", "Oxygen.png", 0.07f),
-            ("Spear", "Drone.png", 0.07f),
-            ("Mace", "Fissure.png", 0.07f),
-            // The previous sword marker, so the existing sword prop works until it's reprinted.
-            ("SwordBackup", "two.png", 0.09f),
+            ("Sword", CardDir + "Sword.png", 0.07f),
+            ("Shield", CardDir + "Shield.png", 0.07f),
+            ("Spear", CardDir + "Spear.png", 0.07f),
+            ("Mace", CardDir + "Mace.png", 0.07f),
+            // The original sword marker, so an old sword prop still works until it's reprinted.
+            ("SwordBackup", SampleImageDir + "two.png", 0.09f),
         };
 
         // Moving images ARKit tracks every frame. Without this it treats images as fixed in the
@@ -104,9 +106,8 @@ namespace CG4002.EditorTools
             while (library.count > 0)
                 library.RemoveAt(library.count - 1);
 
-            foreach (var (name, file, width) in Markers)
+            foreach (var (name, path, width) in Markers)
             {
-                string path = ImageDir + file;
                 var importer = AssetImporter.GetAtPath(path) as TextureImporter;
                 if (importer == null)
                     throw new InvalidOperationException($"Marker image not found: {path}");

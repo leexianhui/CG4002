@@ -3,11 +3,6 @@
   "reason": "Imported archive contained LFS pointers without the asset contents. Runtime assets are available.",
   "assets": [
     {
-      "path": "Docs/PropMarkers.pdf",
-      "sha256": "bc777e4732efdf1069c7d745be75118e47ea9c86736f63d9ae098340a9441604",
-      "size": 1766110
-    },
-    {
       "path": "Docs/Previews/Preview_Mace.png",
       "sha256": "ca356aee13aa8cf35a17b566c0d4beb8eae8e2e831d343bc9a61a4a010ea6308",
       "size": 536951

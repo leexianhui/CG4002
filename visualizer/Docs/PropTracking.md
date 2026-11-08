@@ -64,26 +64,36 @@ from feature points that lie on a common level. These are what the dummy is plac
 `Assets/CG4002/AR/PropMarkers.asset`, built by **CG4002 → Setup Image Tracking**
 (`Editor/ImageTrackingSetup.cs`).
 
-Vuforia's four Mars targets, one per prop. Print `Docs/PropMarkers_Mars.pdf` at **100% /
-Actual size** (each target 7 × 12 cm; check against the printed ruler). The PNGs in
-`Assets/UnityXRContent/Common/ReferenceImages/` were extracted from that PDF and cropped to
-exactly the printed area.
+One card per prop: a real weapon from the Met's open-access collection, cut out and standing
+tip-up over a crop of one of the Unicorn Tapestries, with a gold frame and the weapon's name. All
+public domain (CC0); sources in `Assets/CG4002/AR/Markers/CREDITS.md`. Print `Docs/PropMarkers.pdf`
+at **100% / Actual size** (each card 7 × 12 cm; check the 10 cm ruler on the sheet). The PNGs in
+`Assets/CG4002/AR/Markers/` are exactly the printed cards (300 dpi).
 
 | Name | Image | Printed size | Used for |
 |---|---|---|---|
-| `Sword` | `Astronaut.png` | 7 × 12 cm | the sword prop |
-| `Shield` | `Oxygen.png` | 7 × 12 cm | the shield (blue, so it's never confused with the sword next to it) |
-| `Spear` | `Drone.png` | 7 × 12 cm | the spear: a flat card on the shaft between the hands |
-| `Mace` | `Fissure.png` | 7 × 12 cm | the mace: a flat card on the handle between the hands |
-| `SwordBackup` | `two.png` | 9 × 9 cm | the previous sword marker, until the sword prop is reprinted |
+| `Sword` | `Markers/Sword.png` | 7 × 12 cm | the sword prop |
+| `Shield` | `Markers/Shield.png` | 7 × 12 cm | the shield |
+| `Spear` | `Markers/Spear.png` | 7 × 12 cm | the spear: a flat card on the shaft between the hands |
+| `Mace` | `Markers/Mace.png` | 7 × 12 cm | the mace: a flat card on the handle between the hands |
+| `SwordBackup` | `UnityXRContent/.../two.png` | 9 × 9 cm | the original sword marker, until an old sword prop is reprinted |
+
+- **How they were made:** `Tools/make_marker_cards.py` (Pillow, numpy, opencv-python-headless)
+  downloads the sources, cuts each weapon out of its museum backdrop, picks the most detailed crop of
+  each tapestry panel, and prints a trackability score per card. Re-run it to change a card, then
+  **CG4002 → Setup Image Tracking** and rebuild.
+- **Why tapestries behind the weapons:** ARKit tracks corners and fine detail, so a card must be
+  detailed all over and different from the others; a weapon on a plain backdrop alone tracks badly.
+  Measured the same way, the cards have more detail and spread than the Vuforia Mars targets they
+  replace, match a tilted, blurred view at least as well, are less alike each other, and are about
+  as recognisable at arm's length (the tapestry's local contrast is boosted for that).
 
 `PropTracker` draws a prop's own weapon whenever that prop's marker is seen: Sword/SwordBackup →
 sword, Spear → spear, Mace → mace, whatever weapon is selected (so you see the prop you're actually
 holding, even before the hub locks a weapon). If several are seen at once, the one already shown
 stays, then the selected weapon is preferred. The **shield** is tracked separately, alongside the
-weapon: whenever the Shield (Oxygen) marker is seen, the shield is drawn on it. Both hide during your
-first-person attack animation. The images are © PTC (Vuforia samples): fine for this project, not
-ours to redistribute.
+weapon: whenever the Shield card is seen, the shield is drawn on it. Both hide during your
+first-person attack animation.
 
 - **Measure each prop.** Each weapon has its own *Props* entry on the Prop Tracker: *Marker To Grip
   Centre* (marker centre back to the middle of the weapon hand's grip) and *Marker To Tip*. The
