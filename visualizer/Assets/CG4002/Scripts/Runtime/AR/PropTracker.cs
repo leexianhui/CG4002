@@ -18,9 +18,12 @@ namespace CG4002.AR
     /// prop's marker is seen gets its own weapon drawn, whatever weapon is selected. If several are
     /// seen, the one already shown stays, then the selected weapon (GameState) is preferred.
     ///
+    /// The shield is tracked separately, alongside the weapon: its marker is glued on the inside
+    /// of the shield, facing the player, so the drawn shield faces away from the marker.
+    ///
     /// Marker frame (from AR Foundation): +Y out of the print, +Z towards the top of the picture,
-    /// which is glued pointing toward the weapon's tip. Weapon frame: pivot at the weapon hand's
-    /// grip, +Y towards the tip.
+    /// which is glued pointing toward the weapon's tip (or the top of the shield). Weapon frame:
+    /// pivot at the weapon hand's grip, +Y towards the tip. Shield frame: +Z out of its face, +Y up.
     /// </summary>
     public class PropTracker : MonoBehaviour
     {
@@ -46,23 +49,38 @@ namespace CG4002.AR
         [SerializeField] GameState gameState;
         [SerializeField] Prop[] props = Array.Empty<Prop>();
 
+        [Header("Shield (off hand, tracked alongside the weapon)")]
+        [Tooltip("Reference image names that count as the shield's marker.")]
+        [SerializeField] string[] shieldImageNames = { "Shield" };
+        [SerializeField] ShieldView shieldPrefab;
+        [Tooltip("Your shield prop's width, metres. The model is scaled to cover it.")]
+        [SerializeField] float shieldWidth = 0.45f;
+        [Tooltip("Along the picture's up direction, from the marker's centre to the shield's centre, metres " +
+                 "(positive when the marker sits below the centre).")]
+        [SerializeField] float markerToShieldCentre;
+
         [Header("Tracking")]
         [Tooltip("Keep showing the weapon this long after tracking drops, so brief dropouts don't flicker.")]
         [SerializeField] float holdSeconds = 0.3f;
         [Tooltip("How quickly the model follows the marker. Higher is snappier but shows more jitter.")]
         [SerializeField] float followSpeed = 25f;
 
+        // The shield model's width across its octagon (ModelFactory.BuildShield).
+        const float ShieldModelWidth = 0.58f;
+
         readonly Dictionary<string, ARTrackedImage> images = new();
         readonly Dictionary<WeaponType, WeaponView> models = new();
         Prop current;
         float lastTrackedTime = float.NegativeInfinity;
+        ShieldView shield;
+        float lastShieldTrackedTime = float.NegativeInfinity;
 
         /// <summary>The model on the prop being tracked, or null before any prop is seen.</summary>
         public WeaponView Weapon { get; private set; }
 
         /// <summary>
-        /// Hides the weapon model without stopping tracking, e.g. while the first-person attack
-        /// animation shows the weapon instead. It reappears at the tracked pose when cleared.
+        /// Hides the weapon and shield models without stopping tracking, e.g. while the first-person
+        /// attack animation plays. They reappear at the tracked pose when cleared.
         /// </summary>
         public bool Suppressed { get; set; }
 
@@ -88,6 +106,8 @@ namespace CG4002.AR
 
         void Update()
         {
+            UpdateShield();
+
             var seen = SeenProp();
             if (seen != null && seen != current)
             {
@@ -159,16 +179,52 @@ namespace CG4002.AR
             Vector3 targetPosition = marker.transform.position - upTheWeapon * current.markerToGripCentre;
             // Weapon +Y runs up the weapon; its flat faces the same way as the print.
             Quaternion targetRotation = Quaternion.LookRotation(marker.transform.up, upTheWeapon);
+            Follow(Weapon.transform, targetPosition, targetRotation, snap);
+        }
 
+        void UpdateShield()
+        {
+            if (shieldPrefab == null)
+                return;
+            ARTrackedImage marker = null;
+            foreach (var name in shieldImageNames)
+            {
+                if (images.TryGetValue(name, out var image) && image.trackingState == TrackingState.Tracking)
+                    marker = image;
+            }
+
+            if (marker != null)
+            {
+                if (shield == null)
+                {
+                    shield = Instantiate(shieldPrefab);
+                    shield.name = "Tracked Shield";
+                    shield.transform.localScale = Vector3.one * (shieldWidth / ShieldModelWidth);
+                    shield.gameObject.SetActive(false);
+                }
+                lastShieldTrackedTime = Time.time;
+                Transform t = marker.transform;
+                // The marker is on the inside, facing the player: the shield's face points the other way.
+                Vector3 position = t.position + t.forward * markerToShieldCentre;
+                Quaternion rotation = Quaternion.LookRotation(-t.up, t.forward);
+                Follow(shield.transform, position, rotation, snap: !shield.gameObject.activeSelf);
+            }
+            if (shield != null)
+                shield.gameObject.SetActive(!Suppressed && Time.time - lastShieldTrackedTime <= holdSeconds);
+        }
+
+        /// <summary>Move a model to its tracked pose: at once when it's just appearing, else smoothed.</summary>
+        void Follow(Transform model, Vector3 targetPosition, Quaternion targetRotation, bool snap)
+        {
             if (snap)
             {
-                Weapon.transform.SetPositionAndRotation(targetPosition, targetRotation);
+                model.SetPositionAndRotation(targetPosition, targetRotation);
                 return;
             }
             float t = 1f - Mathf.Exp(-followSpeed * Time.deltaTime);
-            Weapon.transform.SetPositionAndRotation(
-                Vector3.Lerp(Weapon.transform.position, targetPosition, t),
-                Quaternion.Slerp(Weapon.transform.rotation, targetRotation, t));
+            model.SetPositionAndRotation(
+                Vector3.Lerp(model.position, targetPosition, t),
+                Quaternion.Slerp(model.rotation, targetRotation, t));
         }
     }
 }

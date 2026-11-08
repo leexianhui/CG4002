@@ -80,14 +80,19 @@ exactly the printed area.
 `PropTracker` draws a prop's own weapon whenever that prop's marker is seen: Sword/SwordBackup →
 sword, Spear → spear, Mace → mace, whatever weapon is selected (so you see the prop you're actually
 holding, even before the hub locks a weapon). If several are seen at once, the one already shown
-stays, then the selected weapon is preferred. The shield marker is detected and shown by the
-TRACKING overlay but drives no model yet. The images are © PTC (Vuforia samples): fine for this
-project, not ours to redistribute.
+stays, then the selected weapon is preferred. The **shield** is tracked separately, alongside the
+weapon: whenever the Shield (Oxygen) marker is seen, the shield is drawn on it. Both hide during your
+first-person attack animation. The images are © PTC (Vuforia samples): fine for this project, not
+ours to redistribute.
 
 - **Measure each prop.** Each weapon has its own *Props* entry on the Prop Tracker: *Marker To Grip
   Centre* (marker centre back to the middle of the weapon hand's grip) and *Marker To Tip*. The
   sword's are measured. The spear's (0.2 / 0.98) and mace's (0.12 / 0.56) assume the card sits
   centred between the hands (spear) or just above them (mace); re-measure on the real props.
+- **The shield's card goes on the inside** (the side facing you), top of the picture toward the top
+  of the shield. Set the Prop Tracker's *Shield Width* to your shield's real width (the 3D shield is
+  scaled to it), and *Marker To Shield Centre* if the card isn't at the shield's centre (positive
+  when the card sits below the centre).
 - **Glue each card with the top of the picture pointing toward the weapon's tip.** On the spear and
   mace, glue it flat to a rigid card on the shaft, never wrapped round it.
 - **Rewiring:** **CG4002 → Integration → Refresh Player Views** rewires the markers and models but keeps the measurements already set.

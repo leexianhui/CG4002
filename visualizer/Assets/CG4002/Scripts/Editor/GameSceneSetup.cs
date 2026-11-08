@@ -163,7 +163,7 @@ namespace CG4002.EditorTools
         }
 
         /// <summary>
-        /// Which marker drives which weapon's model, and each prop's measurements. Measurements already
+        /// Which marker drives which weapon's model (and the shield's), and each prop's measurements. Measurements already
         /// set on the tracker are kept, so re-running doesn't undo values measured on the real props;
         /// the defaults below only fill in new entries. The spear and mace defaults are starting
         /// values (marker centred between the hands): re-measure on the real props.
@@ -211,6 +211,8 @@ namespace CG4002.EditorTools
                 entry.FindPropertyRelative("markerToGripCentre").floatValue = markerToGrip;
                 entry.FindPropertyRelative("markerToTip").floatValue = markerToTip;
             }
+            // The shield is tracked alongside the weapon; its size and offset are kept if already set.
+            settings.FindProperty("shieldPrefab").objectReferenceValue = Load<ShieldView>("Prefabs/Weapon_Shield.prefab");
             settings.ApplyModifiedPropertiesWithoutUndo();
         }
 
