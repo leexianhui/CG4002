@@ -117,6 +117,12 @@ enum GamePhase
     PHASE_LOCKED
 };
 
+enum GuardState
+{
+    GUARD_IDLE,
+    GUARDING
+};
+
 // hdr.type values. 0 is deliberately unused so a zeroed buffer never parses.
 enum PacketType : uint8_t
 {
@@ -129,6 +135,7 @@ enum PacketType : uint8_t
     PKT_PING,            // hub -> torso, LINK_PORT (LATENCY_TEST builds)
     PKT_PONG,            // torso -> hub, LINK_PORT (LATENCY_TEST builds)
     PKT_SEGMENT_ACK,     // torso -> hub, LINK_PORT (reply to every SEGMENT_REQUEST)
+    PKT_GUARD_STATE,     // left wrist -> hub, POSE_PORT
     PKT_TYPE_COUNT
 };
 
@@ -197,6 +204,14 @@ struct __attribute__((packed)) SegmentAck
     uint32_t segId;
 };
 
+struct __attribute__((packed)) GuardStatePacket
+{
+    PacketHeader hdr; // PKT_GUARD_STATE
+    uint32_t eventMs;
+    uint8_t weapon;
+    uint8_t state;
+};
+
 // Expected on-wire length, indexed by PacketType (order must match the enum).
 const uint8_t PACKET_SIZE[PKT_TYPE_COUNT] = {
     0,
@@ -208,11 +223,12 @@ const uint8_t PACKET_SIZE[PKT_TYPE_COUNT] = {
     sizeof(LatencyProbe),
     sizeof(LatencyProbe),
     sizeof(SegmentAck),
+    sizeof(GuardStatePacket),
 };
 
 // Names used in log lines, indexed by PacketType / deviceId.
 const char *const PACKET_NAME[PKT_TYPE_COUNT] = {
-    "INVALID", "HUB_STATUS", "WRIST_POSE", "TORSO_POSE", "BEACON", "SEG_REQ", "PING", "PONG", "SEG_ACK"};
+    "INVALID", "HUB_STATUS", "WRIST_POSE", "TORSO_POSE", "BEACON", "SEG_REQ", "PING", "PONG", "SEG_ACK", "GUARD_STATE"};
 const char *const DEVICE_NAME[DEVICE_COUNT] = {"right_wrist", "torso", "left_wrist"};
 
 static_assert(sizeof(PacketHeader) == 5, "PacketHeader size changed");
@@ -223,6 +239,7 @@ static_assert(sizeof(TorsoBeacon) == 13, "TorsoBeacon size changed");
 static_assert(sizeof(SegmentRequest) == 17, "SegmentRequest size changed");
 static_assert(sizeof(LatencyProbe) == 9, "LatencyProbe size changed");
 static_assert(sizeof(SegmentAck) == 9, "SegmentAck size changed");
+static_assert(sizeof(GuardStatePacket) == 11, "GuardStatePacket size changed");
 // ======================= SHARED WIRE PROTOCOL — END =========================
 
 // ================= CONFIG =================
@@ -996,6 +1013,13 @@ unsigned long lastTorsoRxMs = 0;
 bool leftFresh(unsigned long now) { return leftSeen && (now - lastLeftRxMs) < POSE_FRESHNESS_MS; }
 bool torsoFresh(unsigned long now) { return torsoSeen && (now - lastTorsoRxMs) < POSE_FRESHNESS_MS; }
 
+// These globals are defined later with the game-phase state. Arduino's
+// generated prototypes place checkIncomingPose() before those definitions,
+// so declare them explicitly here.
+extern GamePhase phase;
+extern WeaponType lockedWeapon;
+extern GuardState lastGuardState;
+
 void checkIncomingPose()
 {
     uint8_t buf[32];
@@ -1031,6 +1055,25 @@ void checkIncomingPose()
         torsoStable = p.stable;
         torsoSeen = true;
         lastTorsoRxMs = millis();
+    }
+    else if (hdr.type == PKT_GUARD_STATE && hdr.deviceId == LEFT_WRIST_ID)
+    {
+        noteRx(hdr);
+        GuardStatePacket p;
+        memcpy(&p, buf, sizeof(p));
+        if (phase != PHASE_LOCKED || p.weapon != (uint8_t)lockedWeapon ||
+            p.state > GUARDING)
+            return;
+
+        GuardState receivedState = (GuardState)p.state;
+        if (receivedState == GUARDING && lastGuardState != GUARDING)
+            patternStart(motorPlayer, PAT_BUZZ_DOUBLE);
+        lastGuardState = receivedState;
+
+        resultLog(String("guard_state player=") + String(PLAYER_ID) +
+                  " weapon=" + String(weaponName(lockedWeapon)) +
+                  " state=" + (p.state == GUARDING ? "GUARDING" : "IDLE") +
+                  " eventMs=" + String(p.eventMs));
     }
 }
 
@@ -1146,6 +1189,7 @@ const char *weaponName(WeaponType w)
 
 // ---------------- Game phase + weapon lock ----------------
 GamePhase phase = PHASE_WAITING;
+GuardState lastGuardState = GUARD_IDLE;
 
 // Current candidate while detecting (WEAPON_UNKNOWN = nothing held) and
 // when it was first classified; see runDetectionTick().
@@ -1994,8 +2038,7 @@ TemplateMatch nearestTemplate(const Stroke &s)
             {
                 const float *ref = variants[v];
                 float da = angleBetweenDeg(s.ux, s.uy, s.uz, ref[0], ref[1], ref[2], false) / 25.0f;
-                float dp = (noPush ? 180.0f : angleBetweenDeg(s.hx, s.hy, s.hz,
-                             ref[3], ref[4], ref[5], false)) / 45.0f;
+                float dp = (noPush ? 180.0f : angleBetweenDeg(s.hx, s.hy, s.hz, ref[3], ref[4], ref[5], false)) / 45.0f;
                 float distance = sqrt(da * da + dp * dp + dR * dR + dT * dT);
                 if (distance < best.dist)
                     best = {k, distance, da, dp, dR, dT};
@@ -2969,7 +3012,8 @@ void loop()
 #ifdef CG_HARDWARE_GATEWAY
     gatewayPoll(phase == PHASE_LOCKED ? (uint8_t)lockedWeapon : 0);
     int relayDuty = gatewayFeedbackDuty();
-    if (relayDuty >= 0) {
+    if (relayDuty >= 0)
+    {
         patternStop(motorPlayer);
         analogWrite(MOTOR_PIN, relayDuty);
     }
