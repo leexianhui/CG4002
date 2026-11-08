@@ -47,7 +47,7 @@ from feature points that lie on a common level. These are what the dummy is plac
                  │                    ▼             ▼                 ▼
                  │             PropTracker   TrackedImageDebug   (Shield marker:
                  │             sword model   green/yellow         unused in the
-                 │             on the prop   outline + readout    sword-only demo)
+                 │             on the prop   outlines             sword-only demo)
                  │                    │
                  │                    ├──▶ SwordTrail: slash trail when the tip moves fast
                  │                    ▼
@@ -276,8 +276,9 @@ drawn over it. Even when the rendered sword covers the marker on screen, trackin
 ## 10. Debug overlay and buttons
 
 **`AR/TrackedImageDebug.cs`** draws an outline on every tracked marker, the same size as the print,
-with an arrow to the top of the picture: **green** = tracking, **yellow** = limited. The readout in
-the bottom-left shows each marker's state and distance.
+with an arrow to the top of the picture: **green** = tracking, **yellow** = limited. It starts
+hidden; the TRACKING button shows it. (The bottom-left of the screen now holds the HUD's
+per-move cooldowns.)
 
 **`UI/DebugPanel.cs`**, bottom-right:
 

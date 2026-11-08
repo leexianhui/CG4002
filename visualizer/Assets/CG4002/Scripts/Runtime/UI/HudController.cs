@@ -6,23 +6,36 @@ using UnityEngine.UI;
 namespace CG4002.UI
 {
     /// <summary>
-    /// Screen-space HUD (report 6.1.1): health for both players, the local player's attack
-    /// cooldown and weapon, the opponent's guard, and short messages for outcomes and the match
-    /// result. Only draws what GameState and the dispatcher announce; it holds no game logic.
+    /// Screen-space HUD (report 6.1.1), medieval-styled: health for both players, the local player's
+    /// weapon and a cooldown icon per move (bottom left), the opponent's guard, and short messages for outcomes
+    /// and the match result. Only draws what GameState and the dispatcher announce; it holds no game logic.
     ///
     /// The layout lives in the scene (built by CG4002 > Setup Game Scene) so it can be adjusted
     /// in the editor; this class only binds data to it.
     /// </summary>
     public class HudController : MonoBehaviour
     {
+        /// <summary>
+        /// One move's cooldown: its icon, covered by a grey radial overlay (an Image of type Filled)
+        /// that sweeps away as the move becomes ready. Each move cools down on its own.
+        /// </summary>
+        [System.Serializable]
+        public class CooldownRow
+        {
+            public ActionType action;
+            public Image overlay;
+        }
+
         [SerializeField] GameState gameState;
         [SerializeField] MessageDispatcher dispatcher;
 
         [Header("You")]
         [SerializeField] RectTransform selfHealthFill;
         [SerializeField] Text selfHealthText;
-        [SerializeField] RectTransform cooldownFill;
         [SerializeField] Text weaponText;
+
+        [Header("Cooldowns (bottom left)")]
+        [SerializeField] CooldownRow[] cooldownRows = System.Array.Empty<CooldownRow>();
 
         [Header("Opponent")]
         [SerializeField] RectTransform opponentHealthFill;
@@ -34,7 +47,6 @@ namespace CG4002.UI
         [SerializeField] float outcomeSeconds = 0.8f;
         [SerializeField] Text resultText;
 
-        float cooldownDuration = 1f;
         float outcomeHideAt;
 
         void OnEnable()
@@ -42,7 +54,6 @@ namespace CG4002.UI
             gameState.HealthChanged += OnHealthChanged;
             gameState.WeaponChanged += OnWeaponChanged;
             gameState.GuardChanged += OnGuardChanged;
-            gameState.CooldownStarted += OnCooldownStarted;
             gameState.PhaseChanged += OnPhaseChanged;
             dispatcher.OutcomeReceived += OnOutcomeReceived;
         }
@@ -52,7 +63,6 @@ namespace CG4002.UI
             gameState.HealthChanged -= OnHealthChanged;
             gameState.WeaponChanged -= OnWeaponChanged;
             gameState.GuardChanged -= OnGuardChanged;
-            gameState.CooldownStarted -= OnCooldownStarted;
             gameState.PhaseChanged -= OnPhaseChanged;
             dispatcher.OutcomeReceived -= OnOutcomeReceived;
         }
@@ -92,17 +102,11 @@ namespace CG4002.UI
                 opponentGuardIndicator.SetActive(guarding);
         }
 
-        void OnCooldownStarted(PlayerId player, float seconds)
-        {
-            if (player == gameState.LocalPlayer)
-                cooldownDuration = Mathf.Max(seconds, 0.01f);
-        }
-
         void OnPhaseChanged(MatchPhase phase)
         {
             resultText.gameObject.SetActive(phase == MatchPhase.Ended);
             if (phase == MatchPhase.Ended)
-                resultText.text = gameState.Winner == gameState.LocalPlayer ? "DUMMY DEFEATED" : "YOU WERE DEFEATED";
+                resultText.text = gameState.Winner == gameState.LocalPlayer ? "ENEMY DEFEATED" : "YOU WERE DEFEATED";
         }
 
         // ---- Events -----------------------------------------------------------------------
@@ -124,15 +128,20 @@ namespace CG4002.UI
 
         void Update()
         {
-            // The cooldown bar refills continuously, so it is redrawn every frame rather than
-            // on an event. It reads GameState; it doesn't change it.
-            SetFill(cooldownFill, 1f - gameState.Self.CooldownRemaining / cooldownDuration);
+            // Cooldown bars refill continuously, so they are redrawn every frame rather than on an
+            // event. They read GameState; they don't change it.
+            foreach (var row in cooldownRows)
+            {
+                float total = gameState.Self.TotalFor(row.action);
+                row.overlay.fillAmount = total > 0f ? gameState.Self.RemainingFor(row.action) / total : 0f;
+            }
 
             if (outcomeText.gameObject.activeSelf && Time.time >= outcomeHideAt)
                 outcomeText.gameObject.SetActive(false);
         }
 
         // ---- Helpers ----------------------------------------------------------------------
+
 
         /// <summary>Show a fraction of a bar by moving the fill's right edge (0 = empty, 1 = full).</summary>
         static void SetFill(RectTransform fill, float fraction)

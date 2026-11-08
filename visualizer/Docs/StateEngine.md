@@ -98,7 +98,7 @@ All under `Assets/CG4002/Scripts/Runtime/`.
 | `State/MessageDispatcher.cs` | Owns the two queues; drains Inbound into `GameState`, raises events |
 | `State/GameState.cs` | Latest state of both players and the match; a change event per field. Select **Game** in Play mode to watch it in the Inspector |
 | `Controllers/AvatarController.cs` | The opponent avatar: weapon, guard, glide to position, attack animation, hit/block FX |
-| `UI/HudController.cs` | Health bars, attack-ready bar, weapon, GUARDING, HIT / BLOCKED, match result |
+| `UI/HudController.cs` | Medieval HUD: gold-framed health bars, weapon, a cooldown icon per move with a grey radial sweep (bottom left), GUARDING, HIT / BLOCKED, match result. Art in `Assets/CG4002/UI` (credits there) |
 | `UI/DebugPanel.cs` | RESET (sends `START_MATCH_REQUEST`), MOVE DUMMY, TRACKING |
 | `AR/DummyPlacer.cs` | Tap-to-place the arena; sends `START_MATCH_REQUEST` once placed |
 | `AR/PositionReporter.cs` | Sends this player's `POSITION` 10×/s once placed |
@@ -122,7 +122,7 @@ the server, and the real engine can't read the phone's memory either.
      Action          → ActionReceived (P1 isn't the avatar, ignored)
      CombatOutcome   → GameState P2 health 90 → HealthChanged → HUD bar
                      → OutcomeReceived → AvatarController → fx.PlayHit
-     Cooldown        → GameState → CooldownStarted → HUD attack-ready bar
+     Cooldown        → GameState (per move) → HUD cooldown icons (radial sweep), redrawn every frame
 ```
 
 Online, step 2 happens in the Game Engine, and the action in step 1 comes from the IMU instead.

@@ -33,6 +33,9 @@ namespace CG4002.State
 
         public float RemainingFor(ActionType action) => actionCooldowns.TryGetValue(action, out var value)
             ? Mathf.Max(0f, value.remainingSeconds - (cooldownPaused ? 0f : Time.time - cooldownReceivedAt)) : 0f;
+
+        /// <summary>The full length of the move's running cooldown, or 0 if it's ready.</summary>
+        public float TotalFor(ActionType action) => actionCooldowns.TryGetValue(action, out var value) ? value.totalSeconds : 0f;
     }
 
     /// <summary>

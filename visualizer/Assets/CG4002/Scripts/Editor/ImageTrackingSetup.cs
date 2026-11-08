@@ -82,7 +82,6 @@ namespace CG4002.EditorTools
             var debug = GetOrAdd<TrackedImageDebug>(origin.gameObject);
             var debugSettings = new SerializedObject(debug);
             debugSettings.FindProperty("manager").objectReferenceValue = manager;
-            debugSettings.FindProperty("arCamera").objectReferenceValue = origin.Camera;
             debugSettings.FindProperty("material").objectReferenceValue = material;
             debugSettings.ApplyModifiedPropertiesWithoutUndo();
 

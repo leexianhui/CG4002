@@ -9,7 +9,7 @@ namespace CG4002.UI
     /// On-screen buttons for testing on the phone:
     ///   RESET        ask the engine for a new match
     ///   MOVE DUMMY   pick the dummy up; the next tap on a detected surface places it again
-    ///   TRACKING     show or hide the marker outlines and readout (tracking carries on either way)
+    ///   TRACKING     show or hide the marker outlines (tracking carries on either way; off at start)
     /// </summary>
     public class DebugPanel : MonoBehaviour
     {

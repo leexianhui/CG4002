@@ -1,4 +1,5 @@
 using CG4002.AR;
+using CG4002.Combat;
 using CG4002.State;
 using CG4002.UI;
 using UnityEditor;
@@ -14,11 +15,12 @@ namespace CG4002.EditorTools
     /// GameSceneSetup. Rebuilds from scratch each time, so move things in the editor only after
     /// the last setup run, or change the numbers here.
     ///
-    ///   HUD (Canvas + GraphicRaycaster, 1920x1080 reference)
-    ///   ├─ You          top-left:  label, health bar, attack-ready bar, weapon
-    ///   ├─ Opponent     top-right: label, health bar, GUARDING
+    ///   HUD (Canvas + GraphicRaycaster, 1920x1080 reference), medieval-styled
+    ///   ├─ You          top-left:  YOU, gold-framed health bar (HP inside), weapon
+    ///   ├─ Cooldowns    bottom-left: an icon per move (the six the AI recognises) with a grey radial sweep
+    ///   ├─ Opponent     top-right: ENEMY, gold-framed health bar, GUARDING
     ///   ├─ Outcome      centre:    "HIT -10" / "BLOCKED", shown briefly
-    ///   ├─ Result       centre:    "DUMMY DEFEATED"
+    ///   ├─ Result       centre:    "ENEMY DEFEATED"
     ///   └─ Debug        bottom-right: RESET, MOVE DUMMY, TRACKING buttons (DebugPanel)
     ///   WeaponSelect (Canvas + WeaponSelectScreen): title and instruction, top centre; the
     ///                   dummies themselves are spawned in the world at runtime
@@ -31,10 +33,22 @@ namespace CG4002.EditorTools
         // Kept away from the screen edges (report 6.1.3).
         const float Margin = 60f;
         const float PanelWidth = 520f;
+        // The YOU / ENEMY panels (health bars) sit a little lower and further in than the corners,
+        // nearer the middle of the lens.
+        static readonly Vector2 TopPanelInset = new(140f, 100f);
 
-        static readonly Color SelfColour = new(0.25f, 0.7f, 1f);
-        static readonly Color OpponentColour = new(1f, 0.35f, 0.25f);
-        static readonly Color BarBackground = new(0f, 0f, 0f, 0.55f);
+        // Medieval theme: gold names and frames, parchment text, green health over a dark red empty bar.
+        static readonly Color Gold = new(0.96f, 0.82f, 0.48f);
+        static readonly Color EnemyColour = new(0.95f, 0.5f, 0.32f);
+        static readonly Color Parchment = new(0.95f, 0.9f, 0.78f);
+        static readonly Color HealthColour = new(0.47f, 0.88f, 0.35f);
+        static readonly Color EmptyColour = new(0.43f, 0.07f, 0.05f);
+        static readonly Color IconColour = new(0.94f, 0.8f, 0.47f);
+        static readonly Color CooldownShade = new(0.08f, 0.08f, 0.08f, 0.72f);
+
+        // HUD art (Assets/CG4002/UI, drawn by Tools/make_hud_art.py; icons from game-icons.net, font Cinzel).
+        const string ArtDir = "Assets/CG4002/UI";
+        static Font HudFont => AssetDatabase.LoadAssetAtPath<Font>($"{ArtDir}/Fonts/Cinzel-Bold.ttf");
 
         public static void Build(GameState gameState, MessageDispatcher dispatcher,
             DummyPlacer placer, TrackedImageDebug trackingOverlay)
@@ -56,23 +70,20 @@ namespace CG4002.EditorTools
 
             // You: top-left.
             var self = Panel(root, "You", anchorX: 0f);
-            Label(self, "Label", "YOU", 34, TextAnchor.UpperLeft, y: 0f, SelfColour);
-            var selfHealth = Bar(self, "Health", y: -50f, height: 34f, SelfColour);
-            var selfHealthText = Label(self, "HealthText", "100 / 100", 26, TextAnchor.UpperLeft, y: -92f, Color.white);
-            Label(self, "CooldownLabel", "ATTACK", 20, TextAnchor.UpperLeft, y: -132f, Color.white);
-            var cooldown = Bar(self, "Cooldown", y: -160f, height: 12f, Color.white);
-            var weapon = Label(self, "Weapon", "SWORD & SHIELD", 24, TextAnchor.UpperLeft, y: -186f, Color.white);
+            Label(self, "Label", "YOU", 32, TextAnchor.UpperLeft, y: 0f, Gold);
+            var (selfHealth, selfHealthText) = HealthBar(self, anchorX: 0f, y: -44f);
+            var weapon = Label(self, "Weapon", "SWORD & SHIELD", 24, TextAnchor.UpperLeft, y: -116f, Parchment);
 
             // Opponent: top-right.
             var opponent = Panel(root, "Opponent", anchorX: 1f);
-            Label(opponent, "Label", "DUMMY", 34, TextAnchor.UpperRight, y: 0f, OpponentColour);
-            var opponentHealth = Bar(opponent, "Health", y: -50f, height: 34f, OpponentColour);
-            var opponentHealthText = Label(opponent, "HealthText", "100 / 100", 26, TextAnchor.UpperRight, y: -92f, Color.white);
-            var guard = Label(opponent, "Guarding", "GUARDING", 28, TextAnchor.UpperRight, y: -132f, new Color(1f, 0.85f, 0.2f));
+            Label(opponent, "Label", "ENEMY", 32, TextAnchor.UpperRight, y: 0f, EnemyColour);
+            var (opponentHealth, opponentHealthText) = HealthBar(opponent, anchorX: 1f, y: -44f);
+            var guard = Label(opponent, "Guarding", "GUARDING", 26, TextAnchor.UpperRight, y: -116f, Gold);
 
             // Centre messages.
             var outcome = CentreText(root, "Outcome", 72, y: 120f);
             var result = CentreText(root, "Result", 96, y: 0f);
+            result.color = Gold;
 
             var hud = canvasObject.AddComponent<HudController>();
             var settings = new SerializedObject(hud);
@@ -80,13 +91,13 @@ namespace CG4002.EditorTools
             settings.FindProperty("dispatcher").objectReferenceValue = dispatcher;
             settings.FindProperty("selfHealthFill").objectReferenceValue = selfHealth;
             settings.FindProperty("selfHealthText").objectReferenceValue = selfHealthText;
-            settings.FindProperty("cooldownFill").objectReferenceValue = cooldown;
             settings.FindProperty("weaponText").objectReferenceValue = weapon;
             settings.FindProperty("opponentHealthFill").objectReferenceValue = opponentHealth;
             settings.FindProperty("opponentHealthText").objectReferenceValue = opponentHealthText;
             settings.FindProperty("opponentGuardIndicator").objectReferenceValue = guard.gameObject;
             settings.FindProperty("outcomeText").objectReferenceValue = outcome;
             settings.FindProperty("resultText").objectReferenceValue = result;
+            BuildCooldowns(root, settings.FindProperty("cooldownRows"));
             settings.ApplyModifiedPropertiesWithoutUndo();
 
             BuildDebugPanel(root, gameState, dispatcher, placer, trackingOverlay);
@@ -120,6 +131,8 @@ namespace CG4002.EditorTools
 
             var title = CentreText(canvasObject.transform, "Title", 72, y: 0f);
             var instruction = CentreText(canvasObject.transform, "Instruction", 40, y: 0f);
+            title.color = Gold;
+            instruction.color = Parchment;
             foreach (var (text, y) in new[] { (title, -Margin), (instruction, -Margin - 100f) })
             {
                 var rect = text.rectTransform;
@@ -139,6 +152,7 @@ namespace CG4002.EditorTools
             settings.FindProperty("hud").objectReferenceValue = hud.GetComponent<Canvas>();
             settings.FindProperty("title").objectReferenceValue = title;
             settings.FindProperty("instruction").objectReferenceValue = instruction;
+            settings.FindProperty("labelFont").objectReferenceValue = HudFont;
             settings.ApplyModifiedPropertiesWithoutUndo();
             return screen;
         }
@@ -167,6 +181,7 @@ namespace CG4002.EditorTools
             scaler.referenceResolution = new Vector2(1920f, 1080f);
             scaler.matchWidthOrHeight = 0.5f;
             var label = CentreText(canvasObject.transform, "MoveName", 56, y: -300f);
+            label.color = Gold;
 
             var view = canvasObject.AddComponent<CG4002.Controllers.FirstPersonAttack>();
             var settings = new SerializedObject(view);
@@ -185,6 +200,128 @@ namespace CG4002.EditorTools
         static T LoadGenerated<T>(string path) where T : Object =>
             AssetDatabase.LoadAssetAtPath<T>($"{AssetIO.Root}/{path}")
             ?? throw new System.InvalidOperationException($"Missing {AssetIO.Root}/{path}: run CG4002 > Generate Models.");
+
+        // The six attacks the AI recognises, in the order the engine's vocabulary lists them.
+        // Icons: game-icons.net (CC BY 3.0) saber-slash, sword-wound, crossed-slashes, stiletto,
+        // sword-spin (Lorc) and sword-brandish (Delapouite). See Assets/CG4002/UI/CREDITS.md.
+        static readonly (ActionType action, string icon)[] CooldownMoves =
+        {
+            (ActionType.HorizontalSwing, "Horizontal"), (ActionType.VerticalSwing, "Vertical"),
+            (ActionType.DiagonalSwing, "Diagonal"), (ActionType.Thrust, "Thrust"),
+            (ActionType.SpinAttack, "Spin"), (ActionType.Uppercut, "Uppercut"),
+        };
+
+        /// <summary>
+        /// Bottom-left: a row of framed icons, one per move. A grey overlay covers the icon while the
+        /// move cools down and sweeps away anticlockwise as it becomes ready (Image Filled, Radial360).
+        /// </summary>
+        static void BuildCooldowns(Transform root, SerializedProperty rows)
+        {
+            const float size = 108f, gap = 12f;
+            var panel = NewRect(root, "Cooldowns");
+            panel.anchorMin = panel.anchorMax = panel.pivot = new Vector2(0f, 0f);
+            panel.anchoredPosition = new Vector2(Margin, Margin);
+            panel.sizeDelta = new Vector2(CooldownMoves.Length * size + (CooldownMoves.Length - 1) * gap, size);
+
+            // The icon and overlay sit inside the frame's gold border (22 of its 160 px each side).
+            var inner = (min: new Vector2(22f / 160f, 22f / 160f), max: new Vector2(138f / 160f, 138f / 160f));
+            rows.arraySize = CooldownMoves.Length;
+            for (int i = 0; i < CooldownMoves.Length; i++)
+            {
+                var (action, icon) = CooldownMoves[i];
+                var slot = NewRect(panel, action.ToString());
+                slot.anchorMin = slot.anchorMax = slot.pivot = new Vector2(0f, 0f);
+                slot.anchoredPosition = new Vector2(i * (size + gap), 0f);
+                slot.sizeDelta = new Vector2(size, size);
+                Picture(slot, Art("Frames/IconFrame.png"), Color.white);
+
+                var glyph = NewRect(slot, "Icon");
+                Inset(glyph, inner.min, inner.max);
+                Picture(glyph, Art($"Icons/Icon_{icon}.png"), IconColour);
+
+                var shade = NewRect(slot, "Cooldown");
+                Inset(shade, inner.min, inner.max);
+                var overlay = Picture(shade, Art("Frames/White.png"), CooldownShade);
+                overlay.type = Image.Type.Filled;
+                overlay.fillMethod = Image.FillMethod.Radial360;
+                overlay.fillOrigin = (int)Image.Origin360.Top;
+                overlay.fillClockwise = true;  // as fillAmount falls, the edge sweeps back anticlockwise
+                overlay.fillAmount = 0f;
+
+                var row = rows.GetArrayElementAtIndex(i);
+                row.FindPropertyRelative("action").enumValueIndex = System.Array.IndexOf(System.Enum.GetValues(typeof(ActionType)), action);
+                row.FindPropertyRelative("overlay").objectReferenceValue = overlay;
+            }
+        }
+
+        /// <summary>
+        /// A health bar in the gold frame: the dark red empty bar and the green fill (resized by
+        /// HudController) sit in the frame's recess, with the HP count over them.
+        /// </summary>
+        static (RectTransform fill, Text text) HealthBar(RectTransform panel, float anchorX, float y)
+        {
+            const float width = 440f, height = width * 150f / 1040f;  // the frame art's shape
+            var bar = NewRect(panel, "Health");
+            bar.anchorMin = bar.anchorMax = bar.pivot = new Vector2(anchorX, 1f);
+            bar.anchoredPosition = new Vector2(0f, y);
+            bar.sizeDelta = new Vector2(width, height);
+
+            // The frame's transparent recess, in its pixels: x 74..966 of 1040, y 52..98 of 150 from the top.
+            var recess = NewRect(bar, "Recess");
+            Inset(recess, new Vector2(74f / 1040f, 1f - 98f / 150f), new Vector2(966f / 1040f, 1f - 52f / 150f));
+            var empty = NewRect(recess, "Empty");
+            Inset(empty, Vector2.zero, Vector2.one);
+            Picture(empty, Art("Frames/FillShade.png"), EmptyColour);
+            var fill = NewRect(recess, "Fill");
+            Inset(fill, Vector2.zero, Vector2.one);
+            fill.pivot = new Vector2(0f, 0.5f);
+            Picture(fill, Art("Frames/FillShade.png"), HealthColour);
+            var count = NewRect(recess, "Text");
+            Inset(count, Vector2.zero, Vector2.one);
+            var text = AddText(count, "100 / 100", 18, TextAnchor.MiddleCenter, Color.white);
+            text.gameObject.AddComponent<Outline>().effectColor = new Color(0f, 0f, 0f, 0.85f);
+
+            var frame = NewRect(bar, "Frame");
+            Inset(frame, Vector2.zero, Vector2.one);
+            Picture(frame, Art("Frames/HealthFrame.png"), Color.white);
+            return (fill, text);
+        }
+
+        /// <summary>A non-interactive image (so it never swallows a tap meant for placing the arena).</summary>
+        static Image Picture(RectTransform rect, Sprite sprite, Color colour)
+        {
+            var image = rect.gameObject.AddComponent<Image>();
+            image.sprite = sprite;
+            image.color = colour;
+            image.raycastTarget = false;
+            return image;
+        }
+
+        static void Inset(RectTransform rect, Vector2 anchorMin, Vector2 anchorMax)
+        {
+            rect.anchorMin = anchorMin;
+            rect.anchorMax = anchorMax;
+            rect.offsetMin = rect.offsetMax = Vector2.zero;
+        }
+
+        /// <summary>Loads a HUD texture as a UI sprite, setting its import options (and 9-slice border) once.</summary>
+        static Sprite Art(string path, float border = 0f)
+        {
+            string full = $"{ArtDir}/{path}";
+            var importer = AssetImporter.GetAtPath(full) as TextureImporter
+                ?? throw new System.InvalidOperationException($"Missing HUD art {full}: run Tools/make_hud_art.py.");
+            var wanted = new Vector4(border, border, border, border);
+            if (importer.textureType != TextureImporterType.Sprite || importer.spriteBorder != wanted || importer.mipmapEnabled)
+            {
+                importer.textureType = TextureImporterType.Sprite;
+                importer.spriteImportMode = SpriteImportMode.Single;
+                importer.alphaIsTransparency = true;
+                importer.mipmapEnabled = false;
+                importer.spriteBorder = wanted;
+                importer.SaveAndReimport();
+            }
+            return AssetDatabase.LoadAssetAtPath<Sprite>(full);
+        }
 
         /// <summary>Three stacked buttons in the bottom-right corner.</summary>
         static void BuildDebugPanel(Transform root, GameState gameState, MessageDispatcher dispatcher,
@@ -214,20 +351,29 @@ namespace CG4002.EditorTools
 
         static Button DebugButton(RectTransform panel, string name, string label, float y)
         {
-            var rect = NewRect(panel, name);
+            var button = FramedButton(panel, name, label, 24);
+            var rect = (RectTransform)button.transform;
             rect.anchorMin = new Vector2(0f, 0f);
             rect.anchorMax = new Vector2(1f, 0f);
             rect.pivot = new Vector2(0.5f, 0f);
             rect.anchoredPosition = new Vector2(0f, y);
             rect.sizeDelta = new Vector2(0f, 76f);
-            rect.gameObject.AddComponent<Image>().color = BarBackground;
+            return button;
+        }
+
+        /// <summary>A button in the gold ButtonFrame with a centred gold label; the caller sizes and places it.</summary>
+        static Button FramedButton(RectTransform parent, string name, string label, int fontSize)
+        {
+            var rect = NewRect(parent, name);
+            var frame = rect.gameObject.AddComponent<Image>();
+            frame.sprite = Art("Frames/ButtonFrame.png", border: 24f);
+            frame.type = Image.Type.Sliced;
             var button = rect.gameObject.AddComponent<Button>();
+            button.targetGraphic = frame;
 
             var text = NewRect(rect, "Label");
-            text.anchorMin = Vector2.zero;
-            text.anchorMax = Vector2.one;
-            text.offsetMin = text.offsetMax = Vector2.zero;
-            AddText(text, label, 28, TextAnchor.MiddleCenter, Color.white);
+            Inset(text, Vector2.zero, Vector2.one);
+            AddText(text, label, fontSize, TextAnchor.MiddleCenter, Gold);
             return button;
         }
 
@@ -239,30 +385,14 @@ namespace CG4002.EditorTools
             new GameObject("EventSystem", typeof(EventSystem), typeof(InputSystemUIInputModule));
         }
 
-        /// <summary>A column pinned to the top-left (anchorX 0) or top-right (anchorX 1) corner.</summary>
+        /// <summary>A column pinned near the top-left (anchorX 0) or top-right (anchorX 1) corner, TopPanelInset in.</summary>
         static RectTransform Panel(Transform parent, string name, float anchorX)
         {
             var rect = NewRect(parent, name);
             rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(anchorX, 1f);
-            rect.anchoredPosition = new Vector2(anchorX == 0f ? Margin : -Margin, -Margin);
+            rect.anchoredPosition = new Vector2(anchorX == 0f ? TopPanelInset.x : -TopPanelInset.x, -TopPanelInset.y);
             rect.sizeDelta = new Vector2(PanelWidth, 240f);
             return rect;
-        }
-
-        /// <summary>A background strip with a coloured fill; returns the fill, which HudController resizes.</summary>
-        static RectTransform Bar(RectTransform panel, string name, float y, float height, Color colour)
-        {
-            var background = NewRect(panel, name);
-            StretchRow(background, y, height);
-            background.gameObject.AddComponent<Image>().color = BarBackground;
-
-            var fill = NewRect(background, "Fill");
-            fill.anchorMin = Vector2.zero;
-            fill.anchorMax = Vector2.one;
-            fill.offsetMin = fill.offsetMax = Vector2.zero;
-            fill.pivot = new Vector2(0f, 0.5f);
-            fill.gameObject.AddComponent<Image>().color = colour;
-            return fill;
         }
 
         static Text Label(RectTransform panel, string name, string text, int size, TextAnchor alignment, float y, Color colour)
@@ -279,18 +409,21 @@ namespace CG4002.EditorTools
             rect.anchoredPosition = new Vector2(0f, y);
             rect.sizeDelta = new Vector2(1400f, size * 1.4f);
             var text = AddText(rect, "", size, TextAnchor.MiddleCenter, Color.white);
-            // A dark outline keeps white text readable over a bright camera image.
+            // A dark outline and drop shadow keep the text readable over a bright camera image.
             text.gameObject.AddComponent<Outline>().effectColor = new Color(0f, 0f, 0f, 0.8f);
+            var shadow = text.gameObject.AddComponent<Shadow>();
+            shadow.effectColor = new Color(0f, 0f, 0f, 0.6f);
+            shadow.effectDistance = new Vector2(3f, -3f);
             return text;
         }
 
         static Text AddText(RectTransform rect, string content, int size, TextAnchor alignment, Color colour)
         {
             var text = rect.gameObject.AddComponent<Text>();
-            text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            text.font = HudFont;
             text.text = content;
             text.fontSize = size;
-            text.fontStyle = FontStyle.Bold;
+            text.fontStyle = FontStyle.Normal;  // the font file is already Cinzel Bold
             text.alignment = alignment;
             text.color = colour;
             text.horizontalOverflow = HorizontalWrapMode.Overflow;

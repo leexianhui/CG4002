@@ -43,6 +43,8 @@ namespace CG4002.UI
         [SerializeField] Canvas hud;
         [SerializeField] Text title;
         [SerializeField] Text instruction;
+        [Tooltip("Font for the weapon names above the dummies (the HUD's). Unity's built-in font if empty.")]
+        [SerializeField] Font labelFont;
 
         [Header("Layout")]
         [Tooltip("Weapons offered, left to right as the player sees them.")]
@@ -173,7 +175,7 @@ namespace CG4002.UI
             MakeHologram(dummy, definition.accentColor);
             dummies[weapon] = dummy;
 
-            labels.Add(Label(slot, definition.displayName.ToUpperInvariant(), definition.accentColor, dummyHeight + 0.25f));
+            labels.Add(Label(slot, definition.displayName.ToUpperInvariant(), definition.accentColor, dummyHeight + 0.25f, labelFont));
         }
 
         void MakeHologram(AvatarView dummy, Color colour)
@@ -197,13 +199,13 @@ namespace CG4002.UI
                 renderer.SetPropertyBlock(block);
         }
 
-        static TextMesh Label(Transform parent, string text, Color colour, float height)
+        static TextMesh Label(Transform parent, string text, Color colour, float height, Font font)
         {
             var label = new GameObject("Label").AddComponent<TextMesh>();
             label.transform.SetParent(parent, false);
             label.transform.localPosition = new Vector3(0f, height, 0f);
             label.text = text;
-            label.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            label.font = font != null ? font : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             label.GetComponent<MeshRenderer>().sharedMaterial = label.font.material;
             label.fontSize = 64;
             label.characterSize = 0.02f;

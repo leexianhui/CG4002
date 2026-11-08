@@ -6,8 +6,8 @@ using UnityEngine.XR.ARSubsystems;
 namespace CG4002.AR
 {
     /// <summary>
-    /// Tracking overlay: outlines every tracked image and lists its state and distance on
-    /// screen. Toggled by the TRACKING button.
+    /// Tracking overlay: outlines every tracked image, green while tracking and yellow while
+    /// limited, with an arrow to the top of the picture. Toggled by the TRACKING button; off at start.
     ///
     /// AR Foundation places each ARTrackedImage at the image centre with the image in its
     /// local XZ plane: +Y is the surface normal (towards the camera when you face the print)
@@ -16,7 +16,6 @@ namespace CG4002.AR
     public class TrackedImageDebug : MonoBehaviour
     {
         [SerializeField] ARTrackedImageManager manager;
-        [SerializeField] Camera arCamera;
         [Tooltip("Unlit material for the outlines. An asset reference, so the shader isn't stripped from builds.")]
         [SerializeField] Material material;
 
@@ -25,14 +24,12 @@ namespace CG4002.AR
             public ARTrackedImage image;
             public GameObject visual;
             public Renderer[] renderers;
-            public float lastTrackedTime;
         }
 
         readonly Dictionary<TrackableId, Entry> entries = new();
-        GUIStyle style;
 
-        /// <summary>Show the outlines and readout. Tracking itself carries on either way.</summary>
-        public bool Visible { get; set; } = true;
+        /// <summary>Show the outlines. Tracking itself carries on either way.</summary>
+        public bool Visible { get; set; }
 
         void OnEnable() => manager.trackablesChanged.AddListener(OnChanged);
         void OnDisable() => manager.trackablesChanged.RemoveListener(OnChanged);
@@ -85,41 +82,12 @@ namespace CG4002.AR
             foreach (var entry in entries.Values)
             {
                 bool tracking = entry.image.trackingState == TrackingState.Tracking;
-                if (tracking)
-                    entry.lastTrackedTime = Time.time;
                 // Green = tracking, yellow = limited (pose not updating), hidden = lost.
                 var color = tracking ? Color.green : Color.yellow;
                 foreach (var r in entry.renderers)
                     r.material.color = color;
                 entry.visual.SetActive(Visible && entry.image.trackingState != TrackingState.None);
             }
-        }
-
-        void OnGUI()
-        {
-            if (!Visible)
-                return;
-            style ??= new GUIStyle(GUI.skin.box) { fontSize = 34, alignment = TextAnchor.UpperLeft, richText = true };
-            var lines = new List<string> { "<b>Image tracking</b>" };
-            if (entries.Count == 0)
-                lines.Add("no images detected yet");
-            foreach (var entry in entries.Values)
-            {
-                var image = entry.image;
-                float distance = arCamera != null ? Vector3.Distance(arCamera.transform.position, image.transform.position) : 0f;
-                string state = image.trackingState switch
-                {
-                    TrackingState.Tracking => "<color=#7CFC00>TRACKING</color>",
-                    TrackingState.Limited => "<color=yellow>LIMITED</color>",
-                    _ => "<color=red>NONE</color>",
-                };
-                float lost = Time.time - entry.lastTrackedTime;
-                lines.Add($"{image.referenceImage.name}: {state}  {distance:0.00} m" +
-                          (image.trackingState == TrackingState.Tracking ? "" : $"  (lost {lost:0.0}s)"));
-            }
-            // Bottom-left, clear of the HUD along the top of the screen.
-            float height = 60 + 50 * lines.Count;
-            GUI.Box(new Rect(30, Screen.height - height - 30, 900, height), string.Join("\n", lines), style);
         }
     }
 }
