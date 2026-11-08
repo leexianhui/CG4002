@@ -197,7 +197,7 @@ struct __attribute__((packed)) SegmentAck
 
 struct __attribute__((packed)) GuardStatePacket
 {
-    PacketHeader hdr;
+    PacketHeader hdr; // PKT_GUARD_STATE
     uint32_t eventMs;
     uint8_t weapon;
     uint8_t state;

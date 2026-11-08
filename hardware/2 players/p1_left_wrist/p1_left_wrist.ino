@@ -16,7 +16,7 @@
 //     board's frame (static tilt only — no gyro integration, so no drift;
 //     this is a held-pose reading, not a continuous-motion one).
 //   - Gates readings on "stillness" (gyro magnitude below threshold for a
-//     sustainedany window) so a reading is only trusted once the player is
+//     sustained window) so a reading is only trusted once the player is
 //     holding the ready stance still.
 //   - Broadcasts a lightweight WristPose UDP packet. The hub combines it
 //     with its own pose to classify the weapon.
@@ -36,7 +36,8 @@ const char *password = "12345678";
 #define WIFI_SLEEP_DISABLED 1
 #endif
 
-// 1 = stream every left-wrist IMU sample to the laptop on RAW_PORT.
+// 1 = stream every left-wrist IMU sample to the laptop on RAW_PORT. This is
+// needed for recording guard poses after the weapon has locked.
 #ifndef RAW_STREAM
 #define RAW_STREAM 1
 #endif
@@ -187,7 +188,7 @@ struct __attribute__((packed)) SegmentAck
 
 struct __attribute__((packed)) GuardStatePacket
 {
-    PacketHeader hdr;
+    PacketHeader hdr; // PKT_GUARD_STATE
     uint32_t eventMs;
     uint8_t weapon;
     uint8_t state;
@@ -508,7 +509,8 @@ float gravElDeg()
 
 float gravAzDeg() { return atan2(gravY, gravX) * 180.0 / PI; }
 
-// Guard references. Recalibrate if the board mounting changes.
+// Guard references obtained from the first P2 recordings. Recalibrate if the
+// board mounting changes.
 struct GuardReference
 {
     WeaponType weapon;
@@ -555,14 +557,19 @@ void debugLog(String msg)
     debugUdp.endPacket();
 }
 
+// ---------------- Raw sample stream (RAW_STREAM builds only) ----------------
+// Matches the RawBatch format used by the right-wrist and torso sketches.
+// The listener identifies this stream as left_wrist from deviceId.
 #if RAW_STREAM
 #define RAW_BATCH 10
 const uint8_t RAW_MAGIC = 'R';
+
 struct __attribute__((packed)) RawSample
 {
     uint32_t t;
     int16_t ax, ay, az, gx, gy, gz;
 };
+
 struct __attribute__((packed)) RawBatch
 {
     uint8_t magic;
@@ -573,12 +580,15 @@ struct __attribute__((packed)) RawBatch
     RawSample s[RAW_BATCH];
 };
 static_assert(sizeof(RawBatch) == 166, "RawBatch size changed");
+
 RawBatch rawBatch;
 uint16_t rawSeq = 0;
+
 int16_t rawFixed(float v, float scale)
 {
     return (int16_t)constrain(lroundf(v * scale), -32767L, 32767L);
 }
+
 void rawStreamPush(uint32_t t, float ax_g, float ay_g, float az_g,
                    float gx_dps, float gy_dps, float gz_dps)
 {
@@ -587,6 +597,7 @@ void rawStreamPush(uint32_t t, float ax_g, float ay_g, float az_g,
          rawFixed(gx_dps, 10), rawFixed(gy_dps, 10), rawFixed(gz_dps, 10)};
     if (rawBatch.n < RAW_BATCH)
         return;
+
     rawBatch.magic = RAW_MAGIC;
     rawBatch.playerId = PLAYER_ID;
     rawBatch.deviceId = THIS_DEVICE_ID;
@@ -645,6 +656,7 @@ void updateGuardDetection(float el, float az, bool stable, unsigned long now)
 {
     if (hubPhase != PHASE_LOCKED || hubWeapon == WEAPON_UNKNOWN)
         return;
+
     float distance = guardDistanceDeg(hubWeapon, el, az);
     if (guardState == GUARD_IDLE)
     {
@@ -761,6 +773,10 @@ void loop()
 {
     checkIncomingHubStatus();
     printLinkStats(millis());
+
+    // Continue reading after PHASE_LOCKED so guard detection can use the
+    // left wrist. Pose broadcasts remain pre-lock only; raw samples are
+    // exported in every phase when RAW_STREAM is enabled.
 
     if (hubPhase != PHASE_LOCKED)
     {

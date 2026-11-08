@@ -206,7 +206,7 @@ struct __attribute__((packed)) SegmentAck
 
 struct __attribute__((packed)) GuardStatePacket
 {
-    PacketHeader hdr;
+    PacketHeader hdr; // PKT_GUARD_STATE
     uint32_t eventMs;
     uint8_t weapon;
     uint8_t state;
@@ -1013,6 +1013,9 @@ unsigned long lastTorsoRxMs = 0;
 bool leftFresh(unsigned long now) { return leftSeen && (now - lastLeftRxMs) < POSE_FRESHNESS_MS; }
 bool torsoFresh(unsigned long now) { return torsoSeen && (now - lastTorsoRxMs) < POSE_FRESHNESS_MS; }
 
+// These globals are defined later with the game-phase state. Arduino's
+// generated prototypes place checkIncomingPose() before those definitions,
+// so declare them explicitly here.
 extern GamePhase phase;
 extern WeaponType lockedWeapon;
 extern GuardState lastGuardState;
@@ -2035,8 +2038,7 @@ TemplateMatch nearestTemplate(const Stroke &s)
             {
                 const float *ref = variants[v];
                 float da = angleBetweenDeg(s.ux, s.uy, s.uz, ref[0], ref[1], ref[2], false) / 25.0f;
-                float dp = (noPush ? 180.0f : angleBetweenDeg(s.hx, s.hy, s.hz,
-                             ref[3], ref[4], ref[5], false)) / 45.0f;
+                float dp = (noPush ? 180.0f : angleBetweenDeg(s.hx, s.hy, s.hz, ref[3], ref[4], ref[5], false)) / 45.0f;
                 float distance = sqrt(da * da + dp * dp + dR * dR + dT * dT);
                 if (distance < best.dist)
                     best = {k, distance, da, dp, dR, dT};
@@ -3010,7 +3012,8 @@ void loop()
 #ifdef CG_HARDWARE_GATEWAY
     gatewayPoll(phase == PHASE_LOCKED ? (uint8_t)lockedWeapon : 0);
     int relayDuty = gatewayFeedbackDuty();
-    if (relayDuty >= 0) {
+    if (relayDuty >= 0)
+    {
         patternStop(motorPlayer);
         analogWrite(MOTOR_PIN, relayDuty);
     }
