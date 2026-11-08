@@ -1978,6 +1978,29 @@ TemplateMatch nearestTemplate(const Stroke &s)
         float d = sqrt(dA * dA + dP * dP + dR * dR + dT * dT);
         if (d < best.dist)
             best = {k, d, dA, dP, dR, dT};
+        // Reviewed downward diagonal variants, gated to committed strokes.
+        // Keep the fitted distance/torso limits; upward setup cannot match.
+        if (PLAYER_ID == 2 && strcmp(m.action, "diagonal") == 0 &&
+            (lockedWeapon == WEAPON_MACE || lockedWeapon == WEAPON_SPEAR) &&
+            s.peakDps >= 350 && s.rotDeg >= 100 && buffer[s.b].t - buffer[s.a].t <= 750)
+        {
+            const float variants[3][6] = {
+                {-0.30f, -0.50f, -0.8124f, 0.15f, 0.40f, -0.9042f},
+                {0.10f, -0.35f, -0.9314f, 0.0f, 0.85f, -0.5268f},
+                {0.62f, 0.42f, -0.6627f, 0.35f, 0.85f, -0.3937f}};
+            int first = lockedWeapon == WEAPON_MACE ? 0 : 2;
+            int end = lockedWeapon == WEAPON_MACE ? 2 : 3;
+            for (int v = first; v < end; v++)
+            {
+                const float *ref = variants[v];
+                float da = angleBetweenDeg(s.ux, s.uy, s.uz, ref[0], ref[1], ref[2], false) / 25.0f;
+                float dp = (noPush ? 180.0f : angleBetweenDeg(s.hx, s.hy, s.hz,
+                             ref[3], ref[4], ref[5], false)) / 45.0f;
+                float distance = sqrt(da * da + dp * dp + dR * dR + dT * dT);
+                if (distance < best.dist)
+                    best = {k, distance, da, dp, dR, dT};
+            }
+        }
     }
     return best;
 }
@@ -2293,11 +2316,57 @@ void rememberStrike(const Stroke &s, const TemplateMatch &m)
     rememberAccepted(buffer[s.a].t, buffer[s.b].t, s.hx, s.hy, s.hz, spin, true);
 }
 
+// Reject preparation before either matcher can update accepted history.
+// Mirrored by figpipe.handling.rotation_reject using the November P2 captures.
+const char *handlingReject(const Stroke &s, const char *action)
+{
+    if (PLAYER_ID != 2 || (lockedWeapon != WEAPON_MACE && lockedWeapon != WEAPON_SPEAR))
+        return nullptr;
+    uint32_t duration = buffer[s.b].t - buffer[s.a].t;
+    bool upper = strcmp(action, "uppercut") == 0;
+    if (lockedWeapon == WEAPON_SPEAR && upper && s.ux >= 0.20f && duration >= 600)
+        return "return";
+    bool cut = strcmp(action, "vertical") == 0 || strcmp(action, "diagonal") == 0;
+    if ((upper || strcmp(action, "diagonal") == 0) && s.uz >= 0.60f)
+    {
+        if (s.ux <= 0.40f && s.uy >= 0.20f &&
+            (s.hz <= (lockedWeapon == WEAPON_MACE ? -0.10f : -0.25f) ||
+             (lockedWeapon == WEAPON_SPEAR && s.peakDps >= 400 && s.hz <= -0.08f)))
+            return "guard_raise";
+        if (s.peakDps < 300 && duration >= 700)
+            return "guard_raise";
+        if (lockedWeapon == WEAPON_SPEAR && s.ux <= -0.45f && s.peakDps < 300)
+            return "guard_raise";
+    }
+    if (cut)
+    {
+        if (s.peakDps < 250 && duration >= 700)
+            return "return";
+        if (lockedWeapon == WEAPON_SPEAR && s.hy >= 0.65f &&
+            s.ux * -0.360f + s.uy * -0.290f + s.uz * -0.887f >= 0.9659258f)
+            return "return";
+        if (lockedWeapon == WEAPON_SPEAR && s.peakDps >= 400 && duration <= 450 &&
+            s.ux <= -0.25f && s.uy <= -0.20f && s.uz <= -0.80f && s.hy >= 0.90f)
+            return "return";
+    }
+    return nullptr;
+}
+
 // The push's reason to be rejected from context, or nullptr.
 const char *pushContextReject(const PushStroke &p)
 {
     uint32_t t0 = buffer[p.a].t, t1 = buffer[p.e].t;
     uint32_t w = max((uint32_t)RETURN_MIN_MS, t1 - t0);
+    // A rejected lift must not re-enter as a thrust from the same IMU motion.
+    for (int k = 0; k < strokeCount; k++)
+    {
+        const Stroke &s = strokes[k];
+        if ((int32_t)(buffer[s.a].t - t1) >= 0 || (int32_t)(t0 - buffer[s.b].t) >= 0)
+            continue;
+        TemplateMatch m = nearestTemplate(s);
+        if (m.idx >= 0 && handlingReject(s, STRIKE_MODEL[m.idx].action))
+            return "handling";
+    }
     for (int k = 0; k < acceptedCount; k++)
     {
         const AcceptedStroke &a = acceptedAt(k);
@@ -2349,6 +2418,8 @@ TemplateMatch combinedRotationMatch(const Stroke &s, int index, CombinedCandidat
     {
         const LenientTemplate &m = P2_LENIENT_MODEL[k];
         if (m.weapon != lockedWeapon || m.push)
+            continue;
+        if (handlingReject(s, m.hint))
             continue;
         if (lenientHistoryValid && !lenientHistoryPush &&
             returnOf(lenientHistoryEndMs, lenientHistoryDurMs, lenientHistorySpin,
@@ -2519,9 +2590,12 @@ void onMotionEnd(const char *closeReason)
             }
         }
 
+        const char *handling = m.idx >= 0 ? handlingReject(s, STRIKE_MODEL[m.idx].action) : nullptr;
         const char *reason;
         if (s.torsoBeacons == 0)
             reason = "torso_data"; // check torso link/power
+        else if (handling)
+            reason = handling;
         else if (!(m.idx >= 0 && STRIKE_MODEL[m.idx].bidirectional) && isReturnOfLastStrike(s))
             reason = "return";
         else if (m.idx >= 0 && strcmp(STRIKE_MODEL[m.idx].action, "uppercut") == 0 &&

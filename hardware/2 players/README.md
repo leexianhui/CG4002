@@ -47,8 +47,9 @@ flashed with a player 1 sketch pairs with the wrong player.
      torso for the same time window of its samples.
    - **Rejected:** a red flash.
 
-   None of this depends on how fast the swing is. Every stroke is logged as
-   a `Stroke ...` debug line with its features and decision.
+   Segmentation uses each stroke's relative peak. Some acceptance safeguards
+   below also use absolute speed and duration. Every stroke is logged as a
+   `Stroke ...` debug line with its features and decision.
 
    The templates are fitted from recordings by `fit_strike_model.py`, which
    writes weapon-specific strike, thrust, and limit tables into both hub
@@ -122,6 +123,35 @@ flashed with a player 1 sketch pairs with the wrong player.
    The single available P1 `p1_v1` vertical capture had 24 original accepts
    and no added accepts in the logged-feature audit; it is not a complete P1
    or non-action regression set.
+
+### Mace/spear preparation rejection (November 8)
+
+Both hub sketches carry the same policy, enabled only for `PLAYER_ID=2` because
+these signatures were recorded with P2's mounting. P1's acceptance rules are
+unchanged. P2 rejects recorded upward preparation signatures before updating
+strike history. Otherwise a lift can pass as an uppercut and suppress the actual
+diagonal cut as its return. The check applies to original and fallback matches;
+a push overlapping a rejected handling stroke cannot re-enter as a thrust.
+Logs report `guard_raise`, `return`, or `handling` for these rejections.
+
+Three additional downward diagonal orientations cover the reviewed P2 mace and
+spear strokes. They retain the weapon's distance and torso limits and require
+at least 350 dps, 100 degrees of rotation, and duration at most 750 ms. These
+conditions gate the additional variants, not all diagonal attacks. Earlier
+upward mace diagonal fallback exemplars are blocked by the preparation check.
+
+Run from `hardware`: `python -m unittest tests.test_preparation tests.test_handling tests.test_strokes`.
+The checked-in [feature fixture](../tests/fixtures/p2_preparation.csv) retains
+346 logged strokes, including pushes and genuine uppercuts. The seven-session
+replay rejects all strokes in the two new fake captures and detects 12/12 new
+mace, 9/9 archived mace, and 8/8 archived spear downward targets. Diagonal
+targets are inferred from the signed downward strokes, not independently timed
+annotations. Optional raw replay also checks zero fake accepts and coverage of
+the 12 new mace targets. Raw segmentation and action hints can differ from the
+logged features; this validates acceptance, not the separate AI classifier.
+The new P2 folder contains no spear diagonal capture, so that regression uses
+the archived November 6 capture. Rebuild and reflash the P2 right-wrist hub and verify live
+raises, slow/fast diagonals, and genuine uppercuts on P2.
 
 ## Recording and fitting weapon-specific actions
 

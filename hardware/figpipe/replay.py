@@ -445,7 +445,7 @@ def thrust_distances(push, thr):
 
 def decide(rep, model, max_dist=STRIKE_MAX_DIST, score=None, dist=None, thrust=None,
            thrust_max=THRUST_MAX_DIST, thrust_min_reach=THRUST_MIN_REACH_M,
-           thrust_score=None):
+           thrust_score=None, rotation_reject=None):
     """Applies the models in time order, per session.
 
     Rotation strokes are scored against the rotation templates (model,
@@ -515,6 +515,8 @@ def decide(rep, model, max_dist=STRIKE_MAX_DIST, score=None, dist=None, thrust=N
     t0, t1, dur = rep.t0.to_numpy(float), rep.t1.to_numpy(float), rep.dur.to_numpy(float)
     beacons, near, cand = rep.torso_beacons.to_numpy(), rep.nearest.to_numpy(), rep.cand.to_numpy()
     reasons = []
+    handling_reasons = [rotation_reject(r) if rotation_reject is not None and r.kind == "rot"
+                        else None for _, r in rep.iterrows()]
     last_rot = {}   # session -> last accepted rotation stroke
     accepted = {}   # session -> accepted strokes so far: dicts with t0, t1, u, v, dur, spin, kind, cand
 
@@ -525,8 +527,15 @@ def decide(rep, model, max_dist=STRIKE_MAX_DIST, score=None, dist=None, thrust=N
 
     for i in range(len(rep)):
         acc = accepted.get(sess[i], [])
+        handling = handling_reasons[i]
         if beacons[i] == 0:
             reason = "torso_data"
+        elif handling:
+            reason = handling
+        elif kind[i] == "push" and any(
+                handling_reasons[j] and sess[j] == sess[i] and cand[j] == cand[i]
+                and t0[j] < t1[i] and t0[i] < t1[j] for j in range(len(rep))):
+            reason = "handling"
         elif any(a["t0"] < t1[i] and t0[i] < a["t1"] for a in acc):
             reason = "overlap"
         elif kind[i] == "push" and any(
@@ -534,7 +543,7 @@ def decide(rep, model, max_dist=STRIKE_MAX_DIST, score=None, dist=None, thrust=N
                 and a["t0"] < t1[i] + max(RETURN_MIN_MS, dur[i]) and t0[i] - max(RETURN_MIN_MS, dur[i]) < a["t1"]
                 for a in acc):
             reason = "lead_in"
-        elif kind[i] == "rot" and is_return(last_rot.get(sess[i]), U[i]):
+        elif kind[i] == "rot" and near[i] not in raw.BIDIRECTIONAL and is_return(last_rot.get(sess[i]), U[i]):
             reason = "return"
         elif (kind[i] == "rot" and near[i] == "uppercut"
               and rep.peak.iat[i] >= UPPERCUT_TORSO_GATE_PEAK_DPS
@@ -723,6 +732,18 @@ def firmware_rotation_score(row, model, limit, weapon, player_id):
 
     best = min(((m.action, distance(m), False) for _, m in model.iterrows()),
                key=lambda value: value[1])
+    # Reviewed downward diagonal orientations. Never match the upward setup.
+    if (player_id == 2 and weapon in ("mace", "spear") and
+            row.peak >= 350 and row.rot >= 100 and row.dur <= 750):
+        variants = ([((-0.30, -0.50, -0.8124), (0.15, 0.40, -0.9042)),
+                     ((0.10, -0.35, -0.9314), (0.0, 0.85, -0.5268))]
+                    if weapon == "mace" else
+                    [((0.62, 0.42, -0.6627), (0.35, 0.85, -0.3937))])
+        for _, m in model[model.action == "diagonal"].iterrows():
+            for axis, push in variants:
+                d = distance(m, axis=axis, push=push, axis_spread=25, push_spread=45)
+                if d < best[1]:
+                    best = ("diagonal", d, False)
     def allowed(match):
         action, _, relaxed = match
         if action == "spin":
@@ -773,12 +794,75 @@ def firmware_decide(rep, sketch, weapon, player_id):
     """Score raw replay strokes with the current hub's runtime allowances."""
     model, limit, thrust, thrust_limit = model_from_sketch(sketch, weapon)
     min_reach = reach_limit_from_sketch(sketch, weapon)
-    return decide(
+    from .handling import rotation_reject
+    decisions = decide(
         rep, model, max_dist=limit,
         score=lambda row: firmware_rotation_score(row, model, limit, weapon, player_id),
         thrust=thrust, thrust_max=thrust_limit, thrust_min_reach=min_reach,
         thrust_score=(lambda row: firmware_thrust_score(
-            row, thrust, thrust_limit, weapon, min_reach)) if thrust is not None else None)
+            row, thrust, thrust_limit, weapon, min_reach)) if thrust is not None else None,
+        rotation_reject=lambda row: rotation_reject(
+            weapon, row.nearest, (row.ux, row.uy, row.uz), (row.hx, row.hy, row.hz),
+            row.peak, row.dur) if player_id == 2 else None)
+    return firmware_additional_patterns(decisions, sketch, weapon, player_id)
+
+
+def firmware_additional_patterns(decisions, sketch, weapon, player_id):
+    """The hub's additive matcher: separate history, one extra per candidate.
+
+    Original accepts take priority and their history is never changed here.
+    Parse the bank from the sketch, so regression tests include fallback paths.
+    """
+    from .handling import rotation_reject
+    pattern = re.compile(r'\{\s*WEAPON_(\w+)\s*,\s*"(\w+)"\s*,\s*(true|false)\s*,\s*' +
+                         r'\s*,\s*'.join([_NUM] * 8) + r'\s*\}')
+    with open(sketch, encoding="utf-8") as handle:
+        bank = [(m.group(2), m.group(3) == "true", np.array(m.groups()[3:], float))
+                for m in pattern.finditer(handle.read()) if m.group(1).lower() == weapon]
+    history = {}
+    out = decisions.copy()
+    for (session, _), group in out.groupby(["session", "cand"], sort=False):
+        if group.accept.any():
+            continue
+        best = None
+        for index, row in group.iterrows():
+            push = row.kind == "push"
+            if row.torso_beacons == 0 or row.peak < (0.3 if push else 100):
+                continue
+            if (push and row.reach < 0.15) or (not push and row.rot < 35):
+                continue
+            if push and row.reason in ("handling", "overlap", "lead_in"):
+                continue
+            u = np.array([row.ux, row.uy, row.uz])
+            h = np.array([row.hx, row.hy, row.hz])
+            prev = history.get(session)
+            if prev is not None and (push or prev.kind == "rot"):
+                v = (np.array([prev.ux, prev.uy, prev.uz]) if not push or prev.kind == "push"
+                     else np.array([prev.hx, prev.hy, prev.hz]))
+                if (prev.nearest != "spin" and row.t0 - prev.t1 <= max(300, prev.dur)
+                        and float(u @ v) < -0.5):
+                    continue
+            for action, is_push, ref in bank:
+                if push != is_push:
+                    continue
+                if player_id == 2 and not push and rotation_reject(weapon, action, u, h, row.peak, row.dur):
+                    continue
+                spin = action == "spin"
+                da = _angle_deg(u, ref[:3], spin) / 25
+                if push:
+                    dp = (row.reach - ref[7]) / 0.40
+                    dr = (row.rot - ref[6]) / 45
+                else:
+                    dp = _angle_deg(h, ref[3:6], spin) / 45
+                    dr = (row.rot - ref[6]) / 50
+                d = float(np.sqrt(da * da + dp * dp + dr * dr))
+                if d < (best[0] if best else 0.35):
+                    best = d, index, action
+        if best:
+            d, index, action = best
+            out.loc[index, ["accept", "reason", "nearest", "dist"]] = [True, "combined", action, d]
+            history[session] = out.loc[index]
+    return out
 
 
 def model_from_sketch(path, weapon="sword_shield"):
