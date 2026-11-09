@@ -91,6 +91,7 @@ class FeedbackCode(_WireEnum):
     HIT_TAKEN = "HIT_TAKEN"
     BLOCKED = "BLOCKED"
     PARRIED = "PARRIED"
+    ACTION_CONFIRMED = "ACTION_CONFIRMED"  # relay -> hub: classifier confirmed a hub action
 
 
 WIRE_VALUES: dict[_WireEnum, int] = {
@@ -126,4 +127,5 @@ WIRE_VALUES: dict[_WireEnum, int] = {
     FeedbackCode.HIT_TAKEN: 1,
     FeedbackCode.BLOCKED: 2,
     FeedbackCode.PARRIED: 3,
+    FeedbackCode.ACTION_CONFIRMED: 4,
 }

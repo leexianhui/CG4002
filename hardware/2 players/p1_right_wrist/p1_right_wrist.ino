@@ -1019,6 +1019,7 @@ bool torsoFresh(unsigned long now) { return torsoSeen && (now - lastTorsoRxMs) <
 extern GamePhase phase;
 extern WeaponType lockedWeapon;
 extern GuardState lastGuardState;
+const char *weaponName(WeaponType w); // defined below; the game build has no auto-prototypes
 
 void checkIncomingPose()
 {
@@ -1069,6 +1070,10 @@ void checkIncomingPose()
         if (receivedState == GUARDING && lastGuardState != GUARDING)
             patternStart(motorPlayer, PAT_BUZZ_DOUBLE);
         lastGuardState = receivedState;
+#ifdef CG_HARDWARE_GATEWAY
+        // Game build: on to the relay (GUARD_EVENT) and the engine, which keeps the guard up 3 s.
+        gatewayGuardEvent(receivedState == GUARDING);
+#endif
 
         resultLog(String("guard_state player=") + String(PLAYER_ID) +
                   " weapon=" + String(weaponName(lockedWeapon)) +
@@ -2717,7 +2722,11 @@ void onMotionEnd(const char *closeReason)
     if (accepted > 0)
     {
         ledFlashAccept();
+#ifndef CG_HARDWARE_GATEWAY
         localFeedback(FB_SWING_ACCEPTED, 0);
+#endif
+        // Game build: no buzz yet. The relay sends ACTION_CONFIRMED (one buzz) only if the
+        // classifier names a real move for this segment, so the buzz means the game got it.
     }
     else
         ledFlashReject();

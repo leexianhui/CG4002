@@ -43,6 +43,7 @@ class PacketType(IntEnum):
     SENSOR_FRAME = 0x10
     RFID_EVENT = 0x11
     SEGMENT_CHUNK = 0x12
+    GUARD_EVENT = 0x13  # hub -> relay: the left wrist entered/left the guard pose
     HEARTBEAT = 0x20
     ACK = 0x21
     COMBAT_FEEDBACK = 0x30
@@ -60,6 +61,7 @@ RELIABLE_PACKET_TYPES: frozenset[PacketType] = frozenset(
         PacketType.TIME_SYNC_RESP,
         PacketType.RFID_EVENT,
         PacketType.SEGMENT_CHUNK,
+        PacketType.GUARD_EVENT,
         PacketType.COMBAT_FEEDBACK,
     }
 )
@@ -76,6 +78,7 @@ ACK_RETRANSMIT_PACKET_TYPES: frozenset[PacketType] = frozenset(
     {
         PacketType.RFID_EVENT,
         PacketType.SEGMENT_CHUNK,
+        PacketType.GUARD_EVENT,
         PacketType.COMBAT_FEEDBACK,
     }
 )

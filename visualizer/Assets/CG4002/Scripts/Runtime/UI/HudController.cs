@@ -100,6 +100,10 @@ namespace CG4002.UI
         {
             if (player == gameState.OpponentPlayer)
                 opponentGuardIndicator.SetActive(guarding);
+            // Your own guard (the hardware guard pose) has no indicator of its own: say when it
+            // goes up and when the engine drops it again (3 s, shared/config/match.yaml).
+            else if (player == gameState.LocalPlayer)
+                ShowMessage(guarding ? "GUARD UP" : "GUARD DOWN", new Color(0.55f, 0.8f, 1f));
         }
 
         void OnPhaseChanged(MatchPhase phase)
@@ -114,14 +118,21 @@ namespace CG4002.UI
         void OnOutcomeReceived(CombatOutcomeMessage message)
         {
             bool iAttacked = message.attacker == gameState.LocalPlayer;
-            outcomeText.text = message.outcome switch
+            string text = message.outcome switch
             {
                 Outcome.Hit => iAttacked ? $"HIT  -{message.damage}" : $"YOU WERE HIT  -{message.damage}",
-                Outcome.Block => iAttacked ? "BLOCKED" : "YOU BLOCKED",
-                Outcome.Parry => "PARRIED",
+                // A guard blocks all damage (match.yaml block_multiplier 0): show the -0.
+                Outcome.Block => iAttacked ? $"BLOCKED  -{message.damage}" : $"GUARDED  -{message.damage}",
+                Outcome.Parry => "PARRIED  -0",
                 _ => "MISS",
             };
-            outcomeText.color = message.outcome == Outcome.Hit ? new Color(1f, 0.35f, 0.25f) : Color.white;
+            ShowMessage(text, message.outcome == Outcome.Hit ? new Color(1f, 0.35f, 0.25f) : Color.white);
+        }
+
+        void ShowMessage(string text, Color color)
+        {
+            outcomeText.text = text;
+            outcomeText.color = color;
             outcomeText.gameObject.SetActive(true);
             outcomeHideAt = Time.time + outcomeSeconds;
         }

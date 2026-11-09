@@ -59,6 +59,7 @@ extern "C" {
 #define CG_PKT_SENSOR_FRAME    0x10 /* device -> laptop   best-effort */
 #define CG_PKT_RFID_EVENT      0x11 /* device -> laptop   reliable    */
 #define CG_PKT_SEGMENT_CHUNK   0x12 /* device -> laptop   reliable, windowed (up to 4 unACKed) */
+#define CG_PKT_GUARD_EVENT     0x13 /* device -> laptop   reliable    */
 #define CG_PKT_HEARTBEAT       0x20 /* both               best-effort */
 #define CG_PKT_ACK             0x21 /* both               never acked itself */
 #define CG_PKT_COMBAT_FEEDBACK 0x30 /* laptop -> device   reliable    */
@@ -171,6 +172,15 @@ typedef struct CG_PACKED {
     uint8_t  tag_uid[6];
 } cg_payload_rfid_event_t;
 
+/* device -> laptop, hub only: the left wrist entered (1) or left (0) the guard pose. 8 bytes.
+ * Edges only; the engine keeps a guard up for match.yaml guard_duration_ms from GUARDING. */
+typedef struct CG_PACKED {
+    uint32_t device_timestamp_ms; /* hub clock, when the hub received the edge */
+    uint8_t  guard_state;         /* 0 IDLE, 1 GUARDING (GuardState wire values) */
+    uint8_t  weapon_id;
+    uint16_t reserved;
+} cg_payload_guard_event_t;
+
 /* device -> laptop, one action segment split into chunks (event mode, hardware hub). 208 bytes.
  * A segment is `chunk_count` chunks sharing `segment_id`; chunk i carries rows
  * [i*rows_per_chunk, i*rows_per_chunk + sample_count). Unused slots are 0. IMU units on the wire:
@@ -216,7 +226,8 @@ typedef struct CG_PACKED {
     uint16_t acked_seq;
 } cg_payload_ack_t;
 
-/* laptop -> device, on combat event. 6 bytes. */
+/* laptop -> device, on combat event, and ACTION_CONFIRMED (code 4) when the classifier gives a hub
+ * segment a non-IDLE action that clears the confidence gate. 6 bytes. */
 typedef struct CG_PACKED {
     uint8_t  feedback_code;
     uint8_t  intensity_pct;

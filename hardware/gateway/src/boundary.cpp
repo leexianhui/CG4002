@@ -22,6 +22,10 @@ GatewaySamples samples;
 GatewayLowPass gyroLowPass[3]; // this board's gx, gy, gz, as sent to the AI (hardware loop only)
 portMUX_TYPE sampleMux = portMUX_INITIALIZER_UNLOCKED;
 QueueHandle_t feedbackQueue;
+// Hub: newest guard edge from the left wrist, hardware loop -> BLE task (under sampleMux).
+bool guardPending;
+uint8_t guardState;
+uint32_t guardMs;
 #if CG_GATEWAY_ROLE == 0 && CG_GATEWAY_EVENT_MODE
 GatewaySegmentQueue segments;
 portMUX_TYPE segmentMux = portMUX_INITIALIZER_UNLOCKED;
@@ -162,9 +166,27 @@ void gatewayReadFrame(cg_payload_sensor_frame_t &frame) {
 bool gatewayQueueFeedback(const uint8_t *payload) {
     cg_payload_combat_feedback_t f;
     memcpy(&f, payload, sizeof(f));
-    if (f.feedback_code > 3 || f.intensity_pct > 100 || !f.duration_ms ||
+    // Codes 0-3 combat outcomes, 4 ACTION_CONFIRMED (shared/enums/enums.yaml FeedbackCode).
+    if (f.feedback_code > 4 || f.intensity_pct > 100 || !f.duration_ms ||
         f.duration_ms > 2000 || !f.repeat_count || f.repeat_count > 10) return false;
     return feedbackQueue && xQueueSend(feedbackQueue, &f, 0) == pdTRUE;
+}
+void gatewayGuardEvent(bool guarding) {
+    uint32_t now = millis();
+    portENTER_CRITICAL(&sampleMux);
+    guardPending = true;
+    guardState = guarding ? 1 : 0;
+    guardMs = now;
+    portEXIT_CRITICAL(&sampleMux);
+}
+bool gatewayTakeGuardEvent(uint8_t &state, uint32_t &event_ms) {
+    portENTER_CRITICAL(&sampleMux);
+    bool pending = guardPending;
+    state = guardState;
+    event_ms = guardMs;
+    guardPending = false;
+    portEXIT_CRITICAL(&sampleMux);
+    return pending;
 }
 bool gatewayTakeFeedback(cg_payload_combat_feedback_t &f) {
     return feedbackQueue && xQueueReceive(feedbackQueue, &f, 0) == pdTRUE;

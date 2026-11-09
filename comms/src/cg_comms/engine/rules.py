@@ -11,7 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from cg_comms.config import RulesConfig, WeaponMove
-from cg_comms.messages.enums import ActionClass, Weapon
+from cg_comms.engine.state import PlayerState
+from cg_comms.messages.enums import ActionClass, GuardState, Weapon
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,15 @@ class Rules:
 
     def is_valid_move(self, weapon: Weapon, action: ActionClass) -> bool:
         return self.move_for(weapon, action) is not None
+
+    def guard_active(self, player: PlayerState, at_ts: int) -> bool:
+        """Whether `player`'s guard is up at engine time `at_ts`: raised, and (with a
+        guard_duration_ms) raised no longer ago than that. Judged at the event's own timestamp, so
+        an attack that happened inside the window still meets the guard however late it drains."""
+        if player.guard_state != GuardState.GUARDING:
+            return False
+        duration = self.config.guard_duration_ms
+        return duration <= 0 or at_ts - player.guard_entered_ts <= duration
 
     @property
     def starting_hp(self) -> int:

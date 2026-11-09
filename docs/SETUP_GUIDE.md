@@ -219,7 +219,16 @@ What healthy looks like in each relay:
    confidence gate and went to the engine, `ai_ms`). The per-request `classifier_request`/
    `classifier_response` timing lines are DEBUG (`--log-level DEBUG`). On the hub's serial
    monitor the same swing shows `[Ultra96 send queued] ...` then `[segment] sent seg=...`.
-3. `ble_mtu_too_small_for_segments` at connect means Windows refused the larger BLE packet size;
+   The hub buzzes once for a swing only when `segment_classified` says `buzz=True`: its segmenter
+   accepted it **and** the AI named a real move above the gate (the relay sends `ACTION_CONFIRMED`
+   back; the hub logs `[feedback] queued ... code=4`). An IDLE or low-confidence answer: no buzz.
+3. Guard: holding the weapon's guard pose with the left wrist gives `guard_received
+   guard_state=GUARDING forwarded=True` (hub serial: `guard_state ... GUARDING`, two buzzes,
+   `[guard] guard_event GUARDING`). The engine logs `guard_raised` and keeps the guard up 3 s
+   (`guard_duration_ms` in `shared/config/match.yaml`), then `guard_expired`; a hit inside that window
+   is a BLOCK for 0 damage, from any direction. Attacking drops your own guard. Lowering the shield is
+   logged (`guard_state=IDLE forwarded=False`) but does not end the 3 s early.
+4. `ble_mtu_too_small_for_segments` at connect means Windows refused the larger BLE packet size;
    every segment will then fail. Report it: the uplink has to be split smaller.
 
 ### Only P1 has hardware? Simulate P2

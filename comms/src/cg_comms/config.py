@@ -195,6 +195,8 @@ class RulesConfig(_Model):
     position_max_age_ms: int
     reorder_delay_ms: int
     guard_grace_ms: int = Field(default=0, ge=0, le=500)
+    # How long a guard stays up after it is raised; 0 = until the player's next guard update.
+    guard_duration_ms: int = Field(default=0, ge=0)
 
     @classmethod
     def load(cls, shared_dir: Path | None = None) -> "RulesConfig":

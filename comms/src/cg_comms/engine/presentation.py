@@ -66,7 +66,9 @@ class Presentation:
             ]
             players.append(dict(
                 player_id=pid, hp=p.hp, max_hp=rules.starting_hp, weapon=p.weapon,
-                guard_state=p.guard_state, connected=presence.get(str(pid), False),
+                # The phones see a guard drop when guard_duration_ms runs out, not just on release.
+                guard_state=GuardState.GUARDING if rules.guard_active(p, now) else GuardState.IDLE,
+                connected=presence.get(str(pid), False),
                 ready=self.ready[pid], position=position, cooldown_action=p.cooldown_action,
                 cooldowns=cooldowns,
             ))

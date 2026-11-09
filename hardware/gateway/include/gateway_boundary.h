@@ -18,6 +18,10 @@ bool gatewayTakeFeedback(cg_payload_combat_feedback_t &feedback);
 void gatewayReadFrame(cg_payload_sensor_frame_t &frame);
 uint8_t gatewayWeapon();
 bool gatewayQueueFeedback(const uint8_t *payload);
+// Hub, hardware thread: the left wrist entered (true) or left (false) the guard pose. Keeps only the
+// newest edge, stamped with the hub's clock now. BLE task: takes it once, for a GUARD_EVENT.
+void gatewayGuardEvent(bool guarding);
+bool gatewayTakeGuardEvent(uint8_t &state, uint32_t &event_ms);
 // Main-thread haptic PWM; -1 means leave the hardware's local pattern player alone.
 int gatewayFeedbackDuty();
 

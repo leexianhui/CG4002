@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 import structlog
 
 from cg_comms.clock import monotonic_ms, split_epoch_ms, wall_clock_unix_ms
-from cg_comms.messages.enums import Weapon
+from cg_comms.messages.enums import ActionClass, FeedbackCode, GuardState, Weapon
 from cg_comms.messages.models import Action, CombatFeedback, SensorWindow, WeaponChanged
 from cg_comms.protocol import codec
 from cg_comms.protocol.codec import DecodedPacket, DecodeError
@@ -94,6 +94,7 @@ class Session:
     )
     _streaming: bool = field(default=False, init=False)
     _last_weapon_ts: int = field(default=-1, init=False)
+    _last_guard_ts: int = field(default=-1, init=False)
     _segments: SegmentAssembler = field(init=False)
     # request_id -> segment_id for in-flight segment-mode windows, for the segment_classified log.
     _segment_requests: dict[int, int] = field(default_factory=dict, init=False)
@@ -412,6 +413,11 @@ class Session:
             await self._send_ack(decoded.header.seq)
             if not decoded.duplicate:
                 self._handle_segment_chunk(decoded)
+        elif packet_type == int(PacketType.GUARD_EVENT):
+            self._heartbeat_monitor.mark_received()
+            await self._send_ack(decoded.header.seq)
+            if not decoded.duplicate:
+                await self._handle_guard_event(decoded)
         elif packet_type == int(PacketType.TIME_SYNC_REQ):
             # Request/response exchange, not ACK-of-ACK reliability. Current demo firmware only
             # initiates sync at handshake, but a delayed/future resync request must receive RESP.
@@ -453,6 +459,41 @@ class Session:
         )
         await self.on_weapon_changed(
             WeaponChanged(timestamp=engine_ts, player_id=self.config.player_id, weapon=weapon)  # type: ignore[arg-type]
+        )
+
+    async def _handle_guard_event(self, decoded: DecodedPacket) -> None:
+        """Hub GUARD_EVENT: the left wrist entered (GUARDING) or left (IDLE) the guard pose.
+        GUARDING goes to the engine as a guard-only ACTION; the engine keeps it up for
+        match.yaml guard_duration_ms, so the release edge is only logged."""
+        fields = decoded.fields
+        engine_ts = self._time_sync.to_engine_ms(fields["device_timestamp_ms"])
+        if engine_ts <= self._last_guard_ts:
+            return  # a stale edge (an older one delivered late) must not undo a newer one
+        self._last_guard_ts = engine_ts
+        state = GuardState.GUARDING if fields["guard_state"] == 1 else GuardState.IDLE
+        weapon = self.windower.current_weapon
+        try:
+            sent_weapon = Weapon.from_wire(fields["weapon_id"])
+        except ValueError:
+            sent_weapon = Weapon.NONE
+        if sent_weapon is not Weapon.NONE:
+            weapon = sent_weapon
+        forwarded = state is GuardState.GUARDING and weapon not in (None, Weapon.NONE)
+        logger.info("guard_received", player_id=self.config.player_id, guard_state=state.value,
+                    weapon=weapon.value if weapon else None, forwarded=forwarded)
+        if not forwarded:
+            return
+        await self.on_action_result(
+            Action(
+                # Stamped on arrival, like a classified action, so both share one timeline.
+                timestamp=max(monotonic_ms(), engine_ts),
+                player_id=self.config.player_id,  # type: ignore[arg-type]
+                weapon=weapon,  # type: ignore[arg-type]
+                action=ActionClass.IDLE,
+                action_confidence=1.0,
+                guard_state=GuardState.GUARDING,
+                guard_confidence=1.0,
+            )
         )
 
     async def _handle_sensor_frame(self, decoded: DecodedPacket) -> None:
@@ -565,6 +606,14 @@ class Session:
             )
             return
         passes_gate = passes_confidence_gate(result, self.config.min_action_confidence)
+        # The hub buzzes for an action only now: its segmenter accepted it AND the classifier
+        # named a real move that clears the gate (the hub no longer buzzes on its own accept).
+        buzz = segment_id is not None and passes_gate and result.action is not ActionClass.IDLE
+        if buzz:
+            self.queue_combat_feedback(CombatFeedback(
+                timestamp=monotonic_ms(), player_id=self.config.player_id,  # type: ignore[arg-type]
+                code=FeedbackCode.ACTION_CONFIRMED, intensity_pct=100, duration_ms=100,
+                repeat_count=1))
         if segment_id is not None:
             # Segment mode logs exactly two lines per hub action: segment_received (what the hub
             # sent) and this one (what the classifier answered, and whether it goes to the engine).
@@ -577,6 +626,7 @@ class Session:
                 action=result.action.value,
                 confidence=result.action_confidence,
                 forwarded=passes_gate,
+                buzz=buzz,
                 ai_ms=round(1000.0 * (time.monotonic() - started), 1),
             )
         elif not passes_gate:

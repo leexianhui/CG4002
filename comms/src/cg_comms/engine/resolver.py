@@ -111,7 +111,7 @@ def resolve(state: MatchState, ev: ActionEvent, rules: Rules) -> Decision:
     bearing_to_attacker = _bearing_deg(defender.position, attacker.position)
     facing_attacker = _angle_diff_deg(defender.heading_deg, bearing_to_attacker) <= rules.guard_arc_deg / 2
 
-    if (facing_attacker and defender.guard_state == GuardState.GUARDING
+    if (facing_attacker and rules.guard_active(defender, ev.timestamp)
             and defender.guard_entered_ts <= ev.timestamp + rules.config.guard_grace_ms):
         if 0 <= (ev.timestamp - defender.guard_entered_ts) <= rules.parry_window_ms:
             return Decision(

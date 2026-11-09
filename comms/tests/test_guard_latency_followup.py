@@ -29,8 +29,10 @@ def json_log_sink(monkeypatch):
 
 
 @pytest.mark.parametrize("attacker", [1, 2])
+# shared/config/match.yaml (2026-11-09): a guard blocks from any direction (guard_arc_deg 360) and
+# a block deals no damage (block_multiplier 0), so facing away no longer turns a block into a hit.
 @pytest.mark.parametrize("yaws,guard_ts,expected", [
-    ((0, 0), 700, "HIT"),
+    ((0, 0), 700, "BLOCK"),
     ((90, 270), 700, "BLOCK"),
     ((90, 270), 950, "PARRY"),
     ((90, 270), 1050, "BLOCK"),
@@ -49,13 +51,13 @@ async def test_unity_geometry_through_engine_state_and_guard(monkeypatch, attack
     clock[0] = 1400
     await task._drain_ready()
     assert combat[0].outcome.value == expected
-    assert combat[0].damage == {"HIT": 10, "BLOCK": 3, "PARRY": 0}[expected]
+    assert combat[0].damage == {"HIT": 10, "BLOCK": 0, "PARRY": 0}[expected]
     assert any(e.guard_state.value == "GUARDING" for e in recognized)
     entry = next(json.loads(c.args[0]) for c in sink.calls
                  if json.loads(c.args[0])["event"] == "combat_resolved")
     assert entry["engine_timestamp_ms"] == 1000
     assert isinstance(entry["timestamp"], str)
-    assert entry["facing_attacker"] == (yaws == (90, 270))
+    assert entry["facing_attacker"] is True  # a 360-degree guard arc faces every attacker
     assert entry["facing_error_deg"] == (0 if yaws == (90, 270) else 90)
 
 

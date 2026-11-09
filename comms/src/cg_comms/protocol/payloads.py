@@ -89,6 +89,12 @@ PAYLOAD_TABLES: dict[PacketType, tuple[Field, ...]] = {
         Field("reserved", FieldKind.U8),
         Field("tag_uid", FieldKind.BYTES, 6),
     ),
+    PacketType.GUARD_EVENT: (
+        Field("device_timestamp_ms", FieldKind.U32),  # hub clock, when the hub got the edge
+        Field("guard_state", FieldKind.U8),  # GuardState wire value: 0 IDLE, 1 GUARDING
+        Field("weapon_id", FieldKind.U8),
+        Field("reserved", FieldKind.U16),
+    ),
     PacketType.SEGMENT_CHUNK: (
         Field("segment_id", FieldKind.U32),
         Field("chunk_index", FieldKind.U8),

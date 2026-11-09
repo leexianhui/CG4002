@@ -104,6 +104,8 @@ class GameStateTask:
     _logged_post_match: bool = field(default=False, init=False)
 
     _reset_floor: int = field(default=-1, init=False)
+    # player -> guard_entered_ts whose expiry was already logged/broadcast (once per guard).
+    _guard_expiry_seen: dict[int, int] = field(default_factory=dict, init=False)
     # Per-player position warning window: (last warning time, suppressed count).
     _position_drop_logs: dict[int, tuple[int, int]] = field(default_factory=dict, init=False)
 
@@ -280,8 +282,18 @@ class GameStateTask:
                     # Recover physical selection while waiting, but never carry an old
                     # guard or attack across a pause/resume boundary.
                     continue
-                if player.guard_state != action.guard_state:
-                    player.guard_state = action.guard_state
+                if action.guard_state == GuardState.GUARDING:
+                    # A new guard (or one raised again after the last expired) starts its own
+                    # guard_duration_ms window; a repeat while it is still up does not extend it.
+                    if not self.rules.guard_active(player, timestamp):
+                        player.guard_state = GuardState.GUARDING
+                        player.guard_entered_ts = timestamp
+                        logger.info("guard_raised", player_id=event.player_id,
+                                    duration_ms=self.rules.config.guard_duration_ms)
+                elif player.guard_state != GuardState.IDLE:
+                    # Attacks report guardState IDLE (the classifier never guards): attacking drops
+                    # your own guard, so a player cannot hold a guard and swing without risk.
+                    player.guard_state = GuardState.IDLE
                     player.guard_entered_ts = timestamp
                 # ACTION carries its own weapon so fresh engine/reset state recovers on the next action.
                 ev = ActionEvent(event.player_id, action.action, action.action_confidence, timestamp,
@@ -297,7 +309,7 @@ class GameStateTask:
                     if (isinstance(guard, InboundAction) and guard.player_id != event.player_id
                             and guard.action.guard_state == GuardState.GUARDING):
                         defender = snapshot.players[guard.player_id]
-                        if defender.guard_state != GuardState.GUARDING:
+                        if not self.rules.guard_active(defender, candidate.timestamp):
                             defender.guard_state = GuardState.GUARDING
                             defender.guard_entered_ts = candidate.timestamp
                 await self._resolve_one(ev, snapshot)
@@ -488,6 +500,14 @@ class GameStateTask:
         changed = self.presentation.update(self.state, self.rules, self.presence(), now)
         if changed:
             await self._broadcast_match_state()
-        if self.on_state_snapshot is not None and (changed or now >= self._next_snapshot_ms):
+        guard_dropped = False
+        for pid, p in self.state.players.items():
+            if (p.guard_state == GuardState.GUARDING and not self.rules.guard_active(p, now)
+                    and self._guard_expiry_seen.get(pid) != p.guard_entered_ts):
+                self._guard_expiry_seen[pid] = p.guard_entered_ts
+                guard_dropped = True
+                logger.info("guard_expired", player_id=pid, held_ms=now - p.guard_entered_ts)
+        if self.on_state_snapshot is not None and (changed or guard_dropped
+                                                   or now >= self._next_snapshot_ms):
             await self.on_state_snapshot(self.current_state_snapshot())
             self._next_snapshot_ms = now + 100

@@ -48,6 +48,11 @@ uint8_t g_capture_trigger_id = 0;
 // Reliable retries keep identical authenticated ciphertext, sequence and nonce.
 // A duplicate is ACKed again but never applied twice on either side.
 CgReliableSend g_pending_rfid;
+#ifdef CG_HARDWARE_GATEWAY
+// Hub: the newest guard edge (GUARD_EVENT), ACK + identical-ciphertext retry like RFID_EVENT.
+CgReliableSend g_pending_guard;
+constexpr uint32_t kGuardMaxAgeMs = 1000; // an edge older than this (relay was away) is stale
+#endif
 CgReliableReceiveCache g_feedback_cache;
 
 #if defined(CG_HARDWARE_GATEWAY) && CG_GATEWAY_EVENT_MODE
@@ -429,6 +434,12 @@ void drain_incoming_non_blocking() {
 #ifdef CG_SEGMENT_UPLINK
             for (auto &chunk : g_segment_tx) chunk.ack(acked_seq);
 #endif
+#ifdef CG_HARDWARE_GATEWAY
+            bool guard_was_pending = g_pending_guard.active;
+            g_pending_guard.ack(acked_seq);
+            if (guard_was_pending && !g_pending_guard.active)
+                Serial.printf("[guard] guard_event acked seq=%u\n", (unsigned)acked_seq);
+#endif
         }
     }
 }
@@ -482,6 +493,9 @@ bool do_handshake() {
     g_tx_seq.reset();
     g_rx_seq.reset();
     g_pending_rfid.reset();
+#ifdef CG_HARDWARE_GATEWAY
+    g_pending_guard.reset();
+#endif
 #ifdef CG_SEGMENT_UPLINK
     finish_segment("abandoned (relay reconnected)");
 #endif
@@ -670,6 +684,37 @@ void service_pending_rfid_event() {
     }
 }
 
+#ifdef CG_HARDWARE_GATEWAY
+// Hub: forwards the left wrist's newest guard edge to the relay as a reliable GUARD_EVENT. A newer
+// edge supersedes an unACKed older one; an edge that waited out a relay outage is dropped.
+void service_guard_events() {
+    uint8_t state;
+    uint32_t event_ms;
+    if (gatewayTakeGuardEvent(state, event_ms)) {
+        uint32_t age = millis() - event_ms;
+        if (age > kGuardMaxAgeMs) {
+            Serial.printf("[guard] dropped stale edge state=%u age=%lums\n", (unsigned)state,
+                          (unsigned long)age);
+        } else {
+            cg_payload_guard_event_t payload = {};
+            payload.device_timestamp_ms = event_ms;
+            payload.guard_state = state;
+            payload.weapon_id = g_weapon_id;
+            bool accepted = send_packet(CG_PKT_GUARD_EVENT, (const uint8_t *)&payload, sizeof(payload),
+                                        nullptr, 0, nullptr, &g_pending_guard);
+            Serial.printf("[guard] guard_event %s seq=%u accepted=%u\n", state ? "GUARDING" : "IDLE",
+                          (unsigned)g_pending_guard.seq, (unsigned)accepted);
+        }
+    }
+    int due = g_pending_guard.poll(millis());
+    if (due < 0)
+        Serial.printf("[guard] guard_event undelivered after 5 attempts, seq=%u\n",
+                      (unsigned)g_pending_guard.seq);
+    else if (due > 0)
+        notify_frame(g_pending_guard.frame, g_pending_guard.len);
+}
+#endif
+
 }  // namespace
 
 void setup() {
@@ -773,6 +818,9 @@ void loop() {
 #endif
     drain_incoming_non_blocking();
     service_pending_rfid_event();
+#ifdef CG_HARDWARE_GATEWAY
+    service_guard_events();
+#endif
 #ifdef CG_SEGMENT_UPLINK
     service_segments();
 #endif

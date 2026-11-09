@@ -83,3 +83,6 @@ FeedbackCode:
     - { name: HIT_TAKEN,  wire: 1 }
     - { name: BLOCKED,    wire: 2 }
     - { name: PARRIED,    wire: 3 }
+    # Relay -> that player's hub, once per hub segment the classifier labels non-IDLE above the
+    # confidence gate: the hub's only swing buzz (it no longer buzzes on its own accept).
+    - { name: ACTION_CONFIRMED, wire: 4 }

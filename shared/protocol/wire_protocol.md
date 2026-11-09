@@ -46,6 +46,7 @@ discard a corrupted frame before spending a decrypt on it, which matters on the 
 | `CG_PKT_SENSOR_FRAME` | `0x10` | device → laptop | best-effort |
 | `CG_PKT_RFID_EVENT` | `0x11` | device → laptop | reliable |
 | `CG_PKT_SEGMENT_CHUNK` | `0x12` | device → laptop | reliable, windowed |
+| `CG_PKT_GUARD_EVENT` | `0x13` | device → laptop | reliable |
 | `CG_PKT_HEARTBEAT` | `0x20` | both | best-effort |
 | `CG_PKT_ACK` | `0x21` | both | never acked itself |
 | `CG_PKT_COMBAT_FEEDBACK` | `0x30` | laptop → device | reliable |
@@ -54,7 +55,7 @@ discard a corrupted frame before spending a decrypt on it, which matters on the 
 | Packet | Delivery | Rationale |
 |---|---|---|
 | `SENSOR_FRAME`, `HEARTBEAT` | best-effort | Dropped capture frames can cause too_few/span suppression; never fill with unrelated frames |
-| `RFID_EVENT`, `COMBAT_FEEDBACK` | ACK + identical-ciphertext retry | One application effect; exact duplicates get another ACK |
+| `RFID_EVENT`, `GUARD_EVENT`, `COMBAT_FEEDBACK` | ACK + identical-ciphertext retry | One application effect; exact duplicates get another ACK |
 | `SEGMENT_CHUNK` | ACK + identical-ciphertext retry, up to 4 unACKed | One classifier request per complete segment; replay-checked by the 64-wide window, not a per-type watermark (several are in flight, so a watermark would reject a lost chunk's retransmit) |
 | `HELLO`, `HELLO_ACK`, `TIME_SYNC_*` | Bounded request/response | Failure restarts handshake with a fresh device nonce and BLE session; no generic ACK exchange |
 | `ACK` | never acked | obviously |
@@ -84,10 +85,13 @@ SEGMENT_CHUNK       (208 B)  segmentId u32 | chunkIndex u8 | chunkCount u8 | wea
                              samples 96 x i16: flags bit 0 set -> [5][18] (dominant | off-hand |
                              torso, each ax ay az gx gy gz); clear -> [16][6] dominant only.
                              Rows >= sampleCount are 0
+GUARD_EVENT           (8 B)  deviceTimestampMs u32 (hub clock) | guardState u8 (0 IDLE, 1 GUARDING) |
+                             weaponId u8 | reserved u16. Edges of the left wrist's guard pose
 HEARTBEAT            (12 B)  deviceTimestampMs u32 | vbatBelt_mV u16 | vbatDom_mV u16 |
                              vbatOff_mV u16 | statusFlags u16
 ACK                   (2 B)  ackedSeq u16
 COMBAT_FEEDBACK       (6 B)  feedbackCode u8 | intensityPct u8 | durationMs u16 | repeatCount u16
+                             (codes: enums.yaml FeedbackCode; 4 = ACTION_CONFIRMED from the relay)
 ```
 
 `SEGMENT_CHUNK` is the event-mode uplink of the hardware hub (`hardware/gateway`): instead of a

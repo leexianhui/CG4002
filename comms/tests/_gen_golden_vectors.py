@@ -235,6 +235,7 @@ PACKET_TYPES = {
     "SENSOR_FRAME": 0x10,
     "RFID_EVENT": 0x11,
     "SEGMENT_CHUNK": 0x12,
+    "GUARD_EVENT": 0x13,
     "HEARTBEAT": 0x20,
     "ACK": 0x21,
     "COMBAT_FEEDBACK": 0x30,
@@ -381,6 +382,13 @@ vectors.append(normal_vector(
     "SEGMENT_CHUNK", PACKET_TYPES["SEGMENT_CHUNK"],
     session_id=SESSION_ID, player_id=1, direction=0, seq=11, ext_seq=11,
     plaintext=segment_plaintext,
+))
+
+# GUARD_EVENT: hub clock 314159 ms, GUARDING (1), SPEAR (2), reserved 0.
+vectors.append(normal_vector(
+    "GUARD_EVENT", PACKET_TYPES["GUARD_EVENT"],
+    session_id=SESSION_ID, player_id=1, direction=0, seq=13, ext_seq=13,
+    plaintext=struct.pack("<IBBH", 314159, 1, 2, 0),
 ))
 
 heartbeat_plaintext = struct.pack("<IHHHH", 50000, 3700, 3650, 3600, 0)
