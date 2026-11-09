@@ -30,7 +30,10 @@ windowing:
 ultra96:
   host: "127.0.0.1"
   port: 8888
-  request_timeout_ms: 300 # the real AI on the Ultra96 ARM occasionally takes 120-140 ms per swing
+  # The AI is reached through the SSH tunnel and jump host with a ~30 KB window per swing: replies
+  # take ~30-250 ms (2026-11-09 rig log), so 300 timed out the slow tail, and every timeout closes
+  # and reconnects the classifier link (dropping the next swing too). 1 s still catches a wedged AI.
+  request_timeout_ms: 1000
   max_in_flight: 2
   min_confidence: 0.6
 
