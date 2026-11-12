@@ -1,5 +1,4 @@
 using System;
-using CG4002.Net;
 using CG4002.Offline;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -9,10 +8,11 @@ namespace CG4002.AR
 {
     /// <summary>
     /// Split screen for the headset: the same view twice, side by side, one per lens. Setup happens
-    /// with the phone in hand at full view (connect, weapon pose, tap the floor, calibrate); once the
-    /// arena is placed (and, online, calibrated) the view splits. It goes back to full view when the
-    /// arena is picked up again (MOVE DUMMY, weapon selection), and never splits in demo mode, which
-    /// needs the touchscreen. A double tap anywhere toggles it by hand (until the next placement).
+    /// with the phone in hand at full view (connect, tap the floor); once the arena is placed the view
+    /// splits, and the headset goes on for the rest (calibration by looking at the opponent, weapon
+    /// selection, the match). It goes back to full view when the arena is picked up again (MOVE DUMMY),
+    /// and never splits in demo mode, which needs the touchscreen. A double tap anywhere toggles it by
+    /// hand (until the next placement).
     ///
     /// How: the AR camera renders into an eye-sized texture instead of the screen, with the HUD and
     /// first-person canvases switched to render into it too (Screen Space - Camera), so both eyes get
@@ -26,8 +26,6 @@ namespace CG4002.AR
         [Tooltip("One eye's image, as a fraction of the screen's width and height. Two of them side by side: 0.4 wide is 80% in all.")]
         [SerializeField] Vector2 eyeSize = new(0.4f, 0.9f);
         [SerializeField] DummyPlacer placer;
-        [Tooltip("Optional (OnlineScene). While it's switched on, the view only splits once calibrated.")]
-        [SerializeField] SharedArenaCalibration calibration;
         [Tooltip("Optional. Never split in demo mode.")]
         [SerializeField] DemoMode demo;
         [Tooltip("Screen-space canvases to show in both eyes (HUD, first-person, weapon selection).")]
@@ -53,9 +51,7 @@ namespace CG4002.AR
             {
                 if (dismissed || placer == null || !placer.IsPlaced)
                     return false;
-                if (demo != null && demo.Active)
-                    return false;
-                return calibration == null || !calibration.isActiveAndEnabled || calibration.IsReady;
+                return demo == null || !demo.Active;
             }
         }
 

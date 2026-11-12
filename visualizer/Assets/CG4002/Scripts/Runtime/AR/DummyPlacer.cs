@@ -34,6 +34,8 @@ namespace CG4002.AR
         bool planesVisible;
 
         public bool IsPlaced { get; private set; }
+        /// <summary>The avatar standing in the arena (the opponent online).</summary>
+        public Transform Dummy => dummy;
         // An optional network/settings overlay may consume pointer input before AR placement.
         public System.Func<Vector2, bool> BlockPlacementInput;
 
@@ -52,6 +54,13 @@ namespace CG4002.AR
             IsPlaced = false;
             arena.gameObject.SetActive(false);
             SetPlanesVisible(true);
+        }
+
+        /// <summary>Hide or show the placed arena without picking it up (weapon selection hides the opponent).</summary>
+        public void SetArenaVisible(bool visible)
+        {
+            if (IsPlaced)
+                arena.gameObject.SetActive(visible);
         }
 
         void Update()

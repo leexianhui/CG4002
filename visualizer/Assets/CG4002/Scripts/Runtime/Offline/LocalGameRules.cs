@@ -24,6 +24,11 @@ namespace CG4002.Offline
     ///   otherwise                                       HIT, full damage
     /// Every resolved attack starts that move's cooldown (each move only blocks itself).
     ///
+    /// Guard, like the engine's hardware guard (game_state_task.py): raising it starts a window of
+    /// guard_duration_ms (3 s), after which it drops by itself; raising it again while it's up doesn't
+    /// extend it, and lowering it early does nothing (the engine ignores the release). Attacking
+    /// drops your own guard. With guard_duration_ms 0 the guard lasts until it's lowered.
+    ///
     /// Positions: a player whose camera reports positions (PositionReporter, on Outbound) is where
     /// it reports, facing where it looks. The other (the placed enemy) stands at the arena origin,
     /// or where Move put it, and always faces its opponent.
@@ -93,6 +98,27 @@ namespace CG4002.Offline
                         break;
                 }
             }
+            ExpireGuards();
+        }
+
+        /// <summary>A guard that has been up for guard_duration_ms drops, as the engine's snapshot shows it.</summary>
+        void ExpireGuards()
+        {
+            foreach (var id in new[] { PlayerId.P1, PlayerId.P2 })
+            {
+                var fighter = Get(id);
+                if (fighter.guarding && !GuardActive(fighter))
+                    DropGuard(id);
+            }
+        }
+
+        bool GuardActive(Fighter fighter) =>
+            fighter.guarding && (Rules.guardDuration <= 0f || Time.time - fighter.guardRaisedAt <= Rules.guardDuration);
+
+        void DropGuard(PlayerId player)
+        {
+            Get(player).guarding = false;
+            Send(new GuardMessage { player = player, guarding = false });
         }
 
         public void StartMatch()
@@ -136,6 +162,9 @@ namespace CG4002.Offline
         public bool Attack(PlayerId attacker, ActionType action)
         {
             var attackerState = Get(attacker);
+            // Attacking drops your own guard, so nobody can keep a guard up and swing without risk.
+            if (attackerState.guarding)
+                DropGuard(attacker);
             bool onCooldown = attackerState.cooldowns.TryGetValue(action, out var running) && Time.time < running.endsAt;
             // Like the engine's ACTION_RECOGNIZED: every attack is reported, resolved or not.
             Send(new ActionRecognizedMessage { player = attacker, action = action, onCooldown = onCooldown });
@@ -150,7 +179,7 @@ namespace CG4002.Offline
             int damage = 0;
             if (Vector2.Distance(attackerState.position, defenderState.position) > move.range)
                 outcome = Outcome.Miss;
-            else if (defenderState.guarding && Faces(defenderState, attackerState))
+            else if (GuardActive(defenderState) && Faces(defenderState, attackerState))
             {
                 bool parried = Time.time - defenderState.guardRaisedAt <= Rules.parryWindow;
                 outcome = parried ? Outcome.Parry : Outcome.Block;
@@ -239,15 +268,24 @@ namespace CG4002.Offline
             }
         }
 
+        /// <summary>
+        /// The guard pose was raised (true) or lowered (false), as the wearable reports it. Raising
+        /// starts a guard_duration_ms window (not extended while it's up); lowering only counts when
+        /// guard_duration_ms is 0, since the engine otherwise ignores the release.
+        /// </summary>
         public void SetGuard(PlayerId player, bool guarding)
         {
             var fighter = Get(player);
-            if (fighter.guarding == guarding)
-                return;
-            fighter.guarding = guarding;
             if (guarding)
+            {
+                if (GuardActive(fighter))
+                    return;
+                fighter.guarding = true;
                 fighter.guardRaisedAt = Time.time;  // a hit within the parry window of this is parried
-            Send(new GuardMessage { player = player, guarding = guarding });
+                Send(new GuardMessage { player = player, guarding = true });
+            }
+            else if (fighter.guarding && Rules.guardDuration <= 0f)
+                DropGuard(player);
         }
 
         /// <summary>Moves a player (the enemy, side-stepping), in arena coordinates. It keeps facing its opponent.</summary>

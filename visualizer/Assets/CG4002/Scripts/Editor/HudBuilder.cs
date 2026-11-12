@@ -22,13 +22,17 @@ namespace CG4002.EditorTools
     ///      ├─ Cooldowns    bottom-left: an icon per move (the six the AI recognises) with a grey radial sweep
     ///      ├─ Opponent     top-right: ENEMY, gold-framed health bar, GUARDING
     ///      ├─ Outcome      centre:    "HIT -10" / "BLOCKED", shown briefly
+    ///      ├─ Guarding     centre:    GUARDING while your guard is up (same spot; hit messages take over briefly)
     ///      ├─ Result       centre:    "ENEMY DEFEATED"
     ///      └─ Debug        bottom-right: RESET, MOVE DUMMY, TRACKING buttons (DebugPanel)
-    ///   WeaponSelect (Canvas + WeaponSelectScreen) └─ View: title and instruction, top centre, and
-    ///                   demo mode's CHOOSE buttons; the dummies are spawned in the world at runtime
+    ///   WeaponSelect (Canvas + WeaponSelectScreen) └─ View: title and instruction (top centre while
+    ///                   choosing, centre for calibration / status messages), and demo mode's CHOOSE
+    ///                   buttons; the dummies are spawned in the world at runtime
     ///   DemoControls (Canvas + DemoMode, OnlineScene only) └─ View: demo mode's control bar, bottom-left
     ///   FirstPerson  (Canvas + FirstPersonAttack) └─ View: the recognised move's name, lower centre;
     ///                   the first-person avatar is spawned under the AR camera at runtime
+    ///   ReplaceDummy (Canvas + ReplaceDummyButton, OnlineScene only): RE-PLACE DUMMY, bottom centre,
+    ///                   from placing until calibrated; drawn over split screen, never in the eyes
     ///   EventSystem     routes taps to the buttons
     /// The HUD also has a SplitLayout (its layout while split screen is on), and the AR
     /// camera a SplitScreen that shows the HUD, FirstPerson and WeaponSelect canvases in both eyes.
@@ -87,6 +91,10 @@ namespace CG4002.EditorTools
 
             // Centre messages.
             var outcome = CentreText(root, "Outcome", 72, y: 120f);
+            // Your own guard: same place and size as the hit / miss messages (which take over briefly).
+            var selfGuard = CentreText(root, "Guarding", 72, y: 120f);
+            selfGuard.text = "GUARDING";
+            selfGuard.color = Gold;
             var result = CentreText(root, "Result", 96, y: 0f);
             result.color = Gold;
 
@@ -97,6 +105,7 @@ namespace CG4002.EditorTools
             settings.FindProperty("selfHealthFill").objectReferenceValue = selfHealth;
             settings.FindProperty("selfHealthText").objectReferenceValue = selfHealthText;
             settings.FindProperty("weaponText").objectReferenceValue = weapon;
+            settings.FindProperty("selfGuardIndicator").objectReferenceValue = selfGuard.gameObject;
             settings.FindProperty("opponentHealthFill").objectReferenceValue = opponentHealth;
             settings.FindProperty("opponentHealthText").objectReferenceValue = opponentHealthText;
             settings.FindProperty("opponentGuardIndicator").objectReferenceValue = guard.gameObject;
@@ -106,21 +115,25 @@ namespace CG4002.EditorTools
             settings.ApplyModifiedPropertiesWithoutUndo();
 
             BuildDebugPanel(root, gameState, dispatcher, placer, trackingOverlay);
-            BuildSplitLayout(canvasObject, root, self, opponent, outcome, result);
+            BuildSplitLayout(canvasObject, root, self, opponent, outcome, selfGuard, result);
         }
 
         /// <summary>
         /// The HUD's layout while split screen is on (UI/SplitLayout). Each eye is about as wide as it
         /// is tall, so the layout spreads across the eye's whole width: the health panels sit a little
         /// in from its top corners, about 0.8x full view with a clear gap between them, the cooldown
-        /// icons spread along the bottom edge, the centre messages shrink to fit, and the buttons are
+        /// icons spread along the bottom edge (moderately: about half a full spread's gaps), the centre
+        /// messages shrink to fit, and the buttons are
         /// hidden.
         /// </summary>
         static void BuildSplitLayout(GameObject canvasObject, RectTransform root, RectTransform self,
-            RectTransform opponent, Text outcome, Text result)
+            RectTransform opponent, Text outcome, Text selfGuard, Text result)
         {
             var layout = canvasObject.AddComponent<SplitLayout>();
             const float edge = 24f;           // the cooldown row, from the eye's sides
+            // The cooldown row's width, from packed (0) to the eye's full width (1): 0.4 gives about
+            // half the gaps of a full spread, keeping the icons together in the middle.
+            const float cooldownSpread = 0.4f;
             const float healthBarWidth = 440f; // HealthBar's width at scale 1
             // The health panels sit in from the eye's corners, toward the middle of the lens.
             var healthInset = new Vector2(100f, 130f);
@@ -131,8 +144,9 @@ namespace CG4002.EditorTools
                 // leaving a clear gap between the two), and up to 0.88x where the eye is wider.
                 (self, false, new Vector2(0f, 1f), new Vector2(healthInset.x, -healthInset.y), 0.88f, false, healthBarWidth, 0.344f),
                 (opponent, false, new Vector2(1f, 1f), new Vector2(-healthInset.x, -healthInset.y), 0.88f, false, healthBarWidth, 0.344f),
-                ((RectTransform)root.Find("Cooldowns"), false, new Vector2(0.5f, 0f), new Vector2(0f, 40f), 1f, true, 0f, 0f),
+                ((RectTransform)root.Find("Cooldowns"), false, new Vector2(0.5f, 0f), new Vector2(0f, 140f), 1f, true, 0f, 0f),
                 (outcome.rectTransform, false, new Vector2(0.5f, 0.5f), new Vector2(0f, 120f), 0.8f, false, 0f, 0f),
+                (selfGuard.rectTransform, false, new Vector2(0.5f, 0.5f), new Vector2(0f, 120f), 0.8f, false, 0f, 0f),
                 (result.rectTransform, false, new Vector2(0.5f, 0.5f), Vector2.zero, 0.75f, false, 0f, 0f),
                 ((RectTransform)root.Find("Debug"), true, Vector2.zero, Vector2.zero, 1f, false, 0f, 0f),
             };
@@ -150,6 +164,7 @@ namespace CG4002.EditorTools
                 entry.FindPropertyRelative("scale").floatValue = scale;
                 entry.FindPropertyRelative("stretch").boolValue = stretch;
                 entry.FindPropertyRelative("margin").floatValue = edge;
+                entry.FindPropertyRelative("spread").floatValue = stretch ? cooldownSpread : 1f;
                 entry.FindPropertyRelative("fitWidth").floatValue = fitWidth;
                 entry.FindPropertyRelative("widthShare").floatValue = widthShare;
             }
@@ -157,8 +172,8 @@ namespace CG4002.EditorTools
         }
 
         /// <summary>
-        /// Split screen (AR/SplitScreen) on the AR camera, wired to the open scene: the placer, the
-        /// online calibration and demo mode if present, and the canvases shown in both eyes. Run after
+        /// Split screen (AR/SplitScreen) on the AR camera, wired to the open scene: the placer, demo
+        /// mode if present, and the canvases shown in both eyes. Run after
         /// the HUD, first-person view, weapon selection and demo controls are built.
         /// </summary>
         public static void WireSplitScreen()
@@ -169,8 +184,6 @@ namespace CG4002.EditorTools
                 split = camera.gameObject.AddComponent<SplitScreen>();
             var settings = new SerializedObject(split);
             settings.FindProperty("placer").objectReferenceValue = placer;
-            settings.FindProperty("calibration").objectReferenceValue =
-                Object.FindAnyObjectByType<CG4002.Net.SharedArenaCalibration>(FindObjectsInactive.Include);
             settings.FindProperty("demo").objectReferenceValue = Object.FindAnyObjectByType<CG4002.Offline.DemoMode>(FindObjectsInactive.Include);
             var names = new[] { "HUD", "FirstPerson", "WeaponSelect" };
             var list = settings.FindProperty("canvases");
@@ -187,8 +200,48 @@ namespace CG4002.EditorTools
         }
 
         /// <summary>
+        /// RE-PLACE DUMMY (UI/ReplaceDummyButton), bottom centre on its own canvas above split screen's
+        /// output, wired to the open scene's placer and online calibration. Only OnlineScene has a
+        /// calibration; without one nothing is built. Rebuilt from scratch each time.
+        /// </summary>
+        public static void BuildReplaceDummy()
+        {
+            var existing = GameObject.Find("ReplaceDummy");
+            if (existing != null)
+                Object.DestroyImmediate(existing);
+            var calibration = Object.FindAnyObjectByType<CG4002.Net.SharedArenaCalibration>(FindObjectsInactive.Include);
+            var placer = Object.FindAnyObjectByType<DummyPlacer>();
+            if (calibration == null || placer == null)
+                return;
+
+            var canvasObject = new GameObject("ReplaceDummy", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+            var canvas = canvasObject.GetComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 1001;  // above split screen's output (1000)
+            var scaler = canvasObject.GetComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920f, 1080f);
+            scaler.matchWidthOrHeight = 0.5f;
+
+            var button = FramedButton((RectTransform)canvasObject.transform, "Button", "RE-PLACE DUMMY", 34);
+            var rect = (RectTransform)button.transform;
+            rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 0f);
+            rect.anchoredPosition = new Vector2(0f, 70f);
+            rect.sizeDelta = new Vector2(440f, 96f);
+            button.gameObject.SetActive(false);
+
+            var replace = canvasObject.AddComponent<ReplaceDummyButton>();
+            var settings = new SerializedObject(replace);
+            settings.FindProperty("placer").objectReferenceValue = placer;
+            settings.FindProperty("calibration").objectReferenceValue = calibration;
+            settings.FindProperty("button").objectReferenceValue = button;
+            settings.ApplyModifiedPropertiesWithoutUndo();
+            EnsureEventSystem();
+        }
+
+        /// <summary>
         /// The weapon-selection screen, wired to what's already in the open scene (GameState,
-        /// DummyPlacer and its camera and planes, the HUD). Rebuilt from scratch each time.
+        /// DummyPlacer and its camera and planes, the online calibration if any, the HUD). Rebuilt from scratch each time.
         /// </summary>
         public static WeaponSelectScreen BuildWeaponSelect()
         {
@@ -249,6 +302,8 @@ namespace CG4002.EditorTools
             settings.FindProperty("arCamera").objectReferenceValue = placement.FindProperty("arCamera").objectReferenceValue;
             settings.FindProperty("planeManager").objectReferenceValue = placement.FindProperty("planeManager").objectReferenceValue;
             settings.FindProperty("placer").objectReferenceValue = placer;
+            settings.FindProperty("calibration").objectReferenceValue =
+                Object.FindAnyObjectByType<CG4002.Net.SharedArenaCalibration>(FindObjectsInactive.Include);
             settings.FindProperty("hud").objectReferenceValue = hud.GetComponent<Canvas>();
             settings.FindProperty("title").objectReferenceValue = title;
             settings.FindProperty("instruction").objectReferenceValue = instruction;

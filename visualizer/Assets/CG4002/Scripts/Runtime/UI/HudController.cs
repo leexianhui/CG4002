@@ -7,7 +7,7 @@ namespace CG4002.UI
 {
     /// <summary>
     /// Screen-space HUD (report 6.1.1), medieval-styled: health for both players, the local player's
-    /// weapon and a cooldown icon per move (bottom left), the opponent's guard, and short messages for outcomes
+    /// weapon and a cooldown icon per move (bottom left), both players' guard, and short messages for outcomes
     /// and the match result. Only draws what GameState and the dispatcher announce; it holds no game logic.
     ///
     /// The layout lives in the scene (built by CG4002 > Setup Game Scene) so it can be adjusted
@@ -33,6 +33,9 @@ namespace CG4002.UI
         [SerializeField] RectTransform selfHealthFill;
         [SerializeField] Text selfHealthText;
         [SerializeField] Text weaponText;
+        [Tooltip("Shown in the centre while you guard (the engine's guardState for this player), " +
+                 "except while a hit / miss message is showing there.")]
+        [SerializeField] GameObject selfGuardIndicator;
 
         [Header("Cooldowns (bottom left)")]
         [SerializeField] CooldownRow[] cooldownRows = System.Array.Empty<CooldownRow>();
@@ -100,10 +103,7 @@ namespace CG4002.UI
         {
             if (player == gameState.OpponentPlayer)
                 opponentGuardIndicator.SetActive(guarding);
-            // Your own guard (the hardware guard pose) has no indicator of its own: say when it
-            // goes up and when the engine drops it again (3 s, shared/config/match.yaml).
-            else if (player == gameState.LocalPlayer)
-                ShowMessage(guarding ? "GUARD UP" : "GUARD DOWN", new Color(0.55f, 0.8f, 1f));
+            // Your own guard is drawn in Update: it shares the centre line with hit messages.
         }
 
         void OnPhaseChanged(MatchPhase phase)
@@ -149,6 +149,16 @@ namespace CG4002.UI
 
             if (outcomeText.gameObject.activeSelf && Time.time >= outcomeHideAt)
                 outcomeText.gameObject.SetActive(false);
+
+            // Your own guard (the hardware guard pose): GUARDING in the centre for as long as it lasts,
+            // until the engine drops it (after 3 s, shared/config/match.yaml, or when you attack). A hit /
+            // miss message uses the same spot, so it takes over briefly and GUARDING comes back after.
+            if (selfGuardIndicator != null)
+            {
+                bool show = gameState.Self.guarding && !outcomeText.gameObject.activeSelf;
+                if (selfGuardIndicator.activeSelf != show)
+                    selfGuardIndicator.SetActive(show);
+            }
         }
 
         // ---- Helpers ----------------------------------------------------------------------

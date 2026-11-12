@@ -18,14 +18,16 @@ with one weapon fixed at build time, a flat 10 damage, no range or facing, and n
 5. Play with the bar at the bottom-left:
    - **YOU / ENEMY:** whose attacks and guard the bar plays.
    - **6 move icons:** attack (grey sweep = cooling down).
-   - **GUARD:** hold it down to guard.
+   - **GUARD:** raises the guard like the wearable's guard pose: it stays up for 3 s
+     (`match.yaml` `guard_duration_ms`) or until that side attacks.
    - **CHANGE WEAPONS:** back to step 3.
    - RESET (bottom-right) restarts the match.
 6. To leave demo mode, close the app.
 
-What to try: walk back past the move's range (a MISS); hold GUARD as the enemy, then attack as YOU
-(BLOCKED, 25% damage); tap GUARD just before the attack lands (PARRY, no damage); guard as YOU while
-facing away from the enemy, then attack as ENEMY (it still hits).
+What to try (with the engine's current `match.yaml`): walk back past the move's range (a MISS); tap
+GUARD as the enemy, wait a moment, then attack as YOU (GUARDED / BLOCKED -0: a block does no damage);
+tap GUARD just before the attack lands (PARRIED); tap GUARD and wait 3 s for GUARDING to go, then attack
+(it hits again).
 
 Code: `Offline/DemoMode.cs` (switch-over and control bar), `Offline/LocalGameRules.cs` (the demo
 engine), `Offline/GameRules.cs` (reads the YAML), `UI/WeaponSelectScreen.cs` (pick buttons),
@@ -93,6 +95,9 @@ selection screen hides the arena.
   real game (the engine's ON_COOLDOWN).
 - **GUARD is hold-to-guard:** up while held, down on release, like raising your arm. That also makes
   parry timing demonstrable (guard raised ≤ 150 ms before the hit).
+  *Since 2026-11-09:* the engine's hardware guard lasts `guard_duration_ms` (3 s) and drops when that
+  player attacks; releasing the pose does nothing. The demo engine follows it, so GUARD works like a
+  tap.
 - **Controlling YOU:**
   - your first-person attack animation plays;
   - the outcome lands on the enemy's health;

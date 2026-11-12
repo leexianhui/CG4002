@@ -21,6 +21,20 @@ namespace CG4002.Tests
              ""connected"":true,""ready"":false,""position"":null,""cooldownAction"":null,""cooldowns"":[]}] }";
 
         [Test]
+        public void ResetMatchIsExactlyTheOperatorCommandAndItsAnnouncementIsRecognised()
+        {
+            // The engine accepts only this exact object on /control (comms engine/app.py).
+            Assert.That(JToken.DeepEquals(JObject.Parse(EngineWireCodec.ResetMatch()),
+                JObject.Parse(@"{""type"":""RESET_MATCH"",""version"":1}")), Is.True);
+            const string reset = @"{""type"":""MATCH_STATE"",""version"":1,""timestamp"":1,""phase"":""WAITING"",
+                ""hp"":{""1"":100,""2"":100},""winnerId"":null,""connected"":{},""reason"":""reset""}";
+            Assert.That(EngineWireCodec.IsMatchReset(reset), Is.True);
+            Assert.That(EngineWireCodec.IsMatchReset(reset.Replace(@"""reset""", "null")), Is.False);
+            Assert.That(EngineWireCodec.IsMatchReset(Snapshot), Is.False);
+            Assert.That(EngineWireCodec.Decode(reset), Is.Empty, "complete snapshots own online state");
+        }
+
+        [Test]
         public void EnumsUseNamesInsteadOfIncompatibleIntegerValues()
         {
             Assert.That(EngineWireCodec.Weapon("SPEAR"), Is.EqualTo(WeaponType.Spear));

@@ -53,8 +53,9 @@ namespace CG4002.AR
         [Tooltip("Reference image names that count as the shield's marker.")]
         [SerializeField] string[] shieldImageNames = { "Shield" };
         [SerializeField] ShieldView shieldPrefab;
-        [Tooltip("Your shield prop's width, metres. The model is scaled to cover it.")]
-        [SerializeField] float shieldWidth = 0.45f;
+        [Tooltip("How wide to draw the shield, metres (the model is scaled to it). Half the 0.45 m prop: " +
+                 "full size filled too much of the view.")]
+        [SerializeField] float shieldWidth = 0.225f;
         [Tooltip("Along the picture's up direction, from the marker's centre to the shield's centre, metres " +
                  "(positive when the marker sits below the centre).")]
         [SerializeField] float markerToShieldCentre;

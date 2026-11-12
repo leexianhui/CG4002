@@ -19,7 +19,7 @@ namespace CG4002.Net
         public GameState gameState;
         public AvatarController opponent;
         public SharedArenaCalibration calibration;
-        [Tooltip("Optional. While it is open, calibration waits: the weapon is chosen first.")]
+        [Tooltip("Optional. Opens after calibration, in the headset; the panel says so meanwhile.")]
         public CG4002.UI.WeaponSelectScreen weaponSelect;
         public GameObject offlineEngine;
         [Tooltip("Optional. Shows a DEMO MODE button: the whole game on this phone, no hardware or engine.")]
@@ -148,11 +148,56 @@ namespace CG4002.Net
             lastReady = null;
         }
 
+        /// <summary>
+        /// RESTART: the operator's match reset (RESET_MATCH on /control, as
+        /// comms/src/cg_comms/tools/reset_match.py sends it), with this phone's own token. The engine
+        /// starts a fresh match (full HP; weapons stay, they are the hub's) and announces it to both
+        /// phones, which then go back to dummy placement. This phone goes back straight away too, so
+        /// it restarts even when the engine is out of reach.
+        /// </summary>
+        void Restart()
+        {
+            BackToPlacement();
+            if (lifetime == null)
+            {
+                Status = "Not connected: restarted this phone only";
+                return;
+            }
+            Status = "Restarting the match";
+            _ = SendReset(endpoint.TrimEnd('/') + "/control", bearerToken);
+        }
+
+        async Task SendReset(string url, string token)
+        {
+            try
+            {
+                using var control = new ClientWebSocket();
+                control.Options.SetRequestHeader("Authorization", "Bearer " + token);
+                using var timeout = new CancellationTokenSource(5000);
+                await control.ConnectAsync(new Uri(url), timeout.Token);
+                var bytes = Encoding.UTF8.GetBytes(EngineWireCodec.ResetMatch());
+                await control.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, timeout.Token);
+                // The engine confirms on this socket once both phones have been told.
+                await control.ReceiveAsync(new ArraySegment<byte>(new byte[4096]), timeout.Token);
+                Status = "Match reset: place the dummy again";
+                await control.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
+            }
+            catch (Exception e) { Status = "Restart not confirmed by the engine: " + e.GetType().Name; }
+        }
+
+        /// <summary>Back to the start of setup: the dummy is picked up, so calibration is cleared and this phone reports not ready.</summary>
+        void BackToPlacement()
+        {
+            if (calibration != null && calibration.placer != null)
+                calibration.placer.BeginPlacement();
+        }
+
         /// <summary>Hands the game to demo mode (Docs/DemoMode.md): this client disconnects and turns off.</summary>
         void StartDemo()
         {
             Disconnect();
             ConfigureIdentity();  // the player chosen in the panel; the enemy is the other one
+            calibration.enabled = false;  // one phone, no shared frame, and no headset prompts
             demoMode.Begin();
             enabled = false;
         }
@@ -289,6 +334,11 @@ namespace CG4002.Net
                 if (incoming.generation != epoch || !Connected) continue;
                 try
                 {
+                    if (incoming.json.Contains("\"MATCH_STATE\"") && EngineWireCodec.IsMatchReset(incoming.json))
+                    {
+                        BackToPlacement();
+                        Status = "Match reset: place the dummy again";
+                    }
                     var messages = EngineWireCodec.Decode(incoming.json);
                     foreach (var message in messages) dispatcher.Inbound.Enqueue(message);
                     if (incoming.json.Contains("\"STATE_SNAPSHOT\""))
@@ -372,13 +422,15 @@ namespace CG4002.Net
                 if (demoMode != null && GUILayout.Button("DEMO MODE (no hardware)", GUILayout.Height(44))) StartDemo();
             }
             else if (GUILayout.Button("Disconnect / settings")) { Disconnect(); showSettings = true; }
+            if (GUILayout.Button("RESTART (both re-place the dummy)")) Restart();
             if (weaponSelect != null && weaponSelect.IsSelecting)
-                GUILayout.Label("Choose your weapon first: copy the pose in front of you. Calibration follows.");
+                GUILayout.Label("Choose your weapon: copy a pose in front of you.");
             else
             {
-                GUILayout.Label("Tap the shared floor origin, then stand on the marked +Z line.");
+                GUILayout.Label("Tap the floor where the opponent should stand, put on the headset, " +
+                    "then look at the opponent and hold still for 3 s. The weapon is chosen after.");
                 GUILayout.Label("Calibration: " + calibration.Status);
-                if (GUILayout.Button(calibration.IsReady ? "Calibrated — reconfirm direction" : "Confirm shared +Z direction"))
+                if (GUILayout.Button(calibration.IsCalibrated ? "Calibrated — reconfirm direction" : "Confirm direction by hand"))
                     Status = calibration.ConfirmFromMarkedForwardLine() ? "Calibration confirmed" : "Place arena; stand at least 0.3 m from origin";
             }
             bool fresh = Connected && setupStatus != null && Time.unscaledTime - lastSnapshotAt < 1f;

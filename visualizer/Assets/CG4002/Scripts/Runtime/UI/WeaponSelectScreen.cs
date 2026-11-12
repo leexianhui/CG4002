@@ -16,14 +16,17 @@ namespace CG4002.UI
     /// of the camera in that weapon's ready stance, mirrored so the player copies it like a mirror.
     ///
     /// The hub decides: holding a stance for 3 s locks it, and the engine reports the weapon. This
-    /// screen never picks or sends one. When the lock arrives the chosen dummy flashes, the screen
-    /// closes, and arena placement (calibration) starts. The HUD and placement are held off until then.
+    /// screen never picks or sends one. When the lock arrives the chosen dummy flashes and the screen
+    /// closes. The HUD and the opponent avatar are hidden until then.
     ///
     /// Opens only on an explicit "no weapon" from the engine, so it stays closed offline (unless
-    /// LocalGameRules requires selection) and before the first snapshot.
+    /// LocalGameRules requires selection) and before the first snapshot. It also waits until the
+    /// arena is placed and (online) calibrated: the one tap is done with the phone in hand, then the
+    /// headset goes on, the view splits, and the rest needs no touch. Until then it shows what to do
+    /// for calibration (look at the opponent and hold still), and later if AR tracking is lost.
     ///
     /// Demo mode (no hub): a button under each dummy picks instead of the pose, first for you, then
-    /// for the enemy (DemoMode sets PickWeapon).
+    /// for the enemy (DemoMode sets PickWeapon). It chooses first and places after, as before.
     /// </summary>
     public class WeaponSelectScreen : MonoBehaviour
     {
@@ -40,8 +43,10 @@ namespace CG4002.UI
         [SerializeField] Camera arCamera;
         [Tooltip("Optional. The lowest detected floor plane sets the dummies' feet; otherwise 1.4 m below the camera.")]
         [SerializeField] ARPlaneManager planeManager;
-        [Tooltip("Optional. Held off (and reset) while choosing, so calibration comes after selection.")]
+        [Tooltip("Optional. Selection waits for placement; the opponent avatar is hidden while choosing.")]
         [SerializeField] DummyPlacer placer;
+        [Tooltip("Optional (OnlineScene). Selection waits for calibration; its hints show here meanwhile.")]
+        [SerializeField] CG4002.Net.SharedArenaCalibration calibration;
         [Tooltip("Optional. The game HUD, hidden while choosing.")]
         [SerializeField] Canvas hud;
         [SerializeField] Text title;
@@ -59,6 +64,11 @@ namespace CG4002.UI
         [SerializeField] float dummyHeight = 1.6f;
         [Tooltip("Seconds the dummies may be out of view before they move back in front of the camera.")]
         [SerializeField] float recentreAfter = 1.5f;
+        [Tooltip("Status messages (calibration, tracking lost, waiting for the opponent) sit this far above the " +
+                 "view's centre, clear of the health bars, with the instruction below. While choosing, the text " +
+                 "stays at the top, clear of the dummies.")]
+        [SerializeField] float statusY = 0f;
+        [SerializeField] float statusLineGap = 90f;
 
         [Header("Timing")]
         [Tooltip("Shown to the player; the hub's WEAPON_LOCK_HOLD_MS decides.")]
@@ -73,6 +83,8 @@ namespace CG4002.UI
         float outOfViewTime;
         WeaponType chosen;
         PlayerId choosingFor;
+        (Vector2 anchor, Vector2 pivot, Vector2 position) titleTop, instructionTop;
+        bool textCentred;
 
         public bool IsSelecting => current != Stage.Closed;
 
@@ -95,8 +107,20 @@ namespace CG4002.UI
 
         bool ChoosingForSelf => choosingFor == gameState.LocalPlayer;
 
+        /// <summary>Demo mode chooses before placing (the phone is in hand throughout); otherwise placement and calibration come first.</summary>
+        bool PlacesFirst => PickWeapon == null;
+
+        bool Calibrating => calibration != null && calibration.isActiveAndEnabled;
+
+        bool ArenaReady =>
+            placer == null || (placer.IsPlaced && (!Calibrating || calibration.IsCalibrated));
+
         void Start()
         {
+            if (title != null)
+                titleTop = (title.rectTransform.anchorMin, title.rectTransform.pivot, title.rectTransform.anchoredPosition);
+            if (instruction != null)
+                instructionTop = (instruction.rectTransform.anchorMin, instruction.rectTransform.pivot, instruction.rectTransform.anchoredPosition);
             SetText("", "");
             for (int i = 0; i < pickButtons.Length; i++)
             {
@@ -111,13 +135,15 @@ namespace CG4002.UI
             switch (current)
             {
                 case Stage.Closed:
-                    if (NextChooser is PlayerId next)
+                    if (NextChooser is PlayerId next && (!PlacesFirst || ArenaReady))
                         Open(next);
                     else
-                        ShowOpponentStatus();
+                        ShowStatus();
                     break;
                 case Stage.Choosing:
-                    if (!Needs(gameState.Get(choosingFor)))
+                    if (PlacesFirst && !ArenaReady)
+                        Close();  // RESTART or a match reset picked the dummy up: place and calibrate first
+                    else if (!Needs(gameState.Get(choosingFor)))
                         Confirm(gameState.Get(choosingFor).weapon);
                     else
                         KeepInView();
@@ -147,11 +173,15 @@ namespace CG4002.UI
             choosingFor = player;
             if (placer != null)
             {
-                placer.BeginPlacement();
+                if (PlacesFirst)
+                    placer.SetArenaVisible(false);
+                else
+                    placer.BeginPlacement();
                 placer.enabled = false;
             }
             if (hud != null)
                 hud.enabled = false;
+            CentreText(false);
 
             stage = new GameObject("Weapon Select Stage").transform;
             for (int i = 0; i < weapons.Length; i++)
@@ -216,7 +246,10 @@ namespace CG4002.UI
             Clear();
             current = Stage.Closed;
             if (placer != null)
+            {
+                placer.SetArenaVisible(true);
                 placer.enabled = true;
+            }
             if (hud != null)
                 hud.enabled = true;
             SetText("", "");
@@ -351,12 +384,56 @@ namespace CG4002.UI
             }
         }
 
+        /// <summary>
+        /// While closed: calibration's hint until confirmed, a warning while AR tracking is lost, else
+        /// whether the opponent is still choosing.
+        /// </summary>
+        void ShowStatus()
+        {
+            CentreText(true);
+            if (Calibrating && placer != null && placer.IsPlaced)
+            {
+                if (!calibration.IsCalibrated)
+                {
+                    SetText("FACE YOUR OPPONENT", calibration.Hint);
+                    return;
+                }
+                if (calibration.TrackingLost)
+                {
+                    SetText("TRACKING LOST", "Look around the room slowly");
+                    return;
+                }
+            }
+            ShowOpponentStatus();
+        }
+
         /// <summary>Once this player has a weapon, say so if the opponent is still choosing.</summary>
         void ShowOpponentStatus()
         {
             var opponent = gameState.Opponent;
             bool waiting = gameState.Self.weaponSelected && opponent.weaponInitialized && !opponent.weaponSelected;
             SetText("", waiting ? "Waiting for your opponent to choose a weapon" : "");
+        }
+
+        /// <summary>Status messages in the middle of the view; the selection's own text at the top.</summary>
+        void CentreText(bool centre)
+        {
+            if (textCentred == centre)
+                return;
+            textCentred = centre;
+            var middle = new Vector2(0.5f, 0.5f);
+            Place(title, centre ? (middle, middle, new Vector2(0f, statusY)) : titleTop);
+            Place(instruction, centre ? (middle, middle, new Vector2(0f, statusY - statusLineGap)) : instructionTop);
+        }
+
+        static void Place(Text text, (Vector2 anchor, Vector2 pivot, Vector2 position) at)
+        {
+            if (text == null)
+                return;
+            var rect = text.rectTransform;
+            rect.anchorMin = rect.anchorMax = at.anchor;
+            rect.pivot = at.pivot;
+            rect.anchoredPosition = at.position;
         }
 
         void SetText(string heading, string detail)

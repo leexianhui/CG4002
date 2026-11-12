@@ -16,7 +16,7 @@ namespace CG4002.Offline
     /// stands in for both players' wearables:
     ///
     ///   [ YOU | ENEMY ] [ CHANGE WEAPONS ]
-    ///   [6 attacks, with cooldown sweeps] [ GUARD (hold) ]
+    ///   [6 attacks, with cooldown sweeps] [ GUARD ]
     ///
     /// The switch says whose attacks and guard the bar plays. Like MockDataInjector it calls the demo
     /// engine directly, since the wearables are on the engine's side of the boundary. The enemy only

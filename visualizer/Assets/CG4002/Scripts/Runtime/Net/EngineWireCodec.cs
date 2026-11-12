@@ -61,6 +61,20 @@ namespace CG4002.Net
             JsonConvert.SerializeObject(new { type = "VISUALIZER_READY", version = 1, timestamp,
                 playerId = (int)player, ready });
 
+        /// <summary>The operator command on the engine's /control path (comms/src/cg_comms/tools/reset_match.py).</summary>
+        public static string ResetMatch() =>
+            JsonConvert.SerializeObject(new { type = "RESET_MATCH", version = 1 });
+
+        /// <summary>
+        /// The engine's MATCH_STATE announcing a reset, from the operator's terminal or any phone's
+        /// RESTART. Sent once per reset (shared/protocol/app_messages.md §3).
+        /// </summary>
+        public static bool IsMatchReset(string json)
+        {
+            var root = JObject.Parse(json);
+            return root["type"]?.Value<string>() == "MATCH_STATE" && root["reason"]?.Value<string>() == "reset";
+        }
+
         public static List<Message> Decode(string json)
         {
             var root = JObject.Parse(json);

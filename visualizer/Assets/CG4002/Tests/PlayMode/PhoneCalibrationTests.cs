@@ -54,16 +54,53 @@ namespace CG4002.Tests
         }
 
         [Test]
-        public void TrackingLossCannotSilentlyResumeOrConfirm()
+        public void TrackingDipsKeepCalibrationAndLongLossesResumeByThemselves()
         {
             Assert.That(calibration.ConfirmFromMarkedForwardLine(), Is.True);
-            calibration.requireARTracking = true; // No AR provider exists in this test.
-            Assert.That(calibration.IsReady, Is.False);
-            Assert.That(calibration.ConfirmFromMarkedForwardLine(), Is.False);
+            int revision = calibration.Revision;
+            calibration.requireARTracking = true; // No AR provider exists in this test: tracking is lost.
+            Assert.That(calibration.IsReady, Is.True, "a short dip keeps reporting ready");
+            calibration.trackingGraceSeconds = 0f;
+            Assert.That(calibration.IsReady, Is.False, "a long loss reports not ready (the engine pauses)");
+            Assert.That(calibration.IsCalibrated, Is.True);
+            Assert.That(calibration.ConfirmFromMarkedForwardLine(), Is.False, "can't confirm without tracking");
             calibration.requireARTracking = false;
-            Assert.That(calibration.IsReady, Is.False);
-            Assert.That(calibration.ConfirmFromMarkedForwardLine(), Is.True);
+            Assert.That(calibration.IsReady, Is.True, "ready again once tracking returns, no reconfirm");
+            Assert.That(calibration.Revision, Is.EqualTo(revision), "same frame: queued positions stay valid");
         }
+
+        [Test]
+        public void LookingAtTheAvatarAndHoldingStillConfirms()
+        {
+            calibration.holdSeconds = 0f;
+            Tick();  // the camera, 1 m out on +Z, looks along +Z: away from the avatar at the origin
+            Assert.That(calibration.IsCalibrated, Is.False);
+
+            calibration.arCamera.transform.rotation = Quaternion.LookRotation(new Vector3(0, -1.5f, -1));
+            Tick();
+            Assert.That(calibration.IsCalibrated, Is.True);
+            Assert.That(Vector3.Dot(calibration.arena.forward, Vector3.forward), Is.GreaterThan(0.999f),
+                "+Z points from the origin to the player");
+        }
+
+        [Test]
+        public void HoldDoesNotConfirmTooCloseOrBeforeTheTime()
+        {
+            calibration.arCamera.transform.rotation = Quaternion.LookRotation(Vector3.back);
+            calibration.holdSeconds = 1000f;
+            Tick();
+            Assert.That(calibration.IsCalibrated, Is.False, "still holding");
+            Assert.That(calibration.Hint, Does.StartWith("Hold still"));
+
+            calibration.holdSeconds = 0f;
+            calibration.arCamera.transform.position = new Vector3(0, 1.5f, 0.3f);
+            Tick();
+            Assert.That(calibration.IsCalibrated, Is.False, "closer than minDistance");
+            Assert.That(calibration.Hint, Does.Contain("Step back"));
+        }
+
+        void Tick() => typeof(SharedArenaCalibration)
+            .GetMethod("Update", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(calibration, null);
 
         [Test]
         public void DifferentWorldOriginsProduceTheSameArenaCoordinates()

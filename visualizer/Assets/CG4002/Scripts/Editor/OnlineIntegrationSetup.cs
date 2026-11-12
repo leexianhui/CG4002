@@ -55,7 +55,8 @@ namespace CG4002.EditorTools
         /// <summary>
         /// Rebuilds the player-facing pieces in both scenes, touching nothing else: the HUD, the
         /// weapon selection screen, the first-person attack view, sound and music, demo mode's
-        /// controls (OnlineScene), which prop each marker drives, and the bordered / split camera view.
+        /// controls and the RE-PLACE DUMMY button (OnlineScene), which prop each marker drives, and the
+        /// bordered / split camera view.
         /// </summary>
         [MenuItem("CG4002/Integration/Refresh Player Views")]
         public static void RefreshPlayerViews()
@@ -105,6 +106,7 @@ namespace CG4002.EditorTools
             if (origin != null && !origin.Camera.TryGetComponent<BorderedView>(out _))
                 origin.Camera.gameObject.AddComponent<BorderedView>();
             HudBuilder.WireSplitScreen();
+            HudBuilder.BuildReplaceDummy();
             GameSceneSetup.WireProps(UnityEngine.Object.FindAnyObjectByType<PropTracker>(),
                 UnityEngine.Object.FindAnyObjectByType<GameState>());
 

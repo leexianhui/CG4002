@@ -71,12 +71,14 @@ namespace CG4002.Tests
             Assert.That(gameState.Get(PlayerId.P1).health, Is.EqualTo(100));
         }
 
-        // Resolver step 11: a guard held longer than the parry window blocks; 25% of 10, rounded up.
+        // Resolver step 11: a guard held longer than the parry window blocks; damage x block_multiplier,
+        // rounded up (set here, since the team tunes match.yaml: 25% of 10 is 3).
         [UnityTest]
         public IEnumerator GuardingDefender_Blocks()
         {
             CombatOutcomeMessage outcome = null;
             dispatcher.OutcomeReceived += m => outcome = m;
+            rules.Rules.blockMultiplier = 0.25f;
 
             rules.SetGuard(PlayerId.P2, true);
             yield return new WaitForSeconds(0.25f);  // past match.yaml's 150 ms parry window
@@ -132,13 +134,15 @@ namespace CG4002.Tests
             Assert.That(gameState.Get(PlayerId.P2).health, Is.EqualTo(100 - 12));
         }
 
-        // Resolver step 9: you only block what you face (guard arc 120 degrees). The enemy stands at
-        // the origin; you're 1 m along +Z, so facing it is a heading of 180.
+        // Resolver step 9: you only block what you face (a guard arc of 120 degrees, set here; the
+        // shipped match.yaml may use 360, any direction). The enemy stands at the origin; you're 1 m
+        // along +Z, so facing it is a heading of 180.
         [UnityTest]
         public IEnumerator GuardFacingAway_DoesNotBlock()
         {
             CombatOutcomeMessage outcome = null;
             dispatcher.OutcomeReceived += m => outcome = m;
+            rules.Rules.guardArcDegrees = 120f;
 
             yield return ReportPosition(PlayerId.P1, new Vector3(0f, 1.5f, 1f), headingDegrees: 0f);
             rules.SetGuard(PlayerId.P1, true);
@@ -146,11 +150,49 @@ namespace CG4002.Tests
             rules.Attack(PlayerId.P2, ActionType.HorizontalSwing);
             yield return null;
             Assert.That(outcome.outcome, Is.EqualTo(Outcome.Hit), "facing away");
+            Assert.That(rules.IsGuarding(PlayerId.P1), Is.True, "being hit doesn't drop the guard");
 
             yield return ReportPosition(PlayerId.P1, new Vector3(0f, 1.5f, 1f), headingDegrees: 180f - 50f);
             rules.Attack(PlayerId.P2, ActionType.Thrust);
             yield return null;
             Assert.That(outcome.outcome, Is.EqualTo(Outcome.Block), "facing it, within 60 degrees");
+        }
+
+        // The hardware guard (match.yaml guard_duration_ms): up for that long, then it drops by itself,
+        // as the engine's snapshots show. Lowering the pose early does nothing, and raising it again
+        // while it's up doesn't extend it.
+        [UnityTest]
+        public IEnumerator Guard_DropsAfterGuardDuration()
+        {
+            CombatOutcomeMessage outcome = null;
+            dispatcher.OutcomeReceived += m => outcome = m;
+            rules.Rules.guardDuration = 0.4f;
+
+            rules.SetGuard(PlayerId.P2, true);
+            yield return new WaitForSeconds(0.25f);
+            rules.SetGuard(PlayerId.P2, false);  // the release is ignored
+            rules.SetGuard(PlayerId.P2, true);   // a repeat doesn't restart the window
+            yield return null;
+            Assert.That(gameState.Get(PlayerId.P2).guarding, Is.True);
+
+            yield return new WaitForSeconds(0.3f);  // 0.55 s since raised: past 0.4
+            Assert.That(gameState.Get(PlayerId.P2).guarding, Is.False, "dropped after guard_duration_ms");
+            rules.Attack(PlayerId.P1, ActionType.HorizontalSwing);
+            yield return null;
+            Assert.That(outcome.outcome, Is.EqualTo(Outcome.Hit));
+        }
+
+        // Like the engine: attacking drops your own guard.
+        [UnityTest]
+        public IEnumerator Attacking_DropsYourOwnGuard()
+        {
+            rules.SetGuard(PlayerId.P1, true);
+            yield return null;
+            Assert.That(gameState.Get(PlayerId.P1).guarding, Is.True);
+
+            rules.Attack(PlayerId.P1, ActionType.HorizontalSwing);
+            yield return null;
+            Assert.That(gameState.Get(PlayerId.P1).guarding, Is.False);
         }
 
         [Test]
@@ -161,7 +203,8 @@ namespace CG4002.Tests
                 "      HORIZONTAL_SWING: { damage: 10, range_m: 1.5, cooldown_ms: 2400 }\n" +
                 "  SPEAR:\n    moves:\n      THRUST:           { damage: 12, range_m: 2.5, cooldown_ms: 2100 }\n" +
                 "  BOW:\n    moves:\n      THRUST: { damage: 1, range_m: 9, cooldown_ms: 1 }\n",
-                "starting_hp: 120\nparry_window_ms: 200       # comment\nblock_multiplier: 0.5\nstagger_ms: 400\nguard_arc_deg: 90\n");
+                "starting_hp: 120\nparry_window_ms: 200       # comment\nblock_multiplier: 0.5\nstagger_ms: 400\nguard_arc_deg: 90\n" +
+                "guard_duration_ms: 3000\n");
 
             Assert.That(parsed.TryGetMove(WeaponType.SwordAndShield, ActionType.HorizontalSwing, out var swing), Is.True);
             Assert.That((swing.damage, swing.range, swing.cooldown), Is.EqualTo((10, 1.5f, 2.4f)));
@@ -170,6 +213,7 @@ namespace CG4002.Tests
             Assert.That(parsed.TryGetMove(WeaponType.Spear, ActionType.HorizontalSwing, out _), Is.False);
             Assert.That((parsed.startingHp, parsed.parryWindow, parsed.blockMultiplier, parsed.stagger, parsed.guardArcDegrees),
                 Is.EqualTo((120, 0.2f, 0.5f, 0.4f, 90f)));
+            Assert.That(parsed.guardDuration, Is.EqualTo(3f));
         }
 
         [Test]

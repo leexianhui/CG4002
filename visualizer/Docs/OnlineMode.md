@@ -139,7 +139,9 @@ The engine treats the path as the phone's identity. A second phone on the same p
 
 ### 3.3a Weapon selection (UI/WeaponSelectScreen.cs)
 
-The order on each phone is **connect → choose a weapon → calibrate → play**.
+The order on each phone is **connect → tap the floor → headset on → calibrate (look and hold
+still) → choose a weapon → play**. Only the first two need the touchscreen, so the headset stays on
+from then on (§3.4).
 
 **Who decides.** The wearable hub picks the weapon, not the phone:
 1. The hub compares the player's arm tilt with each weapon's stored ready stance.
@@ -149,15 +151,17 @@ The order on each phone is **connect → choose a weapon → calibrate → play*
    becomes `selected = false`.
 
 **What the screen does.** It opens only when the engine says "no weapon", so it stays closed
-before the first snapshot and in offline play.
+before the first snapshot and in offline play. It also waits until the arena is placed and
+calibrated; until then its title and instruction show calibration's hints ("FACE YOUR OPPONENT ·
+Hold still 2"), in both eyes.
 
 ```
  snapshot: weapon null  ──▶  open: hologram dummy per offered weapon, ~2.5 m ahead, facing you,
                                    mirrored, in that weapon's ready stance (its idle clip)
                                    "COPY THIS POSE · Hold the pose for 3 seconds"
-                                   HUD hidden, arena placement reset and held off
+                                   HUD and opponent avatar hidden (the arena stays placed)
  snapshot: weapon SWORD ──▶  confirm: chosen dummy flashes, "SWORD & SHIELD SELECTED" (1.5 s)
-                       ──▶  close: dummies removed, HUD back, tap-the-origin calibration begins
+                       ──▶  close: dummies removed, HUD and opponent back
 ```
 
 - **Mirrored.** The dummy's weapon hand appears on the same side as the player's, so the player
@@ -169,8 +173,11 @@ before the first snapshot and in offline play.
   - **mace:** two-handed, upright in front of the chest, hands stacked.
 - **Following the player.** The dummies stand on the lowest detected floor plane (or 1.4 m below
   the camera). If the player turns away for 1.5 s, they move back in front of the camera.
-- **If the hub drops its lock** (reboot), the screen opens again and calibration resets.
-- **Online overlay.** It shows "Choose your weapon first" in place of the calibration steps.
+- **If the hub drops its lock** (reboot), the screen opens again. Placement and calibration are kept.
+- **Online overlay.** It shows "Choose your weapon" in place of the calibration steps.
+- **Tracking lost** for longer than 3 s (mid-match too): the title shows "TRACKING LOST · Look around
+  the room slowly" until it returns.
+- **Demo mode** still chooses first and places after (the phone stays in hand there).
 - **Afterwards,** while the opponent is still choosing, the screen shows "Waiting for your
   opponent to choose a weapon".
 - **The look** comes from `Shaders/Hologram.shader`: a translucent fill brighter at the
@@ -190,29 +197,46 @@ me" on P1's phone and on P2's phone are different points in the room.
 **The fix:** both phones agree on one physical origin and one direction.
 
 ```
-                 +Z line (tape on the floor)
+                 +Z line
                         ▲
-                        │      2. stand here (≥ 0.3 m out) and press
-                        │         "Confirm shared +Z direction"
+                        │      2. headset on: stand here (≥ 0.5 m out), look at the
+                        │         opponent avatar and hold still for 3 s
                         │
-                        ●  1. tap this origin in AR (reuses DummyPlacer)
+                        ●  1. tap this origin in AR (reuses DummyPlacer); the avatar stands here
 ```
 
-1. **Tap the origin.** This reuses `DummyPlacer`: the "arena" Transform lands on the marked spot.
-2. **`ConfirmFromMarkedForwardLine`** (line 54):
+1. **Tap the origin.** This reuses `DummyPlacer`: the "arena" Transform lands on the tapped spot.
+   The view splits straight away, and the headset goes on. Not happy with the spot? Until
+   calibration confirms, **RE-PLACE DUMMY** (bottom centre, `UI/ReplaceDummyButton.cs`) picks the
+   dummy up again: full view and floor planes come back, and the next tap places it.
+2. **Look and hold still** (`UpdateHold`). The phone confirms by itself when, for 3 s (`holdSeconds`):
+   - AR tracking is good;
+   - it's at least 0.5 m from the origin (`minDistance`);
+   - it looks at the opponent avatar, within 20° on the floor (`facingTolerance`);
+   - it moves less than 5 cm and 6° (`stillDistance`, `stillDegrees`); moving starts the hold again.
+
+   The panel's **Confirm direction by hand** button does the same at once (≥ 0.3 m out).
+3. **`ConfirmFromMarkedForwardLine`**:
    - takes the floor direction from the origin to the phone;
    - rotates the arena so its +Z points that way;
    - records the origin and rotation, and sets `calibrated = true`.
 3. Since both phones did this on the same spot and line, their arenas now coincide. `PositionReporter`
    already reports in arena coordinates (StateEngine.md §6), so both phones' positions now share a frame.
 
-**It un-calibrates itself** (`ValidateCalibration`, line 40) if any of these happen:
-- AR tracking is lost;
-- the arena moves by more than 1 cm or 0.5°, e.g. MOVE DUMMY, or ARKit relocalising;
+**It un-calibrates itself** (`ValidateCalibration`) if either of these happens:
+- the arena moves by more than 1 cm or 0.5°, e.g. MOVE DUMMY or a new tap;
 - the app goes to the background.
 
 Each change bumps `Revision`. The client then flushes every queued position, since they belong to
-the old frame, and sends `VISUALIZER_READY false`.
+the old frame, and sends `VISUALIZER_READY false`. Confirming again is the same look-and-hold.
+
+**AR tracking dips keep the calibration.** AR Foundation reports ARKit's *Limited* tracking (camera
+facing a table or the floor, fast moves, low light) as not tracking. ARKit keeps its coordinates
+through it, so:
+- a dip shorter than 3 s (`trackingGraceSeconds`) changes nothing: still ready, positions still sent;
+- a longer one makes `IsReady` false (`TrackingLost`), so the client sends `VISUALIZER_READY false`
+  and the engine pauses;
+- when tracking returns, `IsReady` is true again and the match resumes, with no reconfirming.
 
 ### 3.5 Every frame: `Update` (OnlineEngineClient.cs:234)
 
@@ -224,8 +248,8 @@ the old frame, and sends `VISUALIZER_READY false`.
 3. **Outbound.** Drains `dispatcher.Outbound`:
    - **`PositionMessage`** (this player, only while ready) → `POSITION` JSON.
    - **`StartMatchRequestMessage`** (placing the arena, or RESET) is **not forwarded**. It only
-     re-applies the last snapshot to refresh the display. Online, only the operator resets matches,
-     through the engine's `/control` path.
+     re-applies the last snapshot to refresh the display. Online, matches reset only through the
+     engine's `/control` path: the operator's terminal tool, or the panel's **RESTART** (§4).
    - Everything else is dropped. `SwordHitDetector` is disabled with `OfflineEngine`, so no
      `ActionMessage` arrives anyway.
 
@@ -324,18 +348,19 @@ Match tuning (HP, parry window, guard arc) lives in `shared/config/match.yaml`. 
     used before you put the headset on.
   - Change the size with *Scale* on the AR camera's **Bordered View** (0.90 now: 10% smaller each way).
 - **Split screen** (`AR/SplitScreen.cs`, `UI/SplitLayout.cs`), for the headset:
-  - Setup stays full view with the phone in hand: connect, weapon pose, tap the floor, calibrate.
-  - Once the arena is placed and calibrated, the view **splits**: the same image twice (mono, since the
+  - Setup stays full view with the phone in hand: connect, tap the floor.
+  - Once the arena is placed, the view **splits** (calibration and weapon selection then happen in
+    the headset): the same image twice (mono, since the
     phone has one camera), one per lens, each **40% of the screen wide and 90% tall** (80% wide in
     all), side by side with **no gap in the middle**; the black border is at the outer edges.
   - Each eye is about as wide as it is tall, so it shows a narrower slice of the camera picture than
     full view. (Keeping the screen's shape at 40% width would make each eye only 40% tall.)
-  - It goes back to full view when the arena is picked up again (MOVE DUMMY, weapon selection). It
-    never splits in demo mode, which needs the touchscreen.
+  - It goes back to full view when the arena is picked up again (MOVE DUMMY). It never splits in
+    demo mode, which needs the touchscreen.
   - **Double-tap anywhere** to switch between split and full view by hand (e.g. to reach RESET). The
     next placement splits again.
   - The HUD switches to a **split layout** that uses each eye's full width: the health bars sit a
-    little in from the eye's top corners, about 0.8x full-view size with a clear gap between them, the cooldown icons spread along the whole bottom edge, and the
+    little in from the eye's top corners, about 0.8x full-view size with a clear gap between them, the cooldown icons along the bottom edge, centred with about half a full spread's gaps, and the
     RESET / MOVE DUMMY / TRACKING buttons are hidden. The HUD keeps its true proportions in each eye
     (`UI/ViewArea.cs` corrects for the canvas being squeezed into the eye-shaped texture).
   - How: the AR camera renders into an eye-sized texture (the HUD, first-person and weapon-select
@@ -433,10 +458,12 @@ A Unity IMGUI panel in the top-left corner, scaled to the safe area:
  │ [x] Built-in SSH tunnel                  │
  │ [Player 1] [Player 2]                    │
  │ [Connect]   or [Disconnect / settings]   │
- │ Tap the shared floor origin, then stand  │
- │ on the marked +Z line.                   │
+ │ [RESTART (both re-place the dummy)]      │
+ │ Tap the floor where the opponent should  │
+ │ stand, put on the headset, then look at  │
+ │ the opponent and hold still for 3 s.     │
  │ Calibration: Ready                       │
- │ [Confirm shared +Z direction]            │
+ │ [Confirm direction by hand]              │
  │ snapshot age, phase / reason,            │
  │ P1: relay on, ready, weapon SPEAR, x/y   │
  │ P2: ...                                  │
@@ -447,6 +474,13 @@ A Unity IMGUI panel in the top-left corner, scaled to the safe area:
 - It stays open until you tap **Hide panel**, and stays collapsed until you tap the button again.
   It never collapses or opens by itself.
 - `DummyPlacer.BlockPlacementInput = PointerOverPanel`, so taps on the panel don't move the arena.
+- **RESTART** (open panel, any time) sends the same `RESET_MATCH` as the operator's terminal tool
+  (`python -m cg_comms.tools.reset_match`), on a short-lived `/control` socket with the phone's own
+  token. The engine starts a fresh match (full HP; weapons stay, since the hub keeps its lock until
+  rebooted) and announces `MATCH_STATE` with `reason:"reset"`. **Every reset, from either phone or the
+  terminal, sends both phones back to placing the dummy**, so both re-place and re-calibrate; the
+  match waits until both are ready again. Weapon selection reopens only if the engine reports no weapon.
+  Not connected, RESTART still resets this phone.
 - **Setup readings** (always shown in the open panel) answer "why isn't the match starting?": which player has no relay, no
   calibration, no weapon or no position, and how far apart the engine thinks the players are.
 
@@ -467,9 +501,9 @@ The full procedure is in [docs/INTEGRATION_RUNBOOK.md](../../docs/INTEGRATION_RU
 4. In the app:
    1. choose P1 or P2 (different on the two phones);
    2. tap **Connect**;
-   3. copy the dummy's pose and hold it until the hub locks the weapon (3 s, two buzzes);
-   4. tap the shared origin;
-   5. stand on the +Z line and tap **Confirm**.
+   3. tap the floor where the opponent should stand;
+   4. put on the headset, look at the opponent avatar and hold still for 3 s;
+   5. copy a dummy's pose and hold it until the hub locks the weapon (3 s, two buzzes).
 5. In the Unity editor, without AR, untick `requireARTracking` on `SharedArenaCalibration`.
 
 ---

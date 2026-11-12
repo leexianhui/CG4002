@@ -30,6 +30,8 @@ namespace CG4002.Offline
         public float stagger = 0.5f;
         public float guardArcDegrees = 120f;
         public float guardGrace = 0.05f;
+        /// <summary>Seconds a raised guard stays up (then drops by itself); 0 = until it's lowered.</summary>
+        public float guardDuration;
 
         public bool TryGetMove(WeaponType weapon, ActionType action, out Move move)
         {
@@ -90,6 +92,7 @@ namespace CG4002.Offline
             rules.stagger = match.GetValueOrDefault("stagger_ms", rules.stagger * 1000f) / 1000f;
             rules.guardArcDegrees = match.GetValueOrDefault("guard_arc_deg", rules.guardArcDegrees);
             rules.guardGrace = match.GetValueOrDefault("guard_grace_ms", rules.guardGrace * 1000f) / 1000f;
+            rules.guardDuration = match.GetValueOrDefault("guard_duration_ms", rules.guardDuration * 1000f) / 1000f;
             return rules;
         }
 

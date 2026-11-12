@@ -27,6 +27,9 @@ namespace CG4002.UI
             [Tooltip("Stretch across the eye's width, `margin` in from each side (anchor.y still sets the height).")]
             public bool stretch;
             public float margin;
+            [Tooltip("With stretch: how far the width goes from the element's own width (0) to the full stretch (1). " +
+                     "Children anchored by fraction along it (the cooldown icons) then spread out that much.")]
+            [Range(0f, 1f)] public float spread = 1f;
             [Tooltip("If above 0: the element's width at scale 1. The scale is then capped so it takes at most " +
                      "`widthShare` of the eye's width (so two side by side never overlap on narrower screens).")]
             public float fitWidth;
@@ -85,7 +88,9 @@ namespace CG4002.UI
                     t.pivot = new Vector2(0.5f, placement.anchor.y);
                     // Stretched in the parent's units; divided by the scale so the scaled width still fits.
                     float parentWidth = t.parent is RectTransform parent ? parent.rect.width : 0f;
-                    t.sizeDelta = new Vector2(parentWidth / scale - parentWidth - 2f * placement.margin / scale, normal[i].size.y);
+                    float full = parentWidth / scale - 2f * placement.margin / scale;
+                    float width = Mathf.Min(full, Mathf.Lerp(normal[i].size.x, full, placement.spread));
+                    t.sizeDelta = new Vector2(width - parentWidth, normal[i].size.y);
                 }
                 else
                 {

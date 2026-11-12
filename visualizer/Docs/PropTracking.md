@@ -100,8 +100,9 @@ first-person attack animation.
   sword's are measured. The spear's (0.2 / 0.98) and mace's (0.12 / 0.56) assume the card sits
   centred between the hands (spear) or just above them (mace); re-measure on the real props.
 - **The shield's card goes on the inside** (the side facing you), top of the picture toward the top
-  of the shield. Set the Prop Tracker's *Shield Width* to your shield's real width (the 3D shield is
-  scaled to it), and *Marker To Shield Centre* if the card isn't at the shield's centre (positive
+  of the shield. The Prop Tracker's *Shield Width* sets how wide the 3D shield is drawn (it's scaled
+  to it): 0.225 m, half the 0.45 m prop, since full size filled too much of the view. Set
+  *Marker To Shield Centre* if the card isn't at the shield's centre (positive
   when the card sits below the centre).
 - **Glue each card with the top of the picture pointing toward the weapon's tip.** On the spear and
   mace, glue it flat to a rigid card on the shaft, never wrapped round it.

@@ -98,7 +98,7 @@ All under `Assets/CG4002/Scripts/Runtime/`.
 | `State/MessageDispatcher.cs` | Owns the two queues; drains Inbound into `GameState`, raises events |
 | `State/GameState.cs` | Latest state of both players and the match; a change event per field. Select **Game** in Play mode to watch it in the Inspector |
 | `Controllers/AvatarController.cs` | The opponent avatar: weapon, guard, glide to position, attack animation, hit/block FX |
-| `UI/HudController.cs` | Medieval HUD: gold-framed health bars, weapon, a cooldown icon per move with a grey radial sweep (bottom left), GUARDING, HIT / BLOCKED, match result. Art in `Assets/CG4002/UI` (credits there) |
+| `UI/HudController.cs` | Medieval HUD: gold-framed health bars, weapon, a cooldown icon per move with a grey radial sweep (bottom left), GUARDING (the enemy's under its health bar; yours in the centre), HIT / BLOCKED, match result. Art in `Assets/CG4002/UI` (credits there) |
 | `UI/DebugPanel.cs` | RESET (sends `START_MATCH_REQUEST`), MOVE DUMMY, TRACKING |
 | `AR/DummyPlacer.cs` | Tap-to-place the arena; sends `START_MATCH_REQUEST` once placed |
 | `AR/PositionReporter.cs` | Sends this player's `POSITION` 10×/s once placed |
