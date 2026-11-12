@@ -509,24 +509,43 @@ float gravElDeg()
 
 float gravAzDeg() { return atan2(gravY, gravX) * 180.0 / PI; }
 
-// Guard references obtained from the first P2 recordings. Recalibrate if the
-// board mounting changes.
+// Guard references (gravity el/az of this wrist) with their own enter/exit
+// radii. A weapon may have several (one per player's grip). Values are tuned
+// with hardware/guard_replay.py --sweep on the raw captures; keep them in
+// sync with NEW there. Recalibrate if the board mounting changes.
 struct GuardReference
 {
     WeaponType weapon;
     float el;
     float az;
+    float enterDeg;
+    float exitDeg;
+    float armDeg;     // the arm must arrive from more than this far away...
+    float arrivalDps; // ...with the gyro EMA reaching this on the way
 };
 
 const GuardReference GUARD_REFS[] = {
-    {WEAPON_SWORD_SHIELD, -3.0f, 94.0f},
-    {WEAPON_SPEAR, 60.0f, -76.0f},
-    {WEAPON_MACE, 68.0f, -68.0f},
+    // Sword's raised-at-rest pose is only ~17 deg from its guard: keep it
+    // tight. A real sword guard comes up from rest (85-95 deg away) at
+    // 430-560 dps; P1's fake guards start half-lowered (62-82 deg) and rise
+    // at 300-410 dps (2026-11-12 fake_guard_sword_shield).
+    {WEAPON_SWORD_SHIELD, -3.0f, 94.0f, 10.0f, 20.0f, 80.0f, 350.0f},
+    // A raised spear passes near its guard pose.
+    {WEAPON_SPEAR, 60.0f, -76.0f, 15.0f, 25.0f, 60.0f, 0.0f}, // P2 (first recordings)
+    {WEAPON_SPEAR, 28.0f, -76.0f, 15.0f, 25.0f, 60.0f, 0.0f}, // P1, 2026-11-12 guard_spear
+    {WEAPON_MACE, 68.0f, -68.0f, 25.0f, 35.0f, 60.0f, 0.0f},  // P2 (first recordings)
+    {WEAPON_MACE, 40.0f, -79.0f, 20.0f, 30.0f, 60.0f, 0.0f},  // P1, 2026-11-12 guard_mace
 };
 
-const float GUARD_ENTER_MAX_DEG = 25.0f;
-const float GUARD_EXIT_MAX_DEG = 35.0f;
-const unsigned long GUARD_HOLD_MS = 150;
+// Enter: inside a reference's enter radius with the gyro EMA <=
+// GUARD_STILL_DPS for GUARD_HOLD_MS; within the last GUARD_ARM_MS the arm was
+// beyond every reference's armDeg, and the peak gyro EMA over that window
+// reached the entered reference's arrivalDps. A guard has to arrive from
+// elsewhere, so hovering or wiggling near the pose can't trigger it; each
+// arrival allows one entry. Exit: beyond every exit radius.
+const float GUARD_STILL_DPS = 100.0f;
+const unsigned long GUARD_HOLD_MS = 400;
+const unsigned long GUARD_ARM_MS = 1500;
 
 float angleDifferenceDeg(float a, float b)
 {
@@ -534,17 +553,36 @@ float angleDifferenceDeg(float a, float b)
     return fabsf(d);
 }
 
-float guardDistanceDeg(WeaponType weapon, float el, float az)
+// Distance to the nearest guard reference of the weapon; also reports whether
+// the pose is inside an enter radius whose arrival speed was reached, outside
+// every exit radius, and beyond every arm distance. Uses only built-in types
+// in its signature: the Arduino IDE generates prototypes at the top of the
+// sketch, before any struct defined here.
+float guardFit(int weapon, float el, float az, float arrivalPeakDps,
+               bool &inside, bool &outside, bool &far)
 {
+    float nearest = 999.0f;
+    inside = false;
+    outside = true;
+    far = true;
     for (unsigned int i = 0; i < sizeof(GUARD_REFS) / sizeof(GUARD_REFS[0]); i++)
     {
-        if (GUARD_REFS[i].weapon != weapon)
+        const GuardReference &r = GUARD_REFS[i];
+        if ((int)r.weapon != weapon)
             continue;
-        float de = el - GUARD_REFS[i].el;
-        float da = angleDifferenceDeg(az, GUARD_REFS[i].az);
-        return sqrtf(de * de + da * da);
+        float de = el - r.el;
+        float da = angleDifferenceDeg(az, r.az);
+        float d = sqrtf(de * de + da * da);
+        if (d < nearest)
+            nearest = d;
+        if (d <= r.enterDeg && arrivalPeakDps >= r.arrivalDps)
+            inside = true;
+        if (d <= r.exitDeg)
+            outside = false;
+        if (d <= r.armDeg)
+            far = false;
     }
-    return 999.0f;
+    return nearest;
 }
 
 // ---------------- Debug logging ----------------
@@ -636,9 +674,20 @@ GamePhase hubPhase = PHASE_WAITING;
 bool hubHolding = false;
 WeaponType hubWeapon = WEAPON_UNKNOWN;
 GuardState guardState = GUARD_IDLE;
-unsigned long guardCandidateSinceMs = 0;
+unsigned long guardStillSinceMs = 0; // 0 = gyro EMA above GUARD_STILL_DPS
+unsigned long guardFarAtMs = 0;      // last time the arm was beyond every armDeg
+bool guardArmed = false;             // guardFarAtMs is valid (not used by an entry)
+float guardPeakDps = 0;              // windowed (GUARD_ARM_MS) max of gyroMagEMA
+unsigned long guardPeakAtMs = 0;
+bool guardPeakValid = false;
 
-void sendGuardState(GuardState state, unsigned long now, float distance)
+// The current state is also re-sent every GUARD_STATE_REPEAT_MS while locked
+// (logIt = false for those), so one lost UDP packet can't leave the hub
+// guarding; the hub times GUARDING out after 1.5 s without a guard packet.
+const unsigned long GUARD_STATE_REPEAT_MS = 500;
+unsigned long lastGuardSendMs = 0;
+
+void sendGuardState(GuardState state, unsigned long now, float distance, bool logIt)
 {
     GuardStatePacket packet;
     fillHeader(packet.hdr, PKT_GUARD_STATE);
@@ -648,37 +697,57 @@ void sendGuardState(GuardState state, unsigned long now, float distance)
     poseUdp.beginPacket(broadcastIP, POSE_PORT);
     poseUdp.write((uint8_t *)&packet, sizeof(packet));
     poseUdp.endPacket();
-    debugLog(String("guard_state=") + (state == GUARDING ? "GUARDING" : "IDLE") +
-             " weapon=" + String((int)hubWeapon) + " dist=" + String(distance, 1));
+    lastGuardSendMs = now;
+    if (logIt)
+        debugLog(String("guard_state=") + (state == GUARDING ? "GUARDING" : "IDLE") +
+                 " weapon=" + String((int)hubWeapon) + " dist=" + String(distance, 1));
 }
 
-void updateGuardDetection(float el, float az, bool stable, unsigned long now)
+// Mirrored by hardware/guard_replay.py run().
+void updateGuardDetection(float el, float az, unsigned long now)
 {
     if (hubPhase != PHASE_LOCKED || hubWeapon == WEAPON_UNKNOWN)
         return;
 
-    float distance = guardDistanceDeg(hubWeapon, el, az);
+    if (gyroMagEMA > GUARD_STILL_DPS)
+        guardStillSinceMs = 0;
+    else if (guardStillSinceMs == 0)
+        guardStillSinceMs = now == 0 ? 1 : now;
+
+    if (!guardPeakValid || gyroMagEMA >= guardPeakDps || now - guardPeakAtMs > GUARD_ARM_MS)
+    {
+        guardPeakDps = gyroMagEMA;
+        guardPeakAtMs = now;
+        guardPeakValid = true;
+    }
+
+    bool inside, outside, far;
+    float nearestDeg = guardFit((int)hubWeapon, el, az, guardPeakDps, inside, outside, far);
+    if (far)
+    {
+        guardFarAtMs = now;
+        guardArmed = true;
+    }
     if (guardState == GUARD_IDLE)
     {
-        if (stable && distance <= GUARD_ENTER_MAX_DEG)
+        bool armed = guardArmed && now - guardFarAtMs <= GUARD_ARM_MS;
+        bool held = guardStillSinceMs != 0 && now - guardStillSinceMs >= GUARD_HOLD_MS;
+        if (inside && armed && held)
         {
-            if (guardCandidateSinceMs == 0)
-                guardCandidateSinceMs = now;
-            if (now - guardCandidateSinceMs >= GUARD_HOLD_MS)
-            {
-                guardState = GUARDING;
-                guardCandidateSinceMs = 0;
-                sendGuardState(guardState, now, distance);
-            }
+            guardState = GUARDING;
+            guardArmed = false; // the next guard needs a new arrival
+            sendGuardState(guardState, now, nearestDeg, true);
+            return;
         }
-        else
-            guardCandidateSinceMs = 0;
     }
-    else if (distance > GUARD_EXIT_MAX_DEG)
+    else if (outside)
     {
         guardState = GUARD_IDLE;
-        sendGuardState(guardState, now, distance);
+        sendGuardState(guardState, now, nearestDeg, true);
+        return;
     }
+    if (now - lastGuardSendMs >= GUARD_STATE_REPEAT_MS)
+        sendGuardState(guardState, now, nearestDeg, false);
 }
 
 void checkIncomingHubStatus()
@@ -849,7 +918,7 @@ void loop()
     }
     bool stable = (now - stillSinceMs) >= STILLNESS_HOLD_MS;
 
-    updateGuardDetection(el, az, stable, now);
+    updateGuardDetection(el, az, now);
 
     if (hubPhase != PHASE_LOCKED && now - lastPoseBroadcastMs >= POSE_BROADCAST_INTERVAL_MS)
     {

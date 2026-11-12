@@ -18,7 +18,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 LOGS = ROOT / "2 players" / "logs" / "himeth_v1"
 RECENT_LOGS = ROOT / "2 players" / "logs" / "p2"
-P1_LOGS = ROOT / "2 players" / "logs" / "p1_v1"
 AUDIT_CSV = ROOT / "p2_attempts.csv"
 SKETCHES = [ROOT / "2 players" / f"p{n}_right_wrist" / f"p{n}_right_wrist.ino" for n in (1, 2)]
 WEAPONS = {"sword": "WEAPON_SWORD_SHIELD", "mace": "WEAPON_MACE", "spear": "WEAPON_SPEAR"}
@@ -263,8 +262,7 @@ def main():
         covered = audit(recent, examples, RECENT_LOGS) and covered
     else:
         print("p2 recent capture absent; using saved targets and skipping its replay")
-    if P1_LOGS.is_dir():
-        audit([], examples, P1_LOGS)
+    # P1 captures use a different file naming and are audited by lenient_p1.py.
     if args.write:
         audit_path = AUDIT_CSV
         with audit_path.open("w", newline="", encoding="utf-8") as handle:

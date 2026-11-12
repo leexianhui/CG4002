@@ -12,6 +12,8 @@ Use this folder by purpose:
 | Root `*.py` files | Analysis and recording tools; keep at the root because their documented commands and imports expect this layout |
 | `requirements.txt` | Python dependencies for the hardware tools |
 | `p2_attempts.csv` | Input data used by `lenient_p2.py` |
+| `lenient_p1.py`, `p1_attempts.csv` | Builds the P1 fallback pattern bank and replays the hubs' accept decisions (commitment gate, guard suppression) on logged captures; the CSV lists the gated P1 forward strokes and whether each is in the bank |
+| `guard_replay.py` | Replays and tunes the left-wrist guard detector on raw captures (`--sweep`) |
 
 ## Common entry points
 

@@ -351,6 +351,7 @@ struct PushStroke
     float reachM;     // distance the hand travels along the push, a..e
     float rotDeg;     // wrist rotation (integral of |omega|) over a..e
     int torsoBeacons; // beacons found around it (0 = no torso data)
+    float peakGyroDps; // peak wrist angular speed over a..e (flicks snap the wrist)
 };
 
 // The thrust template — see THRUST_MODEL.
@@ -1019,7 +1020,52 @@ bool torsoFresh(unsigned long now) { return torsoSeen && (now - lastTorsoRxMs) <
 extern GamePhase phase;
 extern WeaponType lockedWeapon;
 extern GuardState lastGuardState;
+// Hub millis() of the latest guard entry / exit, for guard-edge suppression
+// of strokes (see guardSuppressed()).
+uint32_t guardOnMs = 0, guardOffMs = 0;
+bool guardSeen = false, guardExitSeen = false;
+// The left wrist re-sends its guard state every 500 ms while locked, so a
+// lost packet can't leave the hub (and the game) guarding: without a guard
+// packet for GUARD_STALE_MS, GUARDING times out to IDLE.
+uint32_t lastGuardRxMs = 0;
+const uint32_t GUARD_STALE_MS = 1500;
 const char *weaponName(WeaponType w); // defined below; the game build has no auto-prototypes
+
+// The one place the hub's guard state changes: buzz, guard-edge times, the
+// relay/game event and the result line happen only on a change, so the left
+// wrist's periodic repeats don't re-trigger the game's guard.
+void setHubGuardState(GuardState next, uint32_t eventMs, const char *why)
+{
+    if (next == lastGuardState)
+        return;
+    uint32_t now = millis();
+    if (next == GUARDING)
+    {
+        patternStart(motorPlayer, PAT_BUZZ_DOUBLE);
+        guardOnMs = now;
+        guardSeen = true;
+    }
+    else
+    {
+        guardOffMs = now;
+        guardExitSeen = true;
+    }
+    lastGuardState = next;
+#ifdef CG_HARDWARE_GATEWAY
+    // Game build: on to the relay (GUARD_EVENT) and the engine, which keeps the guard up 3 s.
+    gatewayGuardEvent(next == GUARDING);
+#endif
+    resultLog(String("guard_state player=") + String(PLAYER_ID) +
+              " weapon=" + String(weaponName(lockedWeapon)) +
+              " state=" + (next == GUARDING ? "GUARDING" : "IDLE") +
+              " eventMs=" + String(eventMs) + (why ? String(" reason=") + why : String("")));
+}
+
+void checkGuardStale()
+{
+    if (lastGuardState == GUARDING && millis() - lastGuardRxMs > GUARD_STALE_MS)
+        setHubGuardState(GUARD_IDLE, 0, "stale");
+}
 
 void checkIncomingPose()
 {
@@ -1066,19 +1112,8 @@ void checkIncomingPose()
             p.state > GUARDING)
             return;
 
-        GuardState receivedState = (GuardState)p.state;
-        if (receivedState == GUARDING && lastGuardState != GUARDING)
-            patternStart(motorPlayer, PAT_BUZZ_DOUBLE);
-        lastGuardState = receivedState;
-#ifdef CG_HARDWARE_GATEWAY
-        // Game build: on to the relay (GUARD_EVENT) and the engine, which keeps the guard up 3 s.
-        gatewayGuardEvent(receivedState == GUARDING);
-#endif
-
-        resultLog(String("guard_state player=") + String(PLAYER_ID) +
-                  " weapon=" + String(weaponName(lockedWeapon)) +
-                  " state=" + (p.state == GUARDING ? "GUARDING" : "IDLE") +
-                  " eventMs=" + String(p.eventMs));
+        lastGuardRxMs = millis();
+        setHubGuardState((GuardState)p.state, p.eventMs, nullptr);
     }
 }
 
@@ -1911,6 +1946,178 @@ const LenientTemplate P2_LENIENT_MODEL[] = {
 const int P2_LENIENT_COUNT = sizeof(P2_LENIENT_MODEL) / sizeof(P2_LENIENT_MODEL[0]);
 // ===== P2_LENIENT_MODEL END =====
 
+// Recorded P1 attack shapes, used by both players. P1's grip puts most real
+// strokes 1.8-3.5 from the fitted templates, so this bank is wider than the
+// P2 bank (raw distance <= P1_LENIENT_MAX_DIST on the same feature scales) and
+// matches for any locked weapon (P1's mace locked as sword_shield in the
+// 2026-11-09 captures). Keep the bank outside the fitter-generated block.
+const float P1_LENIENT_MAX_DIST = 1.0f; // keep equal to P1_MAX_DIST in lenient_p1.py
+// ===== P1_LENIENT_MODEL BEGIN =====
+// Forward strokes from the P1 recordings (logs/himeth_v2, logs/p1) that pass the
+// commitment gate and match no fake/guard session. Matched for any locked weapon;
+// the weapon column records the session it came from.
+// Regenerate with: python lenient_p1.py --write
+const LenientTemplate P1_LENIENT_MODEL[] = {
+    {WEAPON_SWORD_SHIELD, "vertical", false, 0.380f, -0.242f, -0.893f, 0.358f, 0.901f, -0.244f, 171.700f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "vertical", false, 0.379f, -0.194f, -0.905f, 0.120f, 0.876f, -0.467f, 169.000f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "vertical", false, 0.368f, -0.256f, -0.894f, 0.135f, 0.932f, -0.336f, 157.900f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "vertical", false, 0.357f, -0.245f, -0.901f, -0.118f, 0.924f, -0.363f, 149.100f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.438f, -0.113f, -0.892f, 0.182f, 0.854f, -0.488f, 191.700f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.522f, -0.276f, -0.807f, 0.080f, 0.793f, -0.604f, 189.600f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.481f, -0.335f, -0.810f, 0.328f, 0.858f, -0.396f, 177.500f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.430f, 0.058f, -0.901f, 0.338f, 0.872f, -0.353f, 180.700f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.478f, -0.044f, -0.877f, 0.197f, 0.882f, -0.427f, 179.900f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.587f, 0.269f, -0.764f, 0.384f, 0.883f, -0.270f, 164.900f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.592f, -0.144f, -0.793f, 0.197f, 0.822f, -0.535f, 185.000f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.408f, -0.296f, -0.864f, 0.065f, 0.835f, -0.546f, 191.600f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.533f, -0.396f, -0.748f, 0.019f, 0.773f, -0.634f, 191.400f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.529f, -0.216f, -0.820f, 0.326f, 0.840f, -0.433f, 194.000f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "horizontal", false, 0.746f, 0.302f, -0.593f, -0.048f, 0.965f, -0.258f, 197.600f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "horizontal", false, 0.723f, 0.439f, -0.533f, -0.336f, 0.846f, -0.415f, 186.600f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "horizontal", false, 0.770f, 0.361f, -0.525f, -0.233f, 0.824f, -0.517f, 182.900f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "horizontal", false, 0.703f, 0.517f, -0.489f, -0.089f, 0.978f, -0.191f, 169.400f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "horizontal", false, 0.688f, 0.640f, -0.343f, -0.062f, 0.909f, -0.413f, 166.900f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "horizontal", false, 0.723f, 0.542f, -0.429f, -0.227f, 0.950f, -0.213f, 191.900f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "horizontal", false, 0.828f, 0.359f, -0.432f, -0.227f, 0.887f, -0.402f, 197.400f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "horizontal", false, 0.813f, 0.456f, -0.362f, -0.143f, 0.949f, -0.279f, 185.700f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "thrust", true, -0.503f, 0.834f, -0.224f, 0.000f, 0.000f, 0.000f, 24.100f, 0.579f},
+    {WEAPON_SWORD_SHIELD, "thrust", true, -0.815f, 0.533f, -0.229f, 0.000f, 0.000f, 0.000f, 27.400f, 0.584f},
+    {WEAPON_SWORD_SHIELD, "thrust", true, -0.360f, 0.898f, -0.252f, 0.000f, 0.000f, 0.000f, 22.700f, 0.807f},
+    {WEAPON_SWORD_SHIELD, "thrust", true, -0.598f, 0.785f, -0.160f, 0.000f, 0.000f, 0.000f, 30.100f, 0.642f},
+    {WEAPON_SWORD_SHIELD, "thrust", true, -0.493f, 0.833f, -0.251f, 0.000f, 0.000f, 0.000f, 33.200f, 0.791f},
+    {WEAPON_SWORD_SHIELD, "thrust", true, -0.032f, 0.960f, -0.278f, 0.000f, 0.000f, 0.000f, 36.600f, 0.837f},
+    {WEAPON_SWORD_SHIELD, "thrust", true, -0.296f, 0.888f, -0.352f, 0.000f, 0.000f, 0.000f, 39.200f, 0.627f},
+    {WEAPON_SWORD_SHIELD, "thrust", true, -0.311f, 0.914f, -0.261f, 0.000f, 0.000f, 0.000f, 36.500f, 0.817f},
+    {WEAPON_SWORD_SHIELD, "uppercut", false, -0.188f, 0.317f, 0.930f, 0.773f, 0.616f, -0.148f, 136.600f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "uppercut", false, -0.094f, 0.353f, 0.931f, 0.868f, 0.490f, -0.082f, 138.400f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "uppercut", false, 0.042f, 0.385f, 0.922f, 0.839f, 0.510f, -0.188f, 136.600f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "uppercut", false, 0.064f, 0.518f, 0.853f, 0.874f, 0.436f, -0.215f, 142.400f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "uppercut", false, -0.050f, 0.124f, 0.991f, 0.842f, 0.530f, -0.096f, 136.700f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "uppercut", false, -0.015f, 0.243f, 0.970f, 0.829f, 0.531f, -0.177f, 137.900f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "uppercut", false, 0.157f, 0.485f, 0.860f, 0.834f, 0.481f, -0.271f, 130.300f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "uppercut", false, -0.130f, 0.227f, 0.965f, 0.843f, 0.535f, -0.065f, 136.300f, 0.000f},
+    {WEAPON_SPEAR, "uppercut", false, 0.007f, 0.604f, 0.797f, 0.914f, 0.298f, -0.274f, 117.600f, 0.000f},
+    {WEAPON_SPEAR, "uppercut", false, -0.040f, 0.387f, 0.921f, 0.962f, 0.119f, -0.245f, 114.100f, 0.000f},
+    {WEAPON_SPEAR, "uppercut", false, -0.032f, 0.466f, 0.884f, 0.942f, 0.313f, -0.120f, 117.700f, 0.000f},
+    {WEAPON_SPEAR, "uppercut", false, -0.165f, 0.486f, 0.858f, 0.932f, 0.222f, -0.287f, 125.800f, 0.000f},
+    {WEAPON_SPEAR, "uppercut", false, -0.158f, 0.483f, 0.861f, 0.828f, 0.550f, -0.112f, 119.200f, 0.000f},
+    {WEAPON_SPEAR, "uppercut", false, 0.056f, 0.565f, 0.823f, 0.856f, 0.419f, -0.303f, 129.900f, 0.000f},
+    {WEAPON_SPEAR, "uppercut", false, -0.019f, 0.475f, 0.880f, 0.705f, 0.696f, -0.139f, 125.600f, 0.000f},
+    {WEAPON_SPEAR, "uppercut", false, -0.148f, 0.347f, 0.926f, 0.806f, 0.520f, -0.281f, 118.300f, 0.000f},
+    {WEAPON_SPEAR, "thrust", true, 0.066f, 0.854f, -0.515f, 0.000f, 0.000f, 0.000f, 13.900f, 0.687f},
+    {WEAPON_SPEAR, "thrust", true, 0.068f, 0.867f, -0.493f, 0.000f, 0.000f, 0.000f, 18.300f, 0.536f},
+    {WEAPON_SPEAR, "thrust", true, 0.213f, 0.916f, -0.340f, 0.000f, 0.000f, 0.000f, 17.300f, 0.718f},
+    {WEAPON_SPEAR, "thrust", true, 0.027f, 0.942f, -0.335f, 0.000f, 0.000f, 0.000f, 19.900f, 1.166f},
+    {WEAPON_SPEAR, "vertical", false, 0.143f, -0.544f, -0.827f, -0.091f, 0.933f, -0.350f, 165.000f, 0.000f},
+    {WEAPON_SPEAR, "vertical", false, 0.040f, -0.496f, -0.867f, -0.033f, 0.947f, -0.319f, 152.800f, 0.000f},
+    {WEAPON_SPEAR, "vertical", false, 0.022f, -0.506f, -0.862f, 0.209f, 0.938f, -0.275f, 158.200f, 0.000f},
+    {WEAPON_SPEAR, "vertical", false, 0.059f, -0.585f, -0.809f, -0.160f, 0.896f, -0.414f, 130.100f, 0.000f},
+    {WEAPON_SPEAR, "vertical", false, 0.170f, -0.540f, -0.824f, -0.007f, 0.920f, -0.393f, 147.000f, 0.000f},
+    {WEAPON_SPEAR, "vertical", false, -0.035f, -0.307f, -0.951f, 0.046f, 0.905f, -0.423f, 139.300f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.574f, 0.670f, -0.470f, 0.244f, 0.897f, -0.369f, 145.200f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.521f, 0.836f, -0.170f, 0.158f, 0.643f, -0.750f, 138.900f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.574f, 0.802f, -0.163f, -0.187f, 0.521f, -0.833f, 160.800f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.479f, 0.791f, -0.380f, 0.142f, 0.739f, -0.659f, 145.000f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.440f, 0.858f, -0.264f, 0.185f, 0.835f, -0.518f, 146.000f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.456f, 0.881f, -0.127f, 0.133f, 0.812f, -0.568f, 139.100f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.548f, 0.836f, -0.023f, 0.015f, 0.742f, -0.670f, 157.500f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.552f, 0.794f, -0.254f, 0.048f, 0.772f, -0.633f, 140.600f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.555f, 0.780f, -0.290f, 0.044f, 0.660f, -0.750f, 150.800f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.568f, 0.786f, -0.245f, 0.188f, 0.504f, -0.843f, 150.600f, 0.000f},
+    {WEAPON_SPEAR, "diagonal", false, 0.502f, -0.219f, -0.837f, 0.220f, 0.876f, -0.429f, 159.800f, 0.000f},
+    {WEAPON_SPEAR, "diagonal", false, 0.614f, -0.164f, -0.772f, 0.186f, 0.800f, -0.571f, 154.900f, 0.000f},
+    {WEAPON_SPEAR, "diagonal", false, 0.470f, -0.129f, -0.873f, 0.157f, 0.827f, -0.540f, 143.600f, 0.000f},
+    {WEAPON_SPEAR, "diagonal", false, 0.559f, 0.134f, -0.819f, 0.571f, 0.821f, 0.014f, 144.400f, 0.000f},
+    {WEAPON_SPEAR, "diagonal", false, 0.622f, -0.034f, -0.782f, 0.416f, 0.840f, -0.348f, 154.100f, 0.000f},
+    {WEAPON_SPEAR, "diagonal", false, 0.530f, -0.096f, -0.843f, 0.516f, 0.815f, -0.264f, 142.300f, 0.000f},
+    {WEAPON_SPEAR, "diagonal", false, 0.549f, 0.027f, -0.835f, 0.385f, 0.891f, -0.238f, 156.700f, 0.000f},
+    {WEAPON_MACE, "diagonal", false, 0.169f, -0.456f, -0.874f, -0.007f, 0.736f, -0.677f, 167.700f, 0.000f},
+    {WEAPON_MACE, "diagonal", false, 0.112f, -0.430f, -0.896f, 0.219f, 0.671f, -0.708f, 168.200f, 0.000f},
+    {WEAPON_MACE, "diagonal", false, -0.021f, -0.530f, -0.848f, 0.063f, 0.496f, -0.866f, 163.300f, 0.000f},
+    {WEAPON_MACE, "diagonal", false, 0.045f, -0.228f, -0.973f, 0.192f, 0.776f, -0.601f, 181.400f, 0.000f},
+    {WEAPON_MACE, "diagonal", false, 0.100f, -0.431f, -0.897f, 0.202f, 0.668f, -0.716f, 183.500f, 0.000f},
+    {WEAPON_MACE, "vertical", false, 0.033f, -0.416f, -0.909f, 0.049f, 0.833f, -0.551f, 180.300f, 0.000f},
+    {WEAPON_MACE, "vertical", false, -0.046f, -0.493f, -0.869f, 0.200f, 0.747f, -0.634f, 171.200f, 0.000f},
+    {WEAPON_MACE, "vertical", false, -0.037f, -0.416f, -0.909f, 0.175f, 0.771f, -0.612f, 156.600f, 0.000f},
+    {WEAPON_MACE, "vertical", false, -0.000f, -0.349f, -0.937f, -0.002f, 0.783f, -0.622f, 160.600f, 0.000f},
+    {WEAPON_MACE, "vertical", false, -0.077f, -0.546f, -0.834f, 0.113f, 0.790f, -0.603f, 154.600f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, 0.248f, -0.125f, -0.961f, -0.022f, 0.714f, -0.700f, 208.400f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, 0.370f, 0.189f, -0.910f, 0.153f, 0.804f, -0.575f, 179.700f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, 0.341f, 0.439f, -0.831f, 0.198f, 0.919f, -0.340f, 150.000f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, 0.245f, 0.488f, -0.838f, 0.182f, 0.854f, -0.487f, 152.600f, 0.000f},
+    {WEAPON_MACE, "uppercut", false, 0.152f, 0.517f, 0.842f, 0.453f, 0.830f, -0.324f, 139.600f, 0.000f},
+    {WEAPON_MACE, "uppercut", false, 0.290f, 0.626f, 0.724f, 0.292f, 0.748f, -0.595f, 140.900f, 0.000f},
+    {WEAPON_MACE, "uppercut", false, 0.043f, 0.585f, 0.810f, 0.351f, 0.742f, -0.571f, 145.300f, 0.000f},
+    {WEAPON_MACE, "uppercut", false, 0.527f, 0.770f, 0.360f, 0.341f, 0.141f, -0.929f, 162.600f, 0.000f},
+    {WEAPON_MACE, "uppercut", false, 0.496f, 0.830f, 0.256f, 0.385f, 0.334f, -0.860f, 164.600f, 0.000f},
+    {WEAPON_MACE, "uppercut", false, 0.522f, 0.736f, 0.431f, 0.335f, 0.405f, -0.850f, 142.500f, 0.000f},
+    {WEAPON_MACE, "uppercut", false, 0.113f, 0.594f, 0.796f, 0.235f, 0.877f, -0.419f, 147.200f, 0.000f},
+    {WEAPON_MACE, "uppercut", false, 0.534f, 0.794f, 0.291f, 0.146f, 0.451f, -0.880f, 155.900f, 0.000f},
+    {WEAPON_MACE, "uppercut", false, 0.319f, 0.558f, 0.766f, 0.413f, 0.736f, -0.536f, 133.700f, 0.000f},
+    {WEAPON_MACE, "uppercut", false, 0.249f, 0.533f, 0.809f, 0.229f, 0.518f, -0.824f, 153.500f, 0.000f},
+    {WEAPON_MACE, "thrust", true, -0.110f, 0.917f, -0.384f, 0.000f, 0.000f, 0.000f, 36.300f, 0.734f},
+    {WEAPON_MACE, "horizontal", false, 0.897f, -0.159f, -0.412f, -0.022f, 0.537f, -0.843f, 117.800f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, 0.865f, -0.207f, -0.457f, -0.051f, 0.452f, -0.891f, 97.000f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, 0.911f, -0.068f, -0.406f, 0.150f, 0.682f, -0.715f, 109.800f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, 0.830f, -0.332f, -0.449f, -0.340f, 0.398f, -0.852f, 87.000f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, 0.945f, -0.111f, -0.308f, 0.162f, 0.500f, -0.851f, 108.600f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, 0.787f, -0.440f, -0.432f, -0.296f, 0.329f, -0.897f, 92.800f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, 0.862f, -0.243f, -0.445f, -0.334f, 0.519f, -0.787f, 117.000f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, 0.920f, -0.020f, -0.392f, -0.028f, 0.768f, -0.640f, 116.100f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, 0.887f, -0.036f, -0.460f, 0.021f, 0.814f, -0.580f, 87.800f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, 0.944f, -0.067f, -0.323f, -0.200f, 0.451f, -0.870f, 110.100f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, 0.925f, 0.046f, -0.377f, -0.065f, 0.574f, -0.816f, 126.600f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, 0.887f, -0.132f, -0.442f, 0.145f, 0.336f, -0.931f, 110.200f, 0.000f},
+    {WEAPON_MACE, "horizontal", false, 0.908f, -0.004f, -0.419f, 0.065f, 0.646f, -0.761f, 94.100f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.975f, -0.106f, -0.194f, 0.215f, 0.495f, -0.842f, 101.400f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.944f, 0.009f, -0.329f, -0.612f, -0.576f, -0.542f, 90.700f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.939f, -0.113f, -0.326f, -0.221f, -0.293f, -0.930f, 100.000f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.955f, -0.014f, -0.296f, -0.068f, -0.514f, -0.855f, 99.400f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.961f, 0.002f, -0.277f, 0.050f, -0.192f, -0.980f, 102.400f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.921f, -0.076f, -0.383f, 0.010f, 0.104f, -0.995f, 102.700f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.983f, -0.012f, -0.183f, -0.136f, -0.431f, -0.892f, 100.300f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.938f, -0.068f, -0.339f, -0.337f, 0.073f, -0.939f, 109.700f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.943f, 0.052f, -0.329f, -0.115f, -0.099f, -0.988f, 106.600f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.905f, 0.174f, -0.389f, -0.149f, -0.106f, -0.983f, 102.900f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.947f, 0.006f, -0.322f, -0.338f, -0.176f, -0.925f, 106.600f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.935f, -0.127f, -0.331f, -0.039f, -0.106f, -0.994f, 96.700f, 0.000f},
+    {WEAPON_SPEAR, "horizontal", false, 0.967f, 0.119f, -0.226f, -0.184f, 0.010f, -0.983f, 112.400f, 0.000f},
+    {WEAPON_MACE, "thrust", true, -0.095f, 0.993f, -0.076f, 0.000f, 0.000f, 0.000f, 57.600f, 0.986f},
+    {WEAPON_MACE, "thrust", true, 0.110f, 0.931f, -0.349f, 0.000f, 0.000f, 0.000f, 62.700f, 0.795f},
+    {WEAPON_MACE, "thrust", true, -0.253f, 0.956f, -0.147f, 0.000f, 0.000f, 0.000f, 38.300f, 0.897f},
+    {WEAPON_MACE, "thrust", true, -0.025f, 0.991f, -0.131f, 0.000f, 0.000f, 0.000f, 42.200f, 0.805f},
+    {WEAPON_SWORD_SHIELD, "thrust", true, -0.073f, 0.966f, -0.246f, 0.000f, 0.000f, 0.000f, 44.700f, 0.943f},
+    {WEAPON_SWORD_SHIELD, "thrust", true, -0.032f, 0.995f, -0.095f, 0.000f, 0.000f, 0.000f, 37.500f, 0.921f},
+    {WEAPON_SWORD_SHIELD, "thrust", true, -0.585f, 0.809f, -0.067f, 0.000f, 0.000f, 0.000f, 48.400f, 0.884f},
+    {WEAPON_SWORD_SHIELD, "vertical", false, 0.813f, -0.237f, -0.531f, 0.023f, 0.938f, -0.347f, 159.100f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "vertical", false, 0.791f, -0.341f, -0.507f, 0.073f, 0.902f, -0.425f, 171.000f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "vertical", false, 0.829f, -0.307f, -0.467f, -0.104f, 0.721f, -0.685f, 161.700f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "vertical", false, 0.827f, -0.341f, -0.446f, -0.031f, 0.899f, -0.436f, 155.800f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "vertical", false, 0.899f, -0.185f, -0.397f, 0.001f, 0.864f, -0.504f, 169.300f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "vertical", false, 0.772f, -0.395f, -0.498f, 0.017f, 0.973f, -0.230f, 156.000f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "vertical", false, 0.886f, -0.235f, -0.399f, 0.023f, 0.950f, -0.313f, 160.200f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "vertical", false, 0.741f, -0.561f, -0.370f, 0.083f, 0.948f, -0.306f, 153.300f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "vertical", false, 0.850f, -0.384f, -0.360f, -0.001f, 0.936f, -0.352f, 165.600f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "vertical", false, 0.872f, -0.240f, -0.427f, 0.227f, 0.876f, -0.425f, 172.500f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.095f, -0.373f, 0.923f, -0.872f, 0.042f, -0.488f, 123.600f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.930f, -0.343f, -0.135f, 0.116f, 0.973f, -0.198f, 156.700f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.976f, -0.139f, -0.166f, -0.012f, 0.846f, -0.533f, 156.400f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.958f, -0.254f, -0.131f, 0.330f, 0.909f, -0.253f, 167.000f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.891f, -0.365f, -0.269f, 0.137f, 0.947f, -0.290f, 164.100f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.836f, -0.531f, -0.136f, 0.006f, 0.969f, -0.245f, 159.300f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.864f, -0.449f, -0.227f, 0.368f, 0.923f, -0.116f, 169.800f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.891f, -0.422f, -0.165f, 0.109f, 0.917f, -0.384f, 173.200f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.917f, -0.397f, -0.030f, 0.273f, 0.911f, -0.309f, 177.500f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.903f, -0.353f, -0.244f, -0.063f, 0.980f, -0.190f, 180.800f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.968f, -0.046f, -0.246f, 0.034f, 0.949f, -0.313f, 174.400f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.961f, -0.147f, -0.232f, 0.119f, 0.855f, -0.505f, 177.700f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.903f, -0.352f, -0.247f, 0.166f, 0.940f, -0.297f, 179.800f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.974f, -0.202f, -0.107f, 0.068f, 0.897f, -0.437f, 171.600f, 0.000f},
+    {WEAPON_SWORD_SHIELD, "diagonal", false, 0.719f, -0.680f, -0.141f, 0.128f, 0.968f, -0.214f, 143.500f, 0.000f},
+};
+const int P1_LENIENT_COUNT = sizeof(P1_LENIENT_MODEL) / sizeof(P1_LENIENT_MODEL[0]);
+// ===== P1_LENIENT_MODEL END =====
+
 const WeaponActionLimits *activeActionLimits()
 {
     for (unsigned int i = 0; i < sizeof(ACTION_LIMITS) / sizeof(ACTION_LIMITS[0]); i++)
@@ -2029,7 +2236,7 @@ TemplateMatch nearestTemplate(const Stroke &s)
             best = {k, d, dA, dP, dR, dT};
         // Reviewed downward diagonal variants, gated to committed strokes.
         // Keep the fitted distance/torso limits; upward setup cannot match.
-        if (PLAYER_ID == 2 && strcmp(m.action, "diagonal") == 0 &&
+        if (strcmp(m.action, "diagonal") == 0 &&
             (lockedWeapon == WEAPON_MACE || lockedWeapon == WEAPON_SPEAR) &&
             s.peakDps >= 350 && s.rotDeg >= 100 && buffer[s.b].t - buffer[s.a].t <= 750)
         {
@@ -2084,10 +2291,10 @@ TemplateMatch relaxedSwordUppercut(const Stroke &s)
     return best;
 }
 
-TemplateMatch playerTwoUppercut(const Stroke &s)
+TemplateMatch secondGripUppercut(const Stroke &s)
 {
     TemplateMatch miss = {-1, 1e9f, 0, 0, 0, 0};
-    if (PLAYER_ID != 2 || lockedWeapon != WEAPON_SWORD_SHIELD ||
+    if (lockedWeapon != WEAPON_SWORD_SHIELD ||
         s.peakDps < 350.0f || s.rotDeg < UPPERCUT_ROT_MIN_DEG ||
         s.torsoRatio < SWORD_UPPERCUT_RELAX_MIN_TORSO_RATIO)
         return miss;
@@ -2248,12 +2455,17 @@ void findPushStrokes(uint32_t closeMs)
                 break;
         }
         float rot = 0;
+        float gyroPeak = vecMagnitude(buffer[a].gx, buffer[a].gy, buffer[a].gz);
         for (int i = a + 1; i <= e; i++)
-            rot += 0.5f * (vecMagnitude(buffer[i].gx, buffer[i].gy, buffer[i].gz) + vecMagnitude(buffer[i - 1].gx, buffer[i - 1].gy, buffer[i - 1].gz)) *
+        {
+            float g = vecMagnitude(buffer[i].gx, buffer[i].gy, buffer[i].gz);
+            rot += 0.5f * (g + vecMagnitude(buffer[i - 1].gx, buffer[i - 1].gy, buffer[i - 1].gz)) *
                    (buffer[i].t - buffer[i - 1].t) / 1000.0f;
+            gyroPeak = max(gyroPeak, g);
+        }
 
         PushStroke &p = pushes[pushCount++];
-        p = {a, b, e, ux, uy, uz, peak, x, rot, 0};
+        p = {a, b, e, ux, uy, uz, peak, x, rot, 0, gyroPeak};
         float dur = buffer[e].t - buffer[a].t;
         float pad = TORSO_PAD_FRAC * max(dur, 100.0f);
         uint32_t from = buffer[a].t - (uint32_t)pad;
@@ -2368,7 +2580,7 @@ void rememberStrike(const Stroke &s, const TemplateMatch &m)
 // Mirrored by figpipe.handling.rotation_reject using the November P2 captures.
 const char *handlingReject(const Stroke &s, const char *action)
 {
-    if (PLAYER_ID != 2 || (lockedWeapon != WEAPON_MACE && lockedWeapon != WEAPON_SPEAR))
+    if (lockedWeapon != WEAPON_MACE && lockedWeapon != WEAPON_SPEAR)
         return nullptr;
     uint32_t duration = buffer[s.b].t - buffer[s.a].t;
     bool upper = strcmp(action, "uppercut") == 0;
@@ -2398,6 +2610,91 @@ const char *handlingReject(const Stroke &s, const char *action)
             return "return";
     }
     return nullptr;
+}
+
+// ---------------- Commitment gate (all weapons, both players) ----------------
+// A real attack is a committed movement. These reject what the 2026-11-12 P1
+// captures showed being accepted: wrist flicks, raising the weapon to the
+// ready position, slow lowering/back-swings, and short flick "thrusts". They
+// run before every accept path (fitted matcher and both lenient banks).
+// Mirrored by figpipe.handling.rotation_commit_reject / push_commit_reject;
+// tune with lenient_p1.py (tests/test_handling.py checks the constants).
+const float STRIKE_MIN_ROT_DEG = 60.0f; // flicks rotate 22-32 deg; no real stroke < 83
+// Slow AND long = lowering / back-swing / raise. Back-swings peak 150-300 dps
+// over 640-1270 ms; real uppercuts can peak ~280-320 dps but finish within
+// ~680 ms. Spins (>= SPIN_MIN_ROT_DEG) are long by nature and exempt.
+const float SLOW_MAX_PEAK_DPS = 250.0f;
+const float SLOW_MIN_DURATION_MS = 650.0f;
+const float SLOWER_MAX_PEAK_DPS = 320.0f;
+const float SLOWER_MIN_DURATION_MS = 750.0f;
+const float RAISE_AXIS_MIN_Z = 0.60f; // uppercut-shaped (lift) rotation axis
+const float RAISE_MAX_ROT_DEG = 100.0f;
+const float RAISE_MAX_TORSO_RATIO = 0.10f;
+const float RAISE_MIN_TORSO_RATIO = 0.05f; // below this a lift is never an uppercut
+const float THRUST_MIN_REACH_M = 0.40f;    // flick "thrusts" reach 0.16-0.40 m
+const float THRUST_MIN_PEAK_G = 0.90f;
+// A thrust drives the arm; a flick snaps the wrist. Real P1/P2 thrusts peak at
+// <= 293 dps of wrist angular speed, flicks at 300-520 dps (2026-11-12 logs).
+const float THRUST_MAX_WRIST_DPS = 300.0f;
+// A horizontal or diagonal cut swings the body: every real one has torso
+// ratio >= 0.10, wrist flicks 0.03-0.07. (Verticals go down to 0.06 and
+// uppercuts have their own torso gates, so they are left out.)
+const float CUT_MIN_TORSO_RATIO = 0.08f;
+// A full-power cut is exempt: P1's sword verticals/diagonals swing mostly from
+// the arm (torso ratio 0.05-0.10) but turn 153-178 deg at 550-770 dps, while
+// the flicks this floor targets turn 68-120 deg (2026-11-12 sword logs).
+const float CUT_TORSO_EXEMPT_ROT_DEG = 130.0f;
+const float CUT_TORSO_EXEMPT_PEAK_DPS = 450.0f;
+// A stroke within this long of a guard entry or exit is the shield moving
+// into/out of guard, not an attack. Swings while the guard is held count
+// (sword & shield players attack with the shield up).
+const uint32_t GUARD_EDGE_MS = 600;
+// A flick snaps the wrist fast but barely travels; a hard thrust can turn the
+// wrist at 300-443 dps too, but reaches 0.60-0.99 m (2026-11-12 thrust logs).
+const float THRUST_FLICK_MAX_REACH_M = 0.70f;
+
+const char *rotationCommitReject(const Stroke &s)
+{
+    float duration = buffer[s.b].t - buffer[s.a].t;
+    if (s.rotDeg < STRIKE_MIN_ROT_DEG)
+        return "flick";
+    if (s.rotDeg < SPIN_MIN_ROT_DEG &&
+        ((s.peakDps < SLOW_MAX_PEAK_DPS && duration >= SLOW_MIN_DURATION_MS) ||
+         (s.peakDps < SLOWER_MAX_PEAK_DPS && duration >= SLOWER_MIN_DURATION_MS)))
+        return "slow";
+    if (s.uz >= RAISE_AXIS_MIN_Z &&
+        (s.torsoRatio < RAISE_MIN_TORSO_RATIO ||
+         (s.rotDeg < RAISE_MAX_ROT_DEG && s.torsoRatio < RAISE_MAX_TORSO_RATIO)))
+        return "guard_raise";
+    return nullptr;
+}
+
+const char *pushCommitReject(const PushStroke &p)
+{
+    if (p.reachM < THRUST_MIN_REACH_M || p.peakG < THRUST_MIN_PEAK_G)
+        return "short";
+    if (p.peakGyroDps > THRUST_MAX_WRIST_DPS && p.reachM < THRUST_FLICK_MAX_REACH_M)
+        return "flick";
+    return nullptr;
+}
+
+bool torsoQuietCut(const Stroke &s, const char *action)
+{
+    if (s.rotDeg >= CUT_TORSO_EXEMPT_ROT_DEG && s.peakDps >= CUT_TORSO_EXEMPT_PEAK_DPS)
+        return false;
+    return (strcmp(action, "horizontal") == 0 || strcmp(action, "diagonal") == 0) &&
+           s.torsoRatio < CUT_MIN_TORSO_RATIO;
+}
+
+bool overlapsEdge(uint32_t t0, uint32_t t1, uint32_t edgeMs)
+{
+    return (int32_t)(t0 - (edgeMs + GUARD_EDGE_MS)) < 0 && (int32_t)(t1 - (edgeMs - GUARD_EDGE_MS)) > 0;
+}
+
+bool guardSuppressed(uint32_t t0, uint32_t t1)
+{
+    return (guardSeen && overlapsEdge(t0, t1, guardOnMs)) ||
+           (guardExitSeen && overlapsEdge(t0, t1, guardOffMs));
 }
 
 // The push's reason to be rejected from context, or nullptr.
@@ -2460,14 +2757,15 @@ float lenientHistoryVx = 0, lenientHistoryVy = 0, lenientHistoryVz = 0;
 TemplateMatch combinedRotationMatch(const Stroke &s, int index, CombinedCandidate &best)
 {
     TemplateMatch original = nearestTemplate(s);
-    if (s.torsoBeacons == 0 || s.peakDps < 100.0f || s.rotDeg < 35.0f)
+    if (s.torsoBeacons == 0 || s.peakDps < 100.0f || s.rotDeg < 35.0f ||
+        rotationCommitReject(s) || guardSuppressed(buffer[s.a].t, buffer[s.b].t))
         return original;
     for (int k = 0; k < P2_LENIENT_COUNT; k++)
     {
         const LenientTemplate &m = P2_LENIENT_MODEL[k];
         if (m.weapon != lockedWeapon || m.push)
             continue;
-        if (handlingReject(s, m.hint))
+        if (handlingReject(s, m.hint) || torsoQuietCut(s, m.hint))
             continue;
         if (lenientHistoryValid && !lenientHistoryPush &&
             returnOf(lenientHistoryEndMs, lenientHistoryDurMs, lenientHistorySpin,
@@ -2486,7 +2784,35 @@ TemplateMatch combinedRotationMatch(const Stroke &s, int index, CombinedCandidat
         if (d < best.dist)
             best = {&m, index, false, d};
     }
+    // P1 bank: any locked weapon, wider radius scaled onto the shared 0.35
+    // threshold, and it also respects the original matcher's return history.
+    if (isReturnOfLastStrike(s))
+        return original;
+    const float scale = 0.35f / P1_LENIENT_MAX_DIST;
+    for (int k = 0; k < P1_LENIENT_COUNT; k++)
+    {
+        const LenientTemplate &m = P1_LENIENT_MODEL[k];
+        if (m.push || handlingReject(s, m.hint) || torsoQuietCut(s, m.hint))
+            continue;
+        if (lenientHistoryValid && !lenientHistoryPush &&
+            returnOf(lenientHistoryEndMs, lenientHistoryDurMs, lenientHistorySpin,
+                     buffer[s.a].t,
+                     s.ux * lenientHistoryUx + s.uy * lenientHistoryUy + s.uz * lenientHistoryUz))
+            continue;
+        bool spin = strcmp(m.hint, "spin") == 0;
+        float dA = angleBetweenDeg(s.ux, s.uy, s.uz, m.ux, m.uy, m.uz, spin) / 25.0f;
+        float dP = angleBetweenDeg(s.hx, s.hy, s.hz, m.px, m.py, m.pz, spin) / 45.0f;
+        float dR = fabs(s.rotDeg - m.rotDeg) / 50.0f;
+        float d = sqrt(dA * dA + dP * dP + dR * dR) * scale;
+        if (d < best.dist)
+            best = {&m, index, false, d};
+    }
     return original;
+}
+
+bool isP1Pattern(const LenientTemplate *m)
+{
+    return m >= P1_LENIENT_MODEL && m < P1_LENIENT_MODEL + P1_LENIENT_COUNT;
 }
 
 float combinedPushMatch(const PushStroke &s, int index, float &dDir, float &dReach,
@@ -2495,7 +2821,8 @@ float combinedPushMatch(const PushStroke &s, int index, float &dDir, float &dRea
     float original = thrustDistance(s, dDir, dReach, dRot);
     const char *context = pushContextReject(s);
     if (s.torsoBeacons == 0 || s.peakG < 0.3f || s.reachM < 0.15f ||
-        (context && strcmp(context, "return") != 0))
+        (context && strcmp(context, "return") != 0) ||
+        pushCommitReject(s) || guardSuppressed(buffer[s.a].t, buffer[s.e].t))
         return original;
     uint32_t t0 = buffer[s.a].t;
     if (lenientHistoryValid &&
@@ -2513,6 +2840,22 @@ float combinedPushMatch(const PushStroke &s, int index, float &dDir, float &dRea
             continue;
         float da = angleBetweenDeg(s.ux, s.uy, s.uz, m.ux, m.uy, m.uz, false) / 25.0f;
         float d = sqrt(da * da + reach * reach + dr * dr);
+        if (d < best.dist)
+            best = {&m, index, true, d};
+    }
+    // P1 bank: any locked weapon, wider radius; never a push the context calls a return.
+    if (context)
+        return original;
+    const float scale = 0.35f / P1_LENIENT_MAX_DIST;
+    for (int k = 0; k < P1_LENIENT_COUNT; k++)
+    {
+        const LenientTemplate &m = P1_LENIENT_MODEL[k];
+        if (!m.push)
+            continue;
+        float dr = (s.rotDeg - m.rotDeg) / 45.0f;
+        float reach = (s.reachM - m.reachM) / 0.40f;
+        float da = angleBetweenDeg(s.ux, s.uy, s.uz, m.ux, m.uy, m.uz, false) / 25.0f;
+        float d = sqrt(da * da + reach * reach + dr * dr) * scale;
         if (d < best.dist)
             best = {&m, index, true, d};
     }
@@ -2543,7 +2886,8 @@ bool acceptAdditionalPattern(const CombinedCandidate &best)
     lenientHistorySpin = strcmp(best.pattern->hint, "spin") == 0;
     lenientHistoryEndMs = buffer[b].t;
     lenientHistoryDurMs = buffer[b].t - buffer[a].t;
-    debugLog("Combined kind=" + String(best.push ? "push" : "rot") +
+    debugLog("Combined bank=" + String(isP1Pattern(best.pattern) ? "p1" : "p2") +
+             " kind=" + String(best.push ? "push" : "rot") +
              " t0=" + String(buffer[a].t) + " t1=" + String(buffer[b].t) +
              " hint=" + String(best.pattern->hint) + " dist=" + String(best.dist, 2));
     acceptSegment(a, b, best.pattern->hint, best.dist);
@@ -2630,7 +2974,7 @@ void onMotionEnd(const char *closeReason)
                 m = alt;
                 relaxedUppercut = true;
             }
-            alt = playerTwoUppercut(s);
+            alt = secondGripUppercut(s);
             if (alt.idx >= 0 && alt.dist <= P2_UPPERCUT_MAX_DIST && alt.dist < m.dist)
             {
                 m = alt;
@@ -2639,15 +2983,22 @@ void onMotionEnd(const char *closeReason)
         }
 
         const char *handling = m.idx >= 0 ? handlingReject(s, STRIKE_MODEL[m.idx].action) : nullptr;
+        const char *commitment = rotationCommitReject(s);
         const char *reason;
         if (s.torsoBeacons == 0)
             reason = "torso_data"; // check torso link/power
+        else if (commitment)
+            reason = commitment;
+        else if (guardSuppressed(buffer[s.a].t, buffer[s.b].t))
+            reason = "guarding";
         else if (handling)
             reason = handling;
         else if (!(m.idx >= 0 && STRIKE_MODEL[m.idx].bidirectional) && isReturnOfLastStrike(s))
             reason = "return";
         else if (m.idx >= 0 && strcmp(STRIKE_MODEL[m.idx].action, "uppercut") == 0 &&
                  s.peakDps >= UPPERCUT_TORSO_GATE_PEAK_DPS && s.torsoRatio < UPPERCUT_MIN_TORSO_RATIO)
+            reason = "torso_quiet";
+        else if (m.idx >= 0 && torsoQuietCut(s, STRIKE_MODEL[m.idx].action))
             reason = "torso_quiet";
         else if (m.idx < 0 || m.dist > strikeDistanceLimit(m, relaxedUppercut))
             reason = "far";
@@ -2683,6 +3034,10 @@ void onMotionEnd(const char *closeReason)
         if (p.torsoBeacons == 0)
             reason = "torso_data";
         if (!reason)
+            reason = pushCommitReject(p);
+        if (!reason && guardSuppressed(buffer[p.a].t, buffer[p.e].t))
+            reason = "guarding";
+        if (!reason)
             reason = pushContextReject(p);
         if (!reason && (!activeActionLimits() || p.reachM < activeActionLimits()->minThrustReachM ||
                         (lockedWeapon == WEAPON_SWORD_SHIELD && p.rotDeg > SWORD_THRUST_HIGH_ROT_DEG &&
@@ -2702,7 +3057,8 @@ void onMotionEnd(const char *closeReason)
         debugLog("Stroke i=" + String(k) + " kind=push t0=" + String(buffer[p.a].t) + " t1=" + String(buffer[p.e].t) +
                  " peak=" + String(p.peakG, 2) + " rot=" + String(p.rotDeg, 1) + " reach=" + String(p.reachM, 3) +
                  " ax=" + String(p.ux, 3) + " ay=" + String(p.uy, 3) + " az=" + String(p.uz, 3) +
-                 " beacons=" + String(p.torsoBeacons) + " nearest=thrust dist=" + String(d, 2) +
+                 " beacons=" + String(p.torsoBeacons) + " gyroPk=" + String(p.peakGyroDps, 0) +
+                 " nearest=thrust dist=" + String(d, 2) +
                  " dAxis=" + String(dDir, 2) + " dReach=" + String(dReach, 2) + " dRot=" + String(dRot, 2) +
                  " reason=" + reason + " accept=" + String(ok ? 1 : 0));
         if (!ok)
@@ -3010,6 +3366,7 @@ void setup()
 void loop()
 {
     checkIncomingPose();
+    checkGuardStale();
     checkIncomingLink();
     serviceSegmentRequests(millis());
     printLinkStats(millis());
