@@ -31,6 +31,7 @@ from cg_comms.protocol.codec import DecodedPacket, DecodeError
 from cg_comms.protocol.constants import PROTOCOL_VERSION, Direction, PacketType
 from cg_comms.protocol.crypto import OutgoingSequenceCounter, SequenceTracker
 from cg_comms.protocol.framing import Framer
+from cg_comms.relay.device_log import DeviceLogWriter
 from cg_comms.relay.heartbeat import HeartbeatMonitor, run_heartbeat_sender, run_liveness_watchdog
 from cg_comms.relay.reliability import LinkDegraded, ReliabilitySender
 from cg_comms.relay.segments import Segment, SegmentAssembler, classifier_input
@@ -84,6 +85,9 @@ class Session:
     # WEAPON_UNLOCK, the latest WEAPON_SELECT_*), read then so ones that arrived during the
     # handshake are not lost. Sent in order.
     startup_feedback: Callable[[], list[CombatFeedback]] | None = None
+    # Hardware debug lines (DEVICE_LOG) -> per-match CSVs. Owned by the relay process, so a
+    # reconnect keeps writing the same match's file. None drops them.
+    device_log: DeviceLogWriter | None = None
 
     session_id: int = field(default=0, init=False)
     _rx_tracker: SequenceTracker = field(default_factory=SequenceTracker, init=False)
@@ -431,6 +435,10 @@ class Session:
             await self._send_ack(decoded.header.seq)
             if not decoded.duplicate:
                 await self._handle_guard_event(decoded)
+        elif packet_type == int(PacketType.DEVICE_LOG):
+            self._heartbeat_monitor.mark_received()
+            if self.device_log is not None:
+                self.device_log.add_piece(decoded.fields)
         elif packet_type == int(PacketType.TIME_SYNC_REQ):
             # Request/response exchange, not ACK-of-ACK reliability. Current demo firmware only
             # initiates sync at handshake, but a delayed/future resync request must receive RESP.

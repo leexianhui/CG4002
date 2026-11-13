@@ -236,6 +236,7 @@ PACKET_TYPES = {
     "RFID_EVENT": 0x11,
     "SEGMENT_CHUNK": 0x12,
     "GUARD_EVENT": 0x13,
+    "DEVICE_LOG": 0x14,
     "HEARTBEAT": 0x20,
     "ACK": 0x21,
     "COMBAT_FEEDBACK": 0x30,
@@ -389,6 +390,15 @@ vectors.append(normal_vector(
     "GUARD_EVENT", PACKET_TYPES["GUARD_EVENT"],
     session_id=SESSION_ID, player_id=1, direction=0, seq=13, ext_seq=13,
     plaintext=struct.pack("<IBBH", 314159, 1, 2, 0),
+))
+
+# DEVICE_LOG: left wrist (2) at its clock 271828 ms, piece 1 of a longer line (more bit set), line 7.
+device_log_plaintext = struct.pack("<IBBH48s", 271828, 2, 0x80 | 1, 7, b"guard_wait el=35.2 az=-80.1 dist=6.3 inside=1 ")
+assert len(device_log_plaintext) == 56
+vectors.append(normal_vector(
+    "DEVICE_LOG", PACKET_TYPES["DEVICE_LOG"],
+    session_id=SESSION_ID, player_id=1, direction=0, seq=17, ext_seq=17,
+    plaintext=device_log_plaintext,
 ))
 
 heartbeat_plaintext = struct.pack("<IHHHH", 50000, 3700, 3650, 3600, 0)

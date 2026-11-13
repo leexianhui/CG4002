@@ -19,6 +19,7 @@
 #include "gateway_boundary.h"
 #include "gateway_segments.h"
 #include "gateway_link.h"
+#include "gateway_log.h"
 #include <esp_coexist.h>
 #else
 #include "cg_config.h"
@@ -420,7 +421,7 @@ void drain_incoming_non_blocking() {
             g_feedback_cache.remember(incoming.data, incoming.len, millis());
             send_ack_for(seq);
 #ifdef CG_HARDWARE_GATEWAY
-            Serial.printf("[feedback] queued seq=%u code=%u\n", (unsigned)seq, (unsigned)plaintext[0]);
+            gatewayLogf("[feedback] queued seq=%u code=%u\n", (unsigned)seq, (unsigned)plaintext[0]);
 #else
             Serial.printf("[feedback] applied seq=%u code=%u\n", (unsigned)seq, (unsigned)plaintext[0]);
 #endif
@@ -438,7 +439,7 @@ void drain_incoming_non_blocking() {
             bool guard_was_pending = g_pending_guard.active;
             g_pending_guard.ack(acked_seq);
             if (guard_was_pending && !g_pending_guard.active)
-                Serial.printf("[guard] guard_event acked seq=%u\n", (unsigned)acked_seq);
+                gatewayLogf("[guard] guard_event acked seq=%u\n", (unsigned)acked_seq);
 #endif
         }
     }
@@ -447,7 +448,7 @@ void drain_incoming_non_blocking() {
 #ifdef CG_SEGMENT_UPLINK
 void finish_segment(const char *outcome) {
     if (g_segment == nullptr) return;
-    Serial.printf("[segment] %s seg=%lu samples=%u chunks=%u in %lums\n", outcome,
+    gatewayLogf("[segment] %s seg=%lu samples=%u chunks=%u in %lums\n", outcome,
                   (unsigned long)g_segment->id, (unsigned)g_segment->count, (unsigned)g_segment_chunks,
                   (unsigned long)(millis() - g_segment_started_ms));
     for (auto &chunk : g_segment_tx) chunk.reset();
@@ -693,8 +694,8 @@ void service_guard_events() {
     if (gatewayTakeGuardEvent(state, event_ms)) {
         uint32_t age = millis() - event_ms;
         if (age > kGuardMaxAgeMs) {
-            Serial.printf("[guard] dropped stale edge state=%u age=%lums\n", (unsigned)state,
-                          (unsigned long)age);
+            gatewayLogf("[guard] dropped stale edge state=%u age=%lums\n", (unsigned)state,
+                        (unsigned long)age);
         } else {
             cg_payload_guard_event_t payload = {};
             payload.device_timestamp_ms = event_ms;
@@ -702,16 +703,38 @@ void service_guard_events() {
             payload.weapon_id = g_weapon_id;
             bool accepted = send_packet(CG_PKT_GUARD_EVENT, (const uint8_t *)&payload, sizeof(payload),
                                         nullptr, 0, nullptr, &g_pending_guard);
-            Serial.printf("[guard] guard_event %s seq=%u accepted=%u\n", state ? "GUARDING" : "IDLE",
-                          (unsigned)g_pending_guard.seq, (unsigned)accepted);
+            gatewayLogf("[guard] guard_event %s seq=%u accepted=%u\n", state ? "GUARDING" : "IDLE",
+                        (unsigned)g_pending_guard.seq, (unsigned)accepted);
         }
     }
     int due = g_pending_guard.poll(millis());
     if (due < 0)
-        Serial.printf("[guard] guard_event undelivered after 5 attempts, seq=%u\n",
-                      (unsigned)g_pending_guard.seq);
+        gatewayLogf("[guard] guard_event undelivered after 5 attempts, seq=%u\n",
+                    (unsigned)g_pending_guard.seq);
     else if (due > 0)
         notify_frame(g_pending_guard.frame, g_pending_guard.len);
+}
+
+// Hub: forwards hardware debug-log pieces (its own and its nodes', gateway_log.h) to the relay as
+// best-effort DEVICE_LOG packets. Lowest priority: never while a segment is going out, and at most
+// one piece per kLogIntervalMs (~4 KB/s), so logging cannot crowd out gameplay traffic.
+constexpr uint32_t kLogIntervalMs = 20;
+void service_device_logs() {
+    static uint32_t last_ms = 0, last_drop_report_ms = 0;
+    uint32_t now = millis();
+    if (now - last_drop_report_ms >= 1000) {
+        last_drop_report_ms = now;
+        uint32_t dropped = gatewayLogTakeDropped();
+        if (dropped) gatewayLogf("[log] dropped %lu pieces (queue full)\n", (unsigned long)dropped);
+    }
+#ifdef CG_SEGMENT_UPLINK
+    if (g_segment != nullptr) return;
+#endif
+    if (now - last_ms < kLogIntervalMs) return;
+    cg_payload_device_log_t piece;
+    if (!gatewayLogTake(piece)) return;
+    last_ms = now;
+    send_packet(CG_PKT_DEVICE_LOG, (const uint8_t *)&piece, sizeof(piece), nullptr, 0);
 }
 #endif
 
@@ -823,5 +846,8 @@ void loop() {
 #endif
 #ifdef CG_SEGMENT_UPLINK
     service_segments();
+#endif
+#ifdef CG_HARDWARE_GATEWAY
+    service_device_logs();
 #endif
 }

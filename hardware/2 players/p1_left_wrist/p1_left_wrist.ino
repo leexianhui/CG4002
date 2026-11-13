@@ -1,6 +1,7 @@
 #ifdef CG_HARDWARE_GATEWAY
 #include "gateway_boundary.h"
 #include "gateway_link.h"
+#include "gateway_log.h"
 #endif
 // ============================================================================
 // LEFT WRIST NODE. Follows the phase the right-wrist hub broadcasts in
@@ -590,6 +591,11 @@ void debugLog(String msg)
 {
     if (!DEBUG_LOG)
         return;
+#ifdef CG_HARDWARE_GATEWAY
+    // The BLE node link drops DEBUG_PORT, so the game build's only copy is Serial.
+    Serial.println("[left_wrist] " + msg);
+    gatewayLog(msg.c_str()); // -> relay -> hardware/game/ CSVs (gateway_log.h)
+#endif
     debugUdp.beginPacket(broadcastIP, DEBUG_PORT);
     debugUdp.print("[left_wrist] " + msg);
     debugUdp.endPacket();
@@ -687,6 +693,13 @@ bool guardPeakValid = false;
 const unsigned long GUARD_STATE_REPEAT_MS = 500;
 unsigned long lastGuardSendMs = 0;
 
+// Missed-guard diagnostics: while locked and IDLE with the wrist within
+// GUARD_DIAG_NEAR_DEG of a guard reference, log every GUARD_DIAG_INTERVAL_MS
+// which entry check is failing. Logging only; detection is unchanged.
+const float GUARD_DIAG_NEAR_DEG = 60.0f;
+const unsigned long GUARD_DIAG_INTERVAL_MS = 300;
+unsigned long lastGuardDiagMs = 0;
+
 void sendGuardState(GuardState state, unsigned long now, float distance, bool logIt)
 {
     GuardStatePacket packet;
@@ -738,6 +751,19 @@ void updateGuardDetection(float el, float az, unsigned long now)
             guardArmed = false; // the next guard needs a new arrival
             sendGuardState(guardState, now, nearestDeg, true);
             return;
+        }
+        if (nearestDeg <= GUARD_DIAG_NEAR_DEG && now - lastGuardDiagMs >= GUARD_DIAG_INTERVAL_MS)
+        {
+            lastGuardDiagMs = now;
+            // farAgo: ms since the arm was last beyond every armDeg (-1 = not
+            // since the last guard entry); armed needs farAgo <= GUARD_ARM_MS.
+            long farAgo = guardArmed ? (long)(now - guardFarAtMs) : -1L;
+            long stillFor = guardStillSinceMs ? (long)(now - guardStillSinceMs) : 0L;
+            debugLog("guard_wait el=" + String(el, 1) + " az=" + String(az, 1) +
+                     " dist=" + String(nearestDeg, 1) + " inside=" + String(inside ? 1 : 0) +
+                     " armed=" + String(armed ? 1 : 0) + " farAgo=" + String(farAgo) +
+                     " held=" + String(held ? 1 : 0) + " stillFor=" + String(stillFor) +
+                     " gyro=" + String(gyroMagEMA, 0) + " peak=" + String(guardPeakDps, 0));
         }
     }
     else if (outside)

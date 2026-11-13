@@ -60,6 +60,7 @@ extern "C" {
 #define CG_PKT_RFID_EVENT      0x11 /* device -> laptop   reliable    */
 #define CG_PKT_SEGMENT_CHUNK   0x12 /* device -> laptop   reliable, windowed (up to 4 unACKed) */
 #define CG_PKT_GUARD_EVENT     0x13 /* device -> laptop   reliable    */
+#define CG_PKT_DEVICE_LOG      0x14 /* device -> laptop   best-effort */
 #define CG_PKT_HEARTBEAT       0x20 /* both               best-effort */
 #define CG_PKT_ACK             0x21 /* both               never acked itself */
 #define CG_PKT_COMBAT_FEEDBACK 0x30 /* laptop -> device   reliable    */
@@ -180,6 +181,22 @@ typedef struct CG_PACKED {
     uint8_t  weapon_id;
     uint16_t reserved;
 } cg_payload_guard_event_t;
+
+/* device -> laptop, hub only, best-effort: one piece of a debug log line from the hub or one of its
+ * nodes (torso, left wrist), for the relay's per-match hardware log CSVs. 56 bytes. A line longer
+ * than CG_DEVICE_LOG_TEXT_LEN is split into pieces sharing `line_seq`, in order; every piece but the
+ * last has CG_DEVICE_LOG_MORE set in `part`. The same struct goes node -> hub on the node link, so its
+ * size is bounded by that link's 64-byte ATT MTU. */
+#define CG_DEVICE_LOG_TEXT_LEN 48
+#define CG_DEVICE_LOG_MORE     0x80u /* part: more pieces of this line follow */
+#define CG_DEVICE_LOG_INDEX    0x7Fu /* part: this piece's index in its line */
+typedef struct CG_PACKED {
+    uint32_t device_timestamp_ms; /* the source board's own clock, when the line was logged */
+    uint8_t  source;              /* 0 hub (dominant wrist), 1 torso, 2 left wrist */
+    uint8_t  part;                /* CG_DEVICE_LOG_MORE | piece index */
+    uint16_t line_seq;            /* per source, wraps */
+    char     text[CG_DEVICE_LOG_TEXT_LEN]; /* ASCII, NUL-padded (not NUL-terminated when full) */
+} cg_payload_device_log_t;
 
 /* device -> laptop, one action segment split into chunks (event mode, hardware hub). 208 bytes.
  * A segment is `chunk_count` chunks sharing `segment_id`; chunk i carries rows

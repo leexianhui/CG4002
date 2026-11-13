@@ -47,6 +47,7 @@ discard a corrupted frame before spending a decrypt on it, which matters on the 
 | `CG_PKT_RFID_EVENT` | `0x11` | device → laptop | reliable |
 | `CG_PKT_SEGMENT_CHUNK` | `0x12` | device → laptop | reliable, windowed |
 | `CG_PKT_GUARD_EVENT` | `0x13` | device → laptop | reliable |
+| `CG_PKT_DEVICE_LOG` | `0x14` | device → laptop | best-effort |
 | `CG_PKT_HEARTBEAT` | `0x20` | both | best-effort |
 | `CG_PKT_ACK` | `0x21` | both | never acked itself |
 | `CG_PKT_COMBAT_FEEDBACK` | `0x30` | laptop → device | reliable |
@@ -55,6 +56,7 @@ discard a corrupted frame before spending a decrypt on it, which matters on the 
 | Packet | Delivery | Rationale |
 |---|---|---|
 | `SENSOR_FRAME`, `HEARTBEAT` | best-effort | Dropped capture frames can cause too_few/span suppression; never fill with unrelated frames |
+| `DEVICE_LOG` | best-effort | Debugging only; a lost piece shows as a gap in that line, never delays gameplay traffic |
 | `RFID_EVENT`, `GUARD_EVENT`, `COMBAT_FEEDBACK` | ACK + identical-ciphertext retry | One application effect; exact duplicates get another ACK |
 | `SEGMENT_CHUNK` | ACK + identical-ciphertext retry, up to 4 unACKed | One classifier request per complete segment; replay-checked by the 64-wide window, not a per-type watermark (several are in flight, so a watermark would reject a lost chunk's retransmit) |
 | `HELLO`, `HELLO_ACK`, `TIME_SYNC_*` | Bounded request/response | Failure restarts handshake with a fresh device nonce and BLE session; no generic ACK exchange |
@@ -87,6 +89,11 @@ SEGMENT_CHUNK       (208 B)  segmentId u32 | chunkIndex u8 | chunkCount u8 | wea
                              Rows >= sampleCount are 0
 GUARD_EVENT           (8 B)  deviceTimestampMs u32 (hub clock) | guardState u8 (0 IDLE, 1 GUARDING) |
                              weaponId u8 | reserved u16. Edges of the left wrist's guard pose
+DEVICE_LOG           (56 B)  deviceTimestampMs u32 (source board's clock) | source u8 (0 hub,
+                             1 torso, 2 left wrist) | part u8 (bit 7 more pieces follow, bits 0-6
+                             index) | lineSeq u16 (per source) | text[48] (ASCII, NUL-padded).
+                             One piece of a hardware debug line; the relay reassembles lines by
+                             (source, lineSeq) into hardware/game/ CSVs
 HEARTBEAT            (12 B)  deviceTimestampMs u32 | vbatBelt_mV u16 | vbatDom_mV u16 |
                              vbatOff_mV u16 | statusFlags u16
 ACK                   (2 B)  ackedSeq u16

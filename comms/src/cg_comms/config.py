@@ -123,6 +123,9 @@ class RelaySettings(BaseSettings):
     player_id: Literal[1, 2] = 1
     psk_hex: str = ""
     logs_dir: Path = Path("logs")
+    # Hardware debug-log CSVs (relay/device_log.py), one per match. Relative to the repo root;
+    # null disables them.
+    device_logs_dir: Path | None = Path("hardware/game")
 
     transport: TransportConfig = Field(default_factory=TransportConfig)
     reliability: ReliabilityConfig = Field(default_factory=ReliabilityConfig)
