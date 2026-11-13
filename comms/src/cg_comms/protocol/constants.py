@@ -44,6 +44,7 @@ class PacketType(IntEnum):
     RFID_EVENT = 0x11
     SEGMENT_CHUNK = 0x12
     GUARD_EVENT = 0x13  # hub -> relay: the left wrist entered/left the guard pose
+    DEVICE_LOG = 0x14  # hub -> relay, best-effort: a piece of a hub/torso/left-wrist debug line
     HEARTBEAT = 0x20
     ACK = 0x21
     COMBAT_FEEDBACK = 0x30
@@ -99,6 +100,11 @@ SEGMENT_FLAG_THREE_IMU: int = 1 << 0
 SEGMENT_FLAG_DOM_VALID: int = 1 << 1
 SEGMENT_FLAG_OFF_VALID: int = 1 << 2
 SEGMENT_FLAG_TORSO_VALID: int = 1 << 3
+
+# DEVICE_LOG layout (cg_protocol.h CG_DEVICE_LOG_*).
+DEVICE_LOG_TEXT_LEN: int = 48
+DEVICE_LOG_MORE: int = 0x80  # part: more pieces of this line follow
+DEVICE_LOG_INDEX: int = 0x7F  # part: this piece's index in its line
 
 # SENSOR_FRAME.flags bits (wire_protocol.md §3.1).
 FLAG_DOM_STALE: int = 1 << 0

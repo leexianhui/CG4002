@@ -18,6 +18,7 @@ from cg_comms.config import RelaySettings, find_repo_root
 from cg_comms.logging_setup import configure_logging
 from cg_comms.messages.enums import FeedbackCode
 from cg_comms.messages.models import Action, CombatFeedback, WeaponChanged
+from cg_comms.relay.device_log import DeviceLogWriter
 from cg_comms.relay.engine_link import EngineLinkClient
 from cg_comms.relay.session import WEAPON_SELECTION_CODES, Session, SessionConfig
 from cg_comms.relay.tunnel import TunnelConfig, TunnelSupervisor
@@ -49,6 +50,12 @@ def resolve_logs_dir(settings: RelaySettings) -> Path:
     if settings.logs_dir.is_absolute():
         return settings.logs_dir
     return find_repo_root() / "comms" / settings.logs_dir
+
+
+def resolve_device_logs_dir(settings: RelaySettings) -> Path | None:
+    if settings.device_logs_dir is None or settings.device_logs_dir.is_absolute():
+        return settings.device_logs_dir
+    return find_repo_root() / settings.device_logs_dir
 
 
 async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
@@ -95,10 +102,14 @@ async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
     weapon_selection: CombatFeedback | None = None
     # A match reset's WEAPON_UNLOCK that no hub session has taken yet (hub offline at the time).
     pending_unlock: CombatFeedback | None = None
+    device_logs_dir = resolve_device_logs_dir(settings)
+    device_log = DeviceLogWriter(device_logs_dir, settings.player_id) if device_logs_dir else None
 
     async def on_combat_feedback(feedback: CombatFeedback) -> None:
         nonlocal weapon_selection, pending_unlock
         streaming = session is not None and session.streaming
+        if feedback.code is FeedbackCode.WEAPON_UNLOCK and device_log is not None:
+            device_log.start_match("match reset")  # the engine sends WEAPON_UNLOCK on every reset
         if feedback.code in WEAPON_SELECTION_CODES:
             weapon_selection = feedback
             logger.info("weapon_selection", player_id=settings.player_id,
@@ -169,6 +180,7 @@ async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
                 on_weapon_changed=on_weapon_changed,
                 on_action_result=on_action_result,
                 startup_feedback=startup_feedback,
+                device_log=device_log,
             )
             try:
                 await session.run()
@@ -185,6 +197,8 @@ async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
             logger.warning("reconnecting", player_id=settings.player_id, delay_s=delay)
             await asyncio.sleep(delay)
     finally:
+        if device_log is not None:
+            device_log.close()
         await engine_link.disconnect()
         await ultra96.disconnect()
         if tunnel is not None:

@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum, auto
 
-from cg_comms.protocol.constants import SEGMENT_CHUNK_SAMPLES, PacketType
+from cg_comms.protocol.constants import DEVICE_LOG_TEXT_LEN, SEGMENT_CHUNK_SAMPLES, PacketType
 
 
 class FieldKind(Enum):
@@ -94,6 +94,13 @@ PAYLOAD_TABLES: dict[PacketType, tuple[Field, ...]] = {
         Field("guard_state", FieldKind.U8),  # GuardState wire value: 0 IDLE, 1 GUARDING
         Field("weapon_id", FieldKind.U8),
         Field("reserved", FieldKind.U16),
+    ),
+    PacketType.DEVICE_LOG: (
+        Field("device_timestamp_ms", FieldKind.U32),  # the source board's own clock
+        Field("source", FieldKind.U8),  # 0 hub, 1 torso, 2 left wrist
+        Field("part", FieldKind.U8),  # DEVICE_LOG_MORE | piece index
+        Field("line_seq", FieldKind.U16),
+        Field("text", FieldKind.BYTES, DEVICE_LOG_TEXT_LEN),  # ASCII, NUL-padded
     ),
     PacketType.SEGMENT_CHUNK: (
         Field("segment_id", FieldKind.U32),

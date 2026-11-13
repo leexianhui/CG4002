@@ -1,6 +1,7 @@
 #ifdef CG_HARDWARE_GATEWAY
 #include "gateway_boundary.h"
 #include "gateway_link.h"
+#include "gateway_log.h"
 #endif
 // ============================================================================
 // TORSO NODE. Follows the phase the right-wrist hub broadcasts in HubStatus:
@@ -545,6 +546,9 @@ void debugLog(String msg)
 {
     if (!DEBUG_LOG)
         return;
+#ifdef CG_HARDWARE_GATEWAY
+    gatewayLog(msg.c_str()); // -> relay -> hardware/game/ CSVs (gateway_log.h)
+#endif
     debugUdp.beginPacket(broadcastIP, DEBUG_PORT);
     debugUdp.print("[torso] " + msg);
     debugUdp.endPacket();

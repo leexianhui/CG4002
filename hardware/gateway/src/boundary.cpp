@@ -5,6 +5,7 @@
 #include <freertos/queue.h>
 #include "gateway_boundary.h"
 #include "gateway_link.h"
+#include "gateway_log.h"
 #include "gateway_samples.h"
 #include "gateway_segments.h"
 
@@ -77,6 +78,7 @@ void gatewayBegin(uint8_t player, uint8_t role) {
     // Node sockets use an ephemeral source port; only the hub receives on samplePort.
     configASSERT(udp.begin(role == 0 ? samplePort : 0));
 #if CG_GATEWAY_ROLE == 0
+    gatewayLogBegin();
     feedbackQueue = xQueueCreate(16, sizeof(cg_payload_combat_feedback_t));
     configASSERT(feedbackQueue);
     configASSERT(xTaskCreate(transportTask, "relay-ble", 8192, nullptr, 1, nullptr) == pdPASS);
@@ -176,7 +178,7 @@ bool gatewayQueueFeedback(const uint8_t *payload) {
         portENTER_CRITICAL(&sampleMux);
         weaponUnlockPending = true;
         portEXIT_CRITICAL(&sampleMux);
-        Serial.printf("[setup] match reset: weapon unlocked by the engine\n");
+        gatewayLogf("[setup] match reset: weapon unlocked by the engine\n");
         return true;
     }
     if (f.feedback_code == 5 || f.feedback_code == 6) {
@@ -186,7 +188,7 @@ bool gatewayQueueFeedback(const uint8_t *payload) {
         weaponSelectAllowed = allowed;
         portEXIT_CRITICAL(&sampleMux);
         if (changed)
-            Serial.printf("[setup] weapon selection %s\n", allowed ? "ALLOWED (phone calibrated)"
+            gatewayLogf("[setup] weapon selection %s\n", allowed ? "ALLOWED (phone calibrated)"
                                                                   : "BLOCKED (phone not calibrated)");
         return true;
     }
@@ -274,7 +276,7 @@ bool gatewaySegmentEnd() {
         slot = 0;
         for (int i = 1; i < GATEWAY_SEGMENT_SLOTS; i++)
             if ((int32_t)(pending[i].end_ms - pending[slot].end_ms) < 0) slot = i;
-        Serial.printf("[segment] too many waiting, dropped seg=%lu\n", (unsigned long)pending[slot].id);
+        gatewayLogf("[segment] too many waiting, dropped seg=%lu\n", (unsigned long)pending[slot].id);
     }
     pending[slot] = {true, recordId, gatewayWindowEndMs(recordFirst, recordLast, now, kWindowMaxWaitMs),
                      recordWeapon};
@@ -302,7 +304,7 @@ void buildReadyWindows(uint32_t now) {
         uint32_t lost = segments.last_dropped_id;
         portEXIT_CRITICAL(&segmentMux);
         if (lostOne)
-            Serial.printf("[segment] queue full, dropped unsent seg=%lu\n", (unsigned long)lost);
+            gatewayLogf("[segment] queue full, dropped unsent seg=%lu\n", (unsigned long)lost);
         if (!seg) continue;
         // FILLING: the BLE task never reads this slot, so it is filled outside the lock.
         uint32_t endGrid = GatewayHistory::gridOf(p.end_ms);
@@ -312,7 +314,7 @@ void buildReadyWindows(uint32_t now) {
         portENTER_CRITICAL(&segmentMux);
         segments.end();
         portEXIT_CRITICAL(&segmentMux);
-        Serial.printf("[segment] window seg=%lu right=%d left=%d torso=%d\n", (unsigned long)p.id,
+        gatewayLogf("[segment] window seg=%lu right=%d left=%d torso=%d\n", (unsigned long)p.id,
                       !!(seg->valid & CG_SEGMENT_FLAG_DOM_VALID), !!(seg->valid & CG_SEGMENT_FLAG_OFF_VALID),
                       !!(seg->valid & CG_SEGMENT_FLAG_TORSO_VALID));
     }
@@ -327,7 +329,7 @@ const GatewaySegment *gatewaySegmentTake(uint32_t now, uint32_t max_age_ms, int 
     uint32_t lost = segments.last_dropped_id;
     portEXIT_CRITICAL(&segmentMux);
     if (lostOne)
-        Serial.printf("[segment] dropped stale unsent seg=%lu\n", (unsigned long)lost);
+        gatewayLogf("[segment] dropped stale unsent seg=%lu\n", (unsigned long)lost);
     return slot < 0 ? nullptr : &segments.slots[slot];
 }
 void gatewaySegmentDone(int slot) {

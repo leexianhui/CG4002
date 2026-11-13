@@ -106,6 +106,19 @@
       "wire_frame_hex": "c901130d00011800c7dd771609abe1dc28dfe643225e8cd83406059d47327ca1b90d"
     },
     {
+      "name": "DEVICE_LOG",
+      "packet_type": 20,
+      "session_id": 3405691582,
+      "player_id": 1,
+      "direction": 0,
+      "seq": 17,
+      "ext_seq": 17,
+      "plaintext_hex": "d42504000281070067756172645f7761697420656c3d33352e3220617a3d2d38302e3120646973743d362e3320696e736964653d31200000",
+      "nonce_hex": "bebafeca0100110000000000",
+      "aad_hex": "c901141100014800",
+      "wire_frame_hex": "c901141100014800afe8375674696a9bd3e08007edb567b40636bfca6f5b6d92f442d887c8500291fc176cedb8b27b03113e60520fe6619cdefadeed51fae43528652721540f79476b0f09c2529f2bcc38f1"
+    },
+    {
       "name": "HEARTBEAT",
       "packet_type": 32,
       "session_id": 3405691582,

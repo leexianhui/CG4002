@@ -14,7 +14,12 @@
 // tag instead; the player is implicit because a hub only connects to its own player's nodes.
 #define GATEWAY_LINK_PORT_BASE 4210
 #define GATEWAY_LINK_TAGS 6
-#define GATEWAY_LINK_MAX_PACKET 40 // largest is the 30-byte continuous-mode GatewaySample
+// Largest is the 56-byte DEVICE_LOG piece (gateway_log.h); +1 tag byte must fit the nodes' 64-byte
+// ATT MTU (61-byte notifications).
+#define GATEWAY_LINK_MAX_PACKET 60
+// Debug-log pieces, node -> hub. Reuses DEBUG_PORT's tag, which GatewayLinkUdp itself still drops:
+// only gatewayLog() sends on it, in the DEVICE_LOG piece format.
+#define GATEWAY_LINK_LOG_TAG 1
 
 inline int gatewayLinkTag(uint16_t port) {
     return port < GATEWAY_LINK_PORT_BASE ? -1 : (port - GATEWAY_LINK_PORT_BASE) % 10;
