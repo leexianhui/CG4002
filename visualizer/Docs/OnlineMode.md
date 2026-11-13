@@ -355,8 +355,10 @@ Match tuning (HP, parry window, guard arc) lives in `shared/config/match.yaml`. 
     the headset): the same image twice (mono, since the
     phone has one camera), one per lens, each **40% of the screen wide and 90% tall** (80% wide in
     all), side by side with **no gap in the middle**; the black border is at the outer edges.
-  - Each eye is about as wide as it is tall, so it shows a narrower slice of the camera picture than
-    full view. (Keeping the screen's shape at 40% width would make each eye only 40% tall.)
+  - Each eye's box is about as wide as it is tall, but the camera picture is 4:3. Filling the box
+    would crop the picture's sides (~47° across), so each eye shows the **whole picture** instead
+    (~63°, the camera's full width): it fills the box's width, with thin black strips above and
+    below. The HUD is laid out inside the picture.
   - It goes back to full view when the arena is picked up again (MOVE DUMMY). It never splits in
     demo mode, which needs the touchscreen.
   - **Double-tap anywhere** to switch between split and full view by hand (e.g. to reach RESET). The

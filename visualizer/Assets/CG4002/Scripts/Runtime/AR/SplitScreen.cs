@@ -3,6 +3,7 @@ using CG4002.Offline;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
+using UnityEngine.XR.ARFoundation;
 
 namespace CG4002.AR
 {
@@ -19,6 +20,12 @@ namespace CG4002.AR
     /// the whole picture. An overlay then shows that texture twice on black, side by side and touching
     /// in the middle, with the black border at the outer edges. Mono: the phone has one camera, so both eyes see the same
     /// image. BorderedView still sets the camera picture's crop and projection for the eye's shape.
+    ///
+    /// Whole picture: each eye is nearly square, but the camera's picture is 4:3, so
+    /// filling the eye would crop the picture's sides (about 47 degrees across instead of the
+    /// camera's ~63). Instead the eye texture takes the picture's own shape and sits centred in the
+    /// eye's box, with thin black strips above and below: the whole camera width, nothing cropped.
+    /// The HUD is laid out inside the picture.
     /// </summary>
     [RequireComponent(typeof(Camera))]
     public class SplitScreen : MonoBehaviour
@@ -37,6 +44,7 @@ namespace CG4002.AR
         public static event Action<bool> Changed;
 
         Camera arCamera;
+        ARCameraManager cameraManager;
         RenderTexture eye;
         GameObject output;
         RawImage leftEye, rightEye;
@@ -58,6 +66,7 @@ namespace CG4002.AR
         void Awake()
         {
             arCamera = GetComponent<Camera>();
+            cameraManager = GetComponent<ARCameraManager>();
             BuildOutput();
         }
 
@@ -129,17 +138,34 @@ namespace CG4002.AR
             Changed?.Invoke(active);
         }
 
-        /// <summary>The eye texture matches the screen (new on rotation or resize).</summary>
+        /// <summary>
+        /// The eye texture: the largest rectangle of the camera picture's shape inside the eye's box,
+        /// centred in it (the whole box until the camera reports its resolution). New on rotation or resize.
+        /// </summary>
         void FitEyeTexture()
         {
-            int width = Mathf.Max(16, Mathf.RoundToInt(Screen.width * eyeSize.x));
-            int height = Mathf.Max(16, Mathf.RoundToInt(Screen.height * eyeSize.y));
-            if (eye == null || eye.width != width || eye.height != height)
+            float boxWidth = Screen.width * eyeSize.x, boxHeight = Screen.height * eyeSize.y;
+            float shown = 1f;  // the share of the box's height the picture fills
+            float width = boxWidth, height = boxHeight;
+            if (PictureAspect() is float aspect)
+            {
+                if (boxWidth / boxHeight < aspect)
+                    height = boxWidth / aspect;
+                else
+                    width = boxHeight * aspect;
+                shown = height / boxHeight;
+            }
+            PlaceEye(leftEye, 0.5f - eyeSize.x / 2f, width / boxWidth, shown);
+            PlaceEye(rightEye, 0.5f + eyeSize.x / 2f, width / boxWidth, shown);
+
+            int pixelsWide = Mathf.Max(16, Mathf.RoundToInt(width));
+            int pixelsHigh = Mathf.Max(16, Mathf.RoundToInt(height));
+            if (eye == null || eye.width != pixelsWide || eye.height != pixelsHigh)
             {
                 arCamera.targetTexture = null;
                 if (eye != null)
                     eye.Release();
-                eye = new RenderTexture(width, height, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Default)
+                eye = new RenderTexture(pixelsWide, pixelsHigh, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Default)
                 {
                     name = "Split Screen Eye",
                 };
@@ -176,6 +202,29 @@ namespace CG4002.AR
         // The two eyes meet at the middle of the screen, with no gap; the border is at the outer edges.
         Vector2 EyeMin(float centre) => new(centre - eyeSize.x / 2f, 0.5f - eyeSize.y / 2f);
         Vector2 EyeMax(float centre) => new(centre + eyeSize.x / 2f, 0.5f + eyeSize.y / 2f);
+
+        /// <summary>An eye's image, centred in its box, filling the given shares of the box's width and height.</summary>
+        void PlaceEye(RawImage image, float centre, float widthShare, float heightShare)
+        {
+            var rect = image.rectTransform;
+            Vector2 half = new(eyeSize.x * widthShare / 2f, eyeSize.y * heightShare / 2f);
+            rect.anchorMin = new Vector2(centre, 0.5f) - half;
+            rect.anchorMax = new Vector2(centre, 0.5f) + half;
+        }
+
+        /// <summary>
+        /// The camera picture's width over height as shown on this screen (4:3 on iPhone, landscape),
+        /// or null when the camera hasn't reported its resolution yet (the eye then fills its box).
+        /// </summary>
+        float? PictureAspect()
+        {
+            if (cameraManager == null || !cameraManager.TryGetIntrinsics(out var intrinsics) ||
+                intrinsics.resolution.x <= 0 || intrinsics.resolution.y <= 0)
+                return null;
+            float aspect = (float)intrinsics.resolution.x / intrinsics.resolution.y;  // the sensor's own, landscape
+            bool portrait = Screen.orientation is ScreenOrientation.Portrait or ScreenOrientation.PortraitUpsideDown;
+            return portrait ? 1f / aspect : aspect;
+        }
 
         static T NewImage<T>(Transform parent, string name, Vector2 anchorMin, Vector2 anchorMax) where T : Graphic
         {
