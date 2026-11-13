@@ -260,6 +260,4 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 652c1f8a186424113b43b0306880445c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: CG4002.Runtime::CG4002.Models.ShieldView
-  glowRenderers:
-  - {fileID: 202131499646912441}
   blockFace: {fileID: 4629018262624876260}

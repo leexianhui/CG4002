@@ -36,7 +36,6 @@ namespace CG4002.Showcase
 
         void Start()
         {
-            avatar.ChargeStarted += (_, slot) => Log($"event  ChargeStart ({slot})");
             avatar.StrikeOpened += (_, slot) => Log($"event  StrikeOpen  ({slot})");
             avatar.StrikeClosed += (_, slot) => Log($"event  StrikeClose ({slot})");
 
@@ -59,7 +58,6 @@ namespace CG4002.Showcase
             if (keyboard.digit3Key.wasPressedThisFrame) Equip(2);
 
             if (keyboard.lKey.wasPressedThisFrame) PerformNextMove();
-            if (keyboard.cKey.wasPressedThisFrame) PerformFirstMoveIn(AttackSlot.Charged);
             if (keyboard.gKey.wasPressedThisFrame) ToggleGuard();
             if (keyboard.hKey.wasPressedThisFrame) Hit();
 
@@ -104,18 +102,6 @@ namespace CG4002.Showcase
             Perform(Current.moves[moveIndex].action);
         }
 
-        void PerformFirstMoveIn(AttackSlot slot)
-        {
-            foreach (var move in Current.moves)
-            {
-                if (move.slot == slot)
-                {
-                    Perform(move.action);
-                    return;
-                }
-            }
-        }
-
         void ToggleGuard()
         {
             avatar.SetGuard(!avatar.IsGuarding);
@@ -147,14 +133,13 @@ namespace CG4002.Showcase
                 return;
             autoTimer = 0f;
 
-            switch (autoStep % 6)
+            switch (autoStep % 5)
             {
                 case 0: PerformNextMove(); break;
-                case 1: PerformFirstMoveIn(AttackSlot.Charged); break;
-                case 2: ToggleGuard(); break;
-                case 3: Hit(); break;
-                case 4: ToggleGuard(); break;
-                case 5: Equip((weaponIndex + 1) % catalog.weapons.Length); break;
+                case 1: ToggleGuard(); break;
+                case 2: Hit(); break;
+                case 3: ToggleGuard(); break;
+                case 4: Equip((weaponIndex + 1) % catalog.weapons.Length); break;
             }
             autoStep++;
         }
@@ -185,7 +170,7 @@ namespace CG4002.Showcase
                 $"<b>{Current.displayName}</b>   guard: {(avatar.IsGuarding ? "<color=#7CFC00>ON</color>" : "off")}" +
                 $"   speed: {(slowMotion ? "0.25x" : "1x")}   auto: {(autoDemo ? "on" : "off")}\n" +
                 $"selected move: <b>{move.action}</b> -> {move.slot}\n\n" +
-                "1/2/3 weapon   L next move   C charged   G guard   H hit\n" +
+                "1/2/3 weapon   L next move   G guard   H hit\n" +
                 "<-/-> pick move   Space perform   T slow-mo   P auto demo\n" +
                 "right-drag orbit   scroll zoom\n\n" +
                 string.Join("\n", log);

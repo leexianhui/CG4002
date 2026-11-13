@@ -40,7 +40,6 @@ namespace CG4002.Tests
 
             events.Clear();
             avatar.AttackStarted += (_, slot) => events.Add($"AttackStarted:{slot}");
-            avatar.ChargeStarted += (_, _) => events.Add("ChargeStart");
             avatar.StrikeOpened += (_, _) => events.Add("StrikeOpen");
             avatar.StrikeClosed += (_, _) => events.Add("StrikeClose");
             yield return null;
@@ -55,7 +54,7 @@ namespace CG4002.Tests
         }
 
         static IEnumerable<WeaponType> AllWeapons => new[] { WeaponType.SwordAndShield, WeaponType.Spear, WeaponType.Mace };
-        static IEnumerable<AttackSlot> UnchargedSlots => AvatarContract.AttackSlots.Where(slot => slot != AttackSlot.Charged);
+        static IEnumerable<AttackSlot> AllSlots => AvatarContract.AttackSlots;
 
         [UnityTest]
         public IEnumerator Equip_AttachesModelsToSocketsAndSwapsAnimations([ValueSource(nameof(AllWeapons))] WeaponType weapon)
@@ -86,7 +85,7 @@ namespace CG4002.Tests
 
         [UnityTest]
         public IEnumerator Attack_OpensAndClosesStrikeWindow(
-            [ValueSource(nameof(AllWeapons))] WeaponType weapon, [ValueSource(nameof(UnchargedSlots))] AttackSlot slot)
+            [ValueSource(nameof(AllWeapons))] WeaponType weapon, [ValueSource(nameof(AllSlots))] AttackSlot slot)
         {
             yield return EquipAndSettle(weapon);
             avatar.PlayAttack(slot);
@@ -96,17 +95,7 @@ namespace CG4002.Tests
         }
 
         [UnityTest]
-        public IEnumerator ChargedAttack_FiresChargeThenStrikeWindow([ValueSource(nameof(AllWeapons))] WeaponType weapon)
-        {
-            yield return EquipAndSettle(weapon);
-            avatar.PlayAttack(AttackSlot.Charged);
-            yield return new WaitForSeconds(1.3f);
-
-            CollectionAssert.AreEqual(new[] { "AttackStarted:Charged", "ChargeStart", "StrikeOpen", "StrikeClose" }, events);
-        }
-
-        [UnityTest]
-        public IEnumerator Attack_ReturnsToIdleAfterClipEnds([Values(AttackSlot.Charged, AttackSlot.Spin)] AttackSlot slot)
+        public IEnumerator Attack_ReturnsToIdleAfterClipEnds([Values(AttackSlot.Vertical, AttackSlot.Spin)] AttackSlot slot)
         {
             yield return EquipAndSettle(WeaponType.SwordAndShield);
             avatar.PlayAttack(slot);
@@ -126,11 +115,11 @@ namespace CG4002.Tests
             avatar.PlayAttack(AttackSlot.Horizontal);
             yield return WaitFor(() => events.Contains("StrikeOpen"), 1f);
 
-            avatar.PlayAttack(AttackSlot.Charged);
+            avatar.PlayAttack(AttackSlot.Vertical);
             // The open strike must be closed before the new attack starts, so the trail never
             // carries over into the next swing's wind-up.
             int close = events.IndexOf("StrikeClose");
-            int second = events.IndexOf("AttackStarted:Charged");
+            int second = events.IndexOf("AttackStarted:Vertical");
             Assert.That(close, Is.GreaterThanOrEqualTo(0));
             Assert.That(close, Is.LessThan(second));
         }
@@ -214,7 +203,6 @@ namespace CG4002.Tests
                 [ActionType.Thrust] = AttackSlot.Thrust,
                 [ActionType.SpinAttack] = AttackSlot.Spin,
                 [ActionType.Uppercut] = AttackSlot.Uppercut,
-                [weapon == WeaponType.Spear ? ActionType.ChargedThrust : ActionType.ChargedAttack] = AttackSlot.Charged,
             };
             foreach (var (action, slot) in expected)
             {

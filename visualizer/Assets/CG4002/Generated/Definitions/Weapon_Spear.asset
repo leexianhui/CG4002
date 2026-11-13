@@ -32,7 +32,3 @@ MonoBehaviour:
     slot: 5
   - action: 11
     slot: 6
-  - action: 7
-    slot: 1
-  - action: 8
-    slot: 0

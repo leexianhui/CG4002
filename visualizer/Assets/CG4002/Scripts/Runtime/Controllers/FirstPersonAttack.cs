@@ -30,7 +30,7 @@ namespace CG4002.Controllers
         [SerializeField] Camera arCamera;
         [Tooltip("Optional. Its sword is hidden while the animation plays.")]
         [SerializeField] PropTracker prop;
-        [Tooltip("Optional. Gives the first-person strikes slash trails and the charge glow.")]
+        [Tooltip("Optional. Gives the first-person strikes slash trails.")]
         [SerializeField] CombatFxController fx;
         [Tooltip("Optional. Shows the recognised move's name.")]
         [SerializeField] Text moveLabel;

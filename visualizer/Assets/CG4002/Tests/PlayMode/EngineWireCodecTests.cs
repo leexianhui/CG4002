@@ -15,8 +15,8 @@ namespace CG4002.Tests
             ""phase"":""PAUSED"",""winnerId"":null,""reason"":""NOT_READY"",""players"":[
             {""playerId"":1,""hp"":90,""maxHp"":100,""weapon"":""SPEAR"",""guardState"":""IDLE"",
              ""connected"":true,""ready"":true,""position"":{""x"":2,""y"":3,""heading"":0},
-             ""cooldownAction"":""CHARGED_THRUST"",""cooldowns"":[
-               {""action"":""CHARGED_THRUST"",""remainingMs"":500,""totalMs"":3200}]},
+             ""cooldownAction"":""THRUST"",""cooldowns"":[
+               {""action"":""THRUST"",""remainingMs"":500,""totalMs"":3200}]},
             {""playerId"":2,""hp"":80,""maxHp"":100,""weapon"":null,""guardState"":""GUARDING"",
              ""connected"":true,""ready"":false,""position"":null,""cooldownAction"":null,""cooldowns"":[]}] }";
 
@@ -38,8 +38,8 @@ namespace CG4002.Tests
         public void EnumsUseNamesInsteadOfIncompatibleIntegerValues()
         {
             Assert.That(EngineWireCodec.Weapon("SPEAR"), Is.EqualTo(WeaponType.Spear));
-            Assert.That(EngineWireCodec.Action("CHARGED_THRUST"), Is.EqualTo(ActionType.ChargedThrust));
-            Assert.That((int)EngineWireCodec.Action("CHARGED_THRUST"), Is.EqualTo(7));
+            Assert.That(EngineWireCodec.Action("THRUST"), Is.EqualTo(ActionType.Thrust));
+            Assert.That((int)EngineWireCodec.Action("SPIN_ATTACK"), Is.EqualTo(6), "Unity's value, not the wire's");
             Assert.That(EngineWireCodec.Action("SPIN_ATTACK"), Is.EqualTo(ActionType.SpinAttack));
             Assert.That(EngineWireCodec.Action("UPPERCUT"), Is.EqualTo(ActionType.Uppercut));
             Assert.Throws<FormatException>(() => EngineWireCodec.Action("SOMETHING_NEW"));
@@ -73,7 +73,7 @@ namespace CG4002.Tests
             Assert.That(cooldown.seconds, Is.EqualTo(.5f));
             Assert.That(cooldown.totalSeconds, Is.EqualTo(3.2f));
             Assert.That(cooldown.paused, Is.True);
-            Assert.That(cooldown.entries.Single().action, Is.EqualTo(ActionType.ChargedThrust));
+            Assert.That(cooldown.entries.Single().action, Is.EqualTo(ActionType.Thrust));
             Assert.That(output.OfType<MatchStateMessage>().Single().phase, Is.EqualTo(MatchPhase.Paused));
         }
 

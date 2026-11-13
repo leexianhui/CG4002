@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using CG4002.Combat;
 using CG4002.Models;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 namespace CG4002.FX
 {
@@ -32,13 +33,7 @@ namespace CG4002.FX
         [SerializeField] ParticleSystem impactBurstPrefab;
 
         [Header("Slash trails")]
-        [SerializeField] TrailStyle lightTrail = new() { lifetime = 0.12f, intensity = 1.2f };
-        [SerializeField] TrailStyle chargedTrail = new() { lifetime = 0.28f, intensity = 2.2f };
-
-        [Header("Charge glow")]
-        [SerializeField] float chargeRampSeconds = 0.3f;
-        [SerializeField] float chargePeakIntensity = 4f;
-        [SerializeField] float glowFadeSeconds = 0.35f;
+        [SerializeField, FormerlySerializedAs("lightTrail")] TrailStyle slashTrail = new() { lifetime = 0.12f, intensity = 1.2f };
 
         [Header("Hit flash")]
         [SerializeField] float hitFlashSeconds = 0.18f;
@@ -47,7 +42,6 @@ namespace CG4002.FX
         class AvatarFx
         {
             public BladeTrail trail;
-            public Coroutine glow;
             public Coroutine flash;
         }
 
@@ -78,8 +72,6 @@ namespace CG4002.FX
             active[avatar] = new AvatarFx { trail = trailObject.GetComponent<BladeTrail>() };
 
             avatar.WeaponEquipped += OnWeaponEquipped;
-            avatar.AttackStarted += OnAttackStarted;
-            avatar.ChargeStarted += OnChargeStarted;
             avatar.StrikeOpened += OnStrikeOpened;
             avatar.StrikeClosed += OnStrikeClosed;
         }
@@ -90,8 +82,6 @@ namespace CG4002.FX
                 return;
 
             avatar.WeaponEquipped -= OnWeaponEquipped;
-            avatar.AttackStarted -= OnAttackStarted;
-            avatar.ChargeStarted -= OnChargeStarted;
             avatar.StrikeOpened -= OnStrikeOpened;
             avatar.StrikeClosed -= OnStrikeClosed;
 
@@ -125,113 +115,20 @@ namespace CG4002.FX
 
         // ---- AvatarView event handlers ---------------------------------------------------
 
-        void OnWeaponEquipped(AvatarView avatar)
-        {
-            var fx = active[avatar];
-            fx.trail.Clear();
-            StopGlow(avatar, fx);
-        }
-
-        void OnAttackStarted(AvatarView avatar, AttackSlot slot)
-        {
-            // A new attack interrupts any glow left over from the previous one.
-            StopGlow(avatar, active[avatar]);
-        }
-
-        void OnChargeStarted(AvatarView avatar, AttackSlot slot)
-        {
-            var fx = active[avatar];
-            StopGlow(avatar, fx);
-            fx.glow = StartCoroutine(ChargeGlow(avatar));
-        }
+        void OnWeaponEquipped(AvatarView avatar) => active[avatar].trail.Clear();
 
         void OnStrikeOpened(AvatarView avatar, AttackSlot slot)
         {
             var weapon = avatar.CurrentWeapon;
             if (weapon == null)
                 return;
-
-            var style = slot == AttackSlot.Charged ? chargedTrail : lightTrail;
-            Color accent = AccentOf(avatar);
-            active[avatar].trail.Begin(weapon.trailBase, weapon.trailTip, accent * style.intensity, style.lifetime);
-
-            if (slot == AttackSlot.Charged)
-                SpawnBurst(weapon.strikePoint, accent);
+            active[avatar].trail.Begin(weapon.trailBase, weapon.trailTip,
+                AccentOf(avatar) * slashTrail.intensity, slashTrail.lifetime);
         }
 
-        void OnStrikeClosed(AvatarView avatar, AttackSlot slot)
-        {
-            var fx = active[avatar];
-            fx.trail.End();
-            if (fx.glow != null)
-            {
-                StopCoroutine(fx.glow);
-                fx.glow = StartCoroutine(FadeGlow(avatar, chargePeakIntensity));
-            }
-        }
+        void OnStrikeClosed(AvatarView avatar, AttackSlot slot) => active[avatar].trail.End();
 
         // ---- Effects -----------------------------------------------------------------------
-
-        IEnumerator ChargeGlow(AvatarView avatar)
-        {
-            float t = 0f;
-            while (true)
-            {
-                t += Time.deltaTime;
-                float ramp = Mathf.Clamp01(t / chargeRampSeconds);
-                float flicker = 1f + 0.15f * Mathf.Sin(t * 60f) * ramp;
-                SetGlow(avatar, Mathf.Lerp(1f, chargePeakIntensity, ramp * ramp) * flicker);
-
-                // Safety net: if StrikeClose never arrives, don't glow forever.
-                if (t > chargeRampSeconds + 2f)
-                    break;
-                yield return null;
-            }
-            yield return FadeGlow(avatar, chargePeakIntensity);
-        }
-
-        IEnumerator FadeGlow(AvatarView avatar, float from)
-        {
-            for (float t = 0f; t < glowFadeSeconds; t += Time.deltaTime)
-            {
-                SetGlow(avatar, Mathf.Lerp(from, 1f, t / glowFadeSeconds));
-                yield return null;
-            }
-            ClearGlow(avatar);
-            active[avatar].glow = null;
-        }
-
-        void StopGlow(AvatarView avatar, AvatarFx fx)
-        {
-            if (fx.glow != null)
-                StopCoroutine(fx.glow);
-            fx.glow = null;
-            ClearGlow(avatar);
-        }
-
-        void SetGlow(AvatarView avatar, float intensity)
-        {
-            block.Clear();
-            block.SetColor(EmissionId, AccentOf(avatar) * intensity);
-            ForEachGlowRenderer(avatar, r => r.SetPropertyBlock(block));
-        }
-
-        void ClearGlow(AvatarView avatar) => ForEachGlowRenderer(avatar, r => r.SetPropertyBlock(null));
-
-        static void ForEachGlowRenderer(AvatarView avatar, System.Action<Renderer> action)
-        {
-            HeldItemView[] items = { avatar.CurrentWeapon, avatar.CurrentShield };
-            foreach (var item in items)
-            {
-                if (item == null || item.glowRenderers == null)
-                    continue;
-                foreach (var r in item.glowRenderers)
-                {
-                    if (r != null)
-                        action(r);
-                }
-            }
-        }
 
         IEnumerator HitFlash(AvatarView avatar)
         {

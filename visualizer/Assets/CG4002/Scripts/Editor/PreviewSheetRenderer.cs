@@ -16,9 +16,9 @@ using C = CG4002.Models.AvatarContract;
 namespace CG4002.EditorTools
 {
     /// <summary>
-    /// Renders contact sheets of each weapon's key poses (with trails and charge glow) without
-    /// entering Play mode. Useful for checking a pose change, or for report screenshots.
-    /// Each sheet: columns Idle, Guard, Horizontal wind-up, Horizontal strike, Charged hold, Charged strike;
+    /// Renders contact sheets of each weapon's key poses (with trails) without entering Play mode.
+    /// Useful for checking a pose change, or for report screenshots.
+    /// Each sheet: columns Idle, Guard, Horizontal wind-up, Horizontal strike;
     /// top row three-quarter front view, bottom row side view. A second sheet per weapon shows
     /// every attack as a film strip: one row per attack, from start to the end of its strike.
     /// </summary>
@@ -27,7 +27,6 @@ namespace CG4002.EditorTools
         const int CellSize = 420;
         const int StripCell = 260;
         const int StripFrames = 7;
-        static readonly int EmissionId = Shader.PropertyToID("_EmissionColor");
 
         [MenuItem("CG4002/Render Preview Sheets")]
         public static void RenderFromMenu()
@@ -85,8 +84,6 @@ namespace CG4002.EditorTools
                 avatar.Equip(definition);
                 var clips = ClipsByState(definition.animations);
                 var horizontal = clips[C.AttackState(AttackSlot.Horizontal)];
-                var charged = clips[C.AttackState(AttackSlot.Charged)];
-                var sheet = new Texture2D(CellSize * 6, CellSize * 2, TextureFormat.RGB24, false);
 
                 var poses = new List<Action>
                 {
@@ -94,14 +91,12 @@ namespace CG4002.EditorTools
                     () => { Pose(avatarObject, clips[C.IdleState], 0f); Pose(avatarObject, clips[C.GuardState], 0f); },
                     () => Pose(avatarObject, horizontal, EventTime(horizontal, C.StrikeOpenEvent) - 0.02f),
                     () => Strike(avatarObject, avatar, trail, horizontal, 0.12f, 1.2f),
-                    () => { Pose(avatarObject, charged, EventTime(charged, C.StrikeOpenEvent) - 0.03f); SetGlow(avatar, 4f); },
-                    () => { SetGlow(avatar, 4f); Strike(avatarObject, avatar, trail, charged, 0.28f, 2.2f); },
                 };
+                var sheet = new Texture2D(CellSize * poses.Count, CellSize * 2, TextureFormat.RGB24, false);
 
                 for (int column = 0; column < poses.Count; column++)
                 {
                     trail.Clear();
-                    SetGlow(avatar, 1f);
                     poses[column]();
                     Capture(camera, sheet, column, 1, yaw: 205f);
                     Capture(camera, sheet, column, 0, yaw: 270f);
@@ -109,7 +104,6 @@ namespace CG4002.EditorTools
 
                 Save(sheet, Path.Combine(folder, $"Preview_{definition.type}.png"));
                 trail.Clear();
-                SetGlow(avatar, 1f);
                 RenderAttackStrips(camera, avatarObject, clips, Path.Combine(folder, $"Preview_{definition.type}_Attacks.png"));
             }
 
@@ -198,15 +192,6 @@ namespace CG4002.EditorTools
             }
             Pose(avatarObject, clip, now);
             trail.Rebuild(now);
-        }
-
-        static void SetGlow(AvatarView avatar, float intensity)
-        {
-            var block = new MaterialPropertyBlock();
-            block.SetColor(EmissionId, avatar.CurrentDefinition.accentColor * intensity);
-            HeldItemView[] items = { avatar.CurrentWeapon, avatar.CurrentShield };
-            foreach (var renderer in items.Where(i => i != null).SelectMany(i => i.glowRenderers))
-                renderer.SetPropertyBlock(intensity == 1f ? null : block);
         }
 
         static void Capture(Camera camera, Texture2D sheet, int column, int row, float yaw)

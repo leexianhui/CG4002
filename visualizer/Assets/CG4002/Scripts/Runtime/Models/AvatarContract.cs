@@ -29,7 +29,6 @@ namespace CG4002.Models
         public static readonly AttackSlot[] AttackSlots = (AttackSlot[])Enum.GetValues(typeof(AttackSlot));
 
         // Animation Event function names, received by AvatarView
-        public const string ChargeStartEvent = "ChargeStart";
         public const string StrikeOpenEvent = "StrikeOpen";
         public const string StrikeCloseEvent = "StrikeClose";
     }

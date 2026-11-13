@@ -13,7 +13,7 @@ namespace CG4002.EditorTools
         const string MeshDir = AssetIO.Root + "/Meshes";
         const string PrefabDir = AssetIO.Root + "/Prefabs";
 
-        // HDR accent colours. Emission at 1x this is the resting glow; the FX layer multiplies it.
+        // HDR accent colours: the weapons' glowing accents, slash trails and selection holograms.
         public static readonly Color SwordAccent = new Color(0.25f, 0.85f, 1f) * 1.5f;
         public static readonly Color SpearAccent = new Color(1f, 0.6f, 0.15f) * 1.5f;
         public static readonly Color MaceAccent = new Color(0.75f, 0.35f, 1f) * 1.5f;
@@ -57,8 +57,8 @@ namespace CG4002.EditorTools
             material.SetFloat("_Smoothness", smoothness);
             material.SetFloat("_Metallic", metallic);
 
-            // Emission stays enabled on every material, black if unused, so the hit flash
-            // and charge glow can drive it through a MaterialPropertyBlock.
+            // Emission stays enabled on every material, black if unused, so the hit flash can
+            // drive it through a MaterialPropertyBlock.
             material.EnableKeyword("_EMISSION");
             material.SetColor("_EmissionColor", emission ?? Color.black);
             material.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
@@ -103,7 +103,7 @@ namespace CG4002.EditorTools
             var glow = new MeshBuilder()
                 .Box(0, new Vector3(0f, 0.45f, 0f), new Vector3(0.01f, 0.58f, 0.024f))
                 .Ico(0, new Vector3(0f, 0.105f, 0f), 0.024f);
-            view.glowRenderers = new[] { AddMesh(root, "Glow", glow, "Sword_Glow", m.swordGlow) };
+            AddMesh(root, "Glow", glow, "Sword_Glow", m.swordGlow);
 
             view.trailBase = Anchor(root, "TrailBase", new Vector3(0f, 0.18f, 0f));
             view.trailTip = Anchor(root, "TrailTip", new Vector3(0f, 0.95f, 0f));
@@ -139,7 +139,7 @@ namespace CG4002.EditorTools
                 rim.Box(0, radial * apothem + new Vector3(0f, 0f, 0.008f), new Vector3(edge + 0.012f, 0.022f, 0.026f),
                     Quaternion.Euler(0f, 0f, angle + 90f));
             }
-            view.glowRenderers = new[] { AddMesh(root, "Glow", rim, "Shield_Glow", m.swordGlow) };
+            AddMesh(root, "Glow", rim, "Shield_Glow", m.swordGlow);
 
             view.blockFace = Anchor(root, "BlockFace", new Vector3(0f, 0f, 0.1f));
             return AssetIO.SavePrefab(root, $"{PrefabDir}/Weapon_Shield.prefab").GetComponent<ShieldView>();
@@ -164,7 +164,7 @@ namespace CG4002.EditorTools
                 .Cylinder(0, new Vector3(0f, 0.87f, 0f), Quaternion.identity, 6, 0.026f, 0.026f, 0.025f)
                 .Box(0, new Vector3(0f, 1.03f, 0f), new Vector3(0.008f, 0.14f, 0.03f))
                 .Cylinder(0, new Vector3(0f, -0.1f, 0f), Quaternion.identity, 6, 0.021f, 0.021f, 0.03f);
-            view.glowRenderers = new[] { AddMesh(root, "Glow", glow, "Spear_Glow", m.spearGlow) };
+            AddMesh(root, "Glow", glow, "Spear_Glow", m.spearGlow);
 
             view.trailBase = Anchor(root, "TrailBase", new Vector3(0f, 0.7f, 0f));
             view.trailTip = Anchor(root, "TrailTip", new Vector3(0f, 1.18f, 0f));
@@ -193,7 +193,7 @@ namespace CG4002.EditorTools
             var glow = new MeshBuilder()
                 .Cylinder(0, new Vector3(0f, 0.49f, 0f), Quaternion.identity, 8, 0.07f, 0.07f, 0.04f)
                 .Ico(0, new Vector3(0f, 0.7f, 0f), 0.02f);
-            view.glowRenderers = new[] { AddMesh(root, "Glow", glow, "Mace_Glow", m.maceGlow) };
+            AddMesh(root, "Glow", glow, "Mace_Glow", m.maceGlow);
 
             view.trailBase = Anchor(root, "TrailBase", new Vector3(0f, 0.38f, 0f));
             view.trailTip = Anchor(root, "TrailTip", new Vector3(0f, 0.68f, 0f));

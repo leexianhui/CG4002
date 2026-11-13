@@ -46,7 +46,6 @@ namespace CG4002.Models
 
         public event Action<AvatarView> WeaponEquipped;
         public event Action<AvatarView, AttackSlot> AttackStarted;
-        public event Action<AvatarView, AttackSlot> ChargeStarted;
         public event Action<AvatarView, AttackSlot> StrikeOpened;
         public event Action<AvatarView, AttackSlot> StrikeClosed;
 
@@ -138,13 +137,6 @@ namespace CG4002.Models
         // ---- Animation Event receivers ------------------------------------------------
         // Unity calls these by name from events baked into the clips, and only looks for
         // them on components next to the Animator. The names must match AvatarContract.
-
-        void ChargeStart(AnimationEvent e)
-        {
-            if (e.animatorClipInfo.weight < MinEventWeight)
-                return;
-            ChargeStarted?.Invoke(this, CurrentSlot);
-        }
 
         void StrikeOpen(AnimationEvent e)
         {

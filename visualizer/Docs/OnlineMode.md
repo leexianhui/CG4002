@@ -383,17 +383,16 @@ Match tuning (HP, parry window, guard arc) lives in `shared/config/match.yaml`. 
 | `THRUST` | Thrust | Elbow chambered back, straight lunge forward |
 | `SPIN_ATTACK` | Spin | Wind up to the right, a full turn left with the weapon out, end facing the opponent |
 | `UPPERCUT` | Uppercut | Dip low with the weapon at knee height, rise and drive it up overhead |
-| `CHARGED_ATTACK`, `CHARGED_THRUST`, `SWING` | Charged / Charged / Horizontal | Kept for wire compatibility; no weapon has them since 2026-11-06, so they never arrive |
 
 - **Where the clips come from:** generated from key poses in `Scripts/Editor/AnimationLibrary.cs`.
   - The six classifier attacks are shared motions.
-  - Each weapon authors its own stance, guard and charged attack.
+  - Each weapon authors its own stance and guard.
   - The mace plays the shared motions 10 % slower.
   - **Spear and mace are two-handed.** Their stance sets `Pose.offHandGrip` (spear +0.35 m: left
     hand 35 cm up the shaft; mace −0.13 m: just below the right, with a small gap). In every clip the solver
     (`PoseSolver.OffHandOnWeapon`) finds the right hand and the weapon's direction, then reaches
-    the left hand onto the shaft with two-bone IK. So all six attacks, the charged attack and the
-    idle become two-handed without per-move authoring.
+    the left hand onto the shaft with two-bone IK. So all six attacks and the idle become
+    two-handed without per-move authoring.
   - **Guards.** The sword raises its shield on the left-arm guard layer. Spear and mace hold the
     weapon level across the body at chest height, both hands forward, on a second guard layer
     that moves both arms (`GuardBoth`). `AvatarView` fades in the layer that suits the weapon

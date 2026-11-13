@@ -15,9 +15,7 @@ namespace CG4002.Net
         {
             ["IDLE"] = ActionType.Idle, ["HORIZONTAL_SWING"] = ActionType.HorizontalSwing,
             ["VERTICAL_SWING"] = ActionType.VerticalSwing, ["DIAGONAL_SWING"] = ActionType.DiagonalSwing,
-            ["THRUST"] = ActionType.Thrust, ["CHARGED_ATTACK"] = ActionType.ChargedAttack,
-            ["CHARGED_THRUST"] = ActionType.ChargedThrust, ["SWING"] = ActionType.Swing,
-            // Game moves of every weapon since 2026-11-06 (engine ActionClass wire 8/9).
+            ["THRUST"] = ActionType.Thrust,
             ["SPIN_ATTACK"] = ActionType.SpinAttack, ["UPPERCUT"] = ActionType.Uppercut,
         };
 

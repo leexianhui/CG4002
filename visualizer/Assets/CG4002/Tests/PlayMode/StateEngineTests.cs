@@ -265,7 +265,7 @@ namespace CG4002.Tests
         [UnityTest]
         public IEnumerator MoveTheWeaponLacks_IsRecognisedButNotResolved()
         {
-            Assert.That(rules.Attack(PlayerId.P1, ActionType.ChargedAttack), Is.False, "no weapon has a charged attack since 2026-11-06");
+            Assert.That(rules.Attack(PlayerId.P1, ActionType.OverheadStrike), Is.False, "no weapon has an overhead strike");
             yield return null;
             Assert.That(gameState.Get(PlayerId.P2).health, Is.EqualTo(100));
             Assert.That(rules.Attack(PlayerId.P1, ActionType.SpinAttack), Is.True, "every weapon has the six AI moves");

@@ -13,7 +13,7 @@ namespace CG4002.EditorTools
     /// One base state machine shared by all weapons, plus an override controller per weapon.
     ///
     ///   Layer 0 "Body":  Idle ── Attack & AttackSlot==n ──▶ state named after slot n ──(clip ends)──▶ Idle
-    ///                    one state per AttackSlot (Horizontal, Charged, Vertical, ...);
+    ///                    one state per AttackSlot (Horizontal, Vertical, Diagonal, ...);
     ///                    attack transitions come from Any State, so a new attack interrupts
     ///   Layer 1 "Guard":     masked to the left arm (shield), always playing Guard.
     ///   Layer 2 "GuardBoth": masked to both arms (two-handed weapons), always playing GuardBoth.

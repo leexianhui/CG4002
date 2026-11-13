@@ -170,8 +170,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 619ae5c19f11a4c9b960f18614287086, type: 3}
   m_Name: 
   m_EditorClassIdentifier: CG4002.Runtime::CG4002.Models.WeaponView
-  glowRenderers:
-  - {fileID: 1453679314557816354}
   trailBase: {fileID: 1287198866117147851}
   trailTip: {fileID: 1430145524620318611}
   strikePoint: {fileID: 3963005326290223707}

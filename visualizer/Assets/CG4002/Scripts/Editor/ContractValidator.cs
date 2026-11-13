@@ -12,7 +12,7 @@ namespace CG4002.EditorTools
 {
     /// <summary>
     /// Checks that every model honours its contract. Most contract breaks fail silently at
-    /// runtime (a trail that never appears, a glow on nothing), so they are caught here instead.
+    /// runtime (a trail that never appears, a burst from nowhere), so they are caught here instead.
     /// Run it after replacing any model or clip: CG4002 > Validate Model Contracts.
     /// </summary>
     public static class ContractValidator
@@ -33,7 +33,7 @@ namespace CG4002.EditorTools
 
             var avatarReceivers = typeof(AvatarView).GetMethods(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
                 .Select(m => m.Name).ToHashSet();
-            foreach (var name in new[] { C.ChargeStartEvent, C.StrikeOpenEvent, C.StrikeCloseEvent })
+            foreach (var name in new[] { C.StrikeOpenEvent, C.StrikeCloseEvent })
             {
                 if (!avatarReceivers.Contains(name))
                     errors.Add($"AvatarView has no receiver method for animation event '{name}'.");
@@ -79,15 +79,10 @@ namespace CG4002.EditorTools
                 if (weapon.trailBase == null) errors.Add($"{who}: {weapon.name}.trailBase not assigned.");
                 if (weapon.trailTip == null) errors.Add($"{who}: {weapon.name}.trailTip not assigned.");
                 if (weapon.strikePoint == null) errors.Add($"{who}: {weapon.name}.strikePoint not assigned.");
-                CheckGlow(weapon, who, errors);
             }
 
-            if (definition.offHandPrefab != null)
-            {
-                if (definition.offHandPrefab.blockFace == null)
-                    errors.Add($"{who}: {definition.offHandPrefab.name}.blockFace not assigned.");
-                CheckGlow(definition.offHandPrefab, who, errors);
-            }
+            if (definition.offHandPrefab != null && definition.offHandPrefab.blockFace == null)
+                errors.Add($"{who}: {definition.offHandPrefab.name}.blockFace not assigned.");
 
             if (definition.moves == null || definition.moves.Length == 0)
                 errors.Add($"{who}: move set is empty.");
@@ -95,20 +90,6 @@ namespace CG4002.EditorTools
                 errors.Add($"{who}: an action is bound more than once.");
 
             ValidateAnimations(definition, who, errors);
-        }
-
-        static void CheckGlow(HeldItemView item, string who, List<string> errors)
-        {
-            if (item.glowRenderers == null || item.glowRenderers.Length == 0 || item.glowRenderers.Any(r => r == null))
-            {
-                errors.Add($"{who}: {item.name}.glowRenderers empty or contains a missing renderer.");
-                return;
-            }
-            foreach (var material in item.glowRenderers.SelectMany(r => r.sharedMaterials))
-            {
-                if (material != null && !material.IsKeywordEnabled("_EMISSION"))
-                    errors.Add($"{who}: glow material '{material.name}' has emission disabled, so the charge glow won't show.");
-            }
         }
 
         static void ValidateAnimations(WeaponDefinition definition, string who, List<string> errors)
@@ -147,12 +128,7 @@ namespace CG4002.EditorTools
             }
 
             foreach (var slot in C.AttackSlots)
-            {
-                if (slot == AttackSlot.Charged)
-                    RequireEvents(clipsByState, C.AttackState(slot), who, errors, C.ChargeStartEvent, C.StrikeOpenEvent, C.StrikeCloseEvent);
-                else
-                    RequireEvents(clipsByState, C.AttackState(slot), who, errors, C.StrikeOpenEvent, C.StrikeCloseEvent);
-            }
+                RequireEvents(clipsByState, C.AttackState(slot), who, errors, C.StrikeOpenEvent, C.StrikeCloseEvent);
         }
 
         static void RequireEvents(Dictionary<string, AnimationClip> clipsByState, string state, string who, List<string> errors, params string[] required)

@@ -9,7 +9,7 @@ namespace CG4002.EditorTools
     /// Key poses for every weapon's clips. Directions are in avatar space:
     /// +X is the avatar's right, +Y up, +Z toward the opponent.
     ///
-    /// Each weapon authors its own stance, guard and charged attack. The six classifier attacks
+    /// Each weapon authors its own stance and guard. The six classifier attacks
     /// (horizontal, vertical, diagonal, thrust, spin, uppercut) are shared motions played from
     /// that stance, at the weapon's pace. Spear and mace are two-handed: their stance sets
     /// Pose.offHandGrip, so in every clip the solver puts the left hand on the shaft.
@@ -76,11 +76,10 @@ namespace CG4002.EditorTools
                 .Key(1.2f, settle);
         }
 
-        /// <summary>A weapon's clips: its own idle, guard and charged attack, plus every shared attack.</summary>
-        static WeaponClips Complete(string prefix, Pose stance, float pace, ClipSpec charged, ClipSpec guard)
+        /// <summary>A weapon's clips: its own idle and guard, plus every shared attack.</summary>
+        static WeaponClips Complete(string prefix, Pose stance, float pace, ClipSpec guard)
         {
             var clips = new WeaponClips { idle = Idle($"{prefix}_Idle", stance), guard = guard };
-            clips.attacks[AttackSlot.Charged] = charged;
             clips.attacks[AttackSlot.Horizontal] = Horizontal($"{prefix}_Horizontal", stance, pace);
             clips.attacks[AttackSlot.Vertical] = Vertical($"{prefix}_Vertical", stance, pace);
             clips.attacks[AttackSlot.Diagonal] = Diagonal($"{prefix}_Diagonal", stance, pace);
@@ -305,45 +304,7 @@ namespace CG4002.EditorTools
                 armL = new ArmPose(V(-0.2f, -0.75f, 0.6f), V(0.95f, 0.05f, 0.2f), V(0f, 0.1f, 1f)),
             };
 
-            // Charged: raise overhead while glowing, then slam down.
-            var raise = stance.Copy();
-            raise.hips = V(0f, -0.1f, -0.06f);
-            raise.hipsYaw = 15f;
-            raise.chestYaw = 15f;
-            raise.chestPitch = -12f;
-            raise.footR = V(0.16f, MannequinRig.AnkleHeight, -0.16f);
-            raise.armR = new ArmPose(V(0.3f, 0.95f, -0.1f), V(0.1f, 0.85f, -0.5f), V(0.05f, -0.5f, -0.85f));
-            raise.armL = new ArmPose(V(-0.3f, -0.5f, 0.8f), V(0.4f, 0.5f, 0.75f), V(0f, 0f, 1f));
-
-            var tremble = raise.Copy();
-            tremble.hips += V(0f, -0.01f, 0f);
-            tremble.chestPitch = -14f;
-
-            var slam = stance.Copy();
-            slam.hips = V(0f, -0.16f, 0.12f);
-            slam.hipsYaw = -5f;
-            slam.chestYaw = -10f;
-            slam.chestPitch = 28f;
-            slam.footL = V(-0.14f, MannequinRig.AnkleHeight, 0.32f);
-            slam.armR = new ArmPose(V(0.15f, -0.4f, 0.9f), V(0f, -1f, -0.3f), V(0.05f, -0.3f, 1f));
-            slam.armL = raise.armL;
-
-            var settle = slam.Copy();
-            settle.chestPitch = 32f;
-            settle.armR = new ArmPose(V(0.15f, -0.6f, 0.8f), V(0f, -0.7f, -0.7f), V(0f, -0.7f, 0.7f));
-
-            var charged = new ClipSpec { name = "Sword_Charged" }
-                .Key(0f, stance)
-                .Key(0.30f, raise, Ease.Out)
-                .Key(0.38f, tremble, Ease.Linear)
-                .Key(0.50f, slam, Ease.In)
-                .Key(0.60f, settle, Ease.Out)
-                .Key(0.95f, stance)
-                .Event(0.04f, C.ChargeStartEvent)
-                .Event(0.40f, C.StrikeOpenEvent)
-                .Event(0.62f, C.StrikeCloseEvent);
-
-            return Complete("Sword", stance, pace: 1f, charged,
+            return Complete("Sword", stance, pace: 1f,
                 Guard("Sword_Guard", new ArmPose(V(-0.4f, -0.3f, 0.85f), V(0.6f, 0.78f, 0.15f), V(0.05f, -0.05f, 1f))));
         }
 
@@ -364,42 +325,8 @@ namespace CG4002.EditorTools
                 offHandGrip = 0.35f,
             };
 
-            // Charged: overhead javelin grip, then a lunging thrust.
-            var draw = stance.Copy();
-            draw.hips = V(0f, -0.1f, -0.12f);
-            draw.hipsYaw = 40f;
-            draw.chestYaw = 25f;
-            draw.chestPitch = -8f;
-            draw.footR = V(0.18f, MannequinRig.AnkleHeight, -0.2f);
-            draw.armR = new ArmPose(V(0.55f, 0.5f, -0.65f), V(0.05f, 0.95f, 0.25f), V(0f, -0.2f, 1f));
-
-            var tremble = draw.Copy();
-            tremble.hips += V(0f, -0.01f, 0f);
-
-            var lunge = stance.Copy();
-            lunge.hips = V(0f, -0.15f, 0.3f);
-            lunge.hipsYaw = -15f;
-            lunge.chestYaw = -20f;
-            lunge.chestPitch = 18f;
-            lunge.footL = V(-0.12f, MannequinRig.AnkleHeight, 0.45f);
-            lunge.armR = new ArmPose(V(0.15f, 0.05f, 1f), V(0.05f, 0.95f, -0.05f), V(0f, -0.1f, 1f));
-
-            var extend = lunge.Copy();
-            extend.armR = new ArmPose(V(0.12f, -0.05f, 1f), V(0f, 0.9f, -0.1f), V(0f, -0.15f, 1f));
-
-            var charged = new ClipSpec { name = "Spear_Charged" }
-                .Key(0f, stance)
-                .Key(0.32f, draw, Ease.Out)
-                .Key(0.38f, tremble, Ease.Linear)
-                .Key(0.50f, lunge, Ease.In)
-                .Key(0.62f, extend, Ease.Out)
-                .Key(0.95f, stance)
-                .Event(0.04f, C.ChargeStartEvent)
-                .Event(0.40f, C.StrikeOpenEvent)
-                .Event(0.64f, C.StrikeCloseEvent);
-
             // Guard: the shaft held level across the body at chest height, both hands forward, tip to the left.
-            return Complete("Spear", stance, pace: 1f, charged,
+            return Complete("Spear", stance, pace: 1f,
                 TwoHandGuard("Spear_Guard", stance, new ArmPose(V(0.35f, -0.55f, 0.75f), V(0.05f, 0.25f, 1f), V(-1f, 0f, 0.05f))));
         }
 
@@ -418,43 +345,9 @@ namespace CG4002.EditorTools
                 offHandGrip = -0.13f,
             };
 
-            // Charged: wind far back behind the shoulder, then a crouching slam.
-            var windup = stance.Copy();
-            windup.hips = V(0f, -0.12f, -0.1f);
-            windup.hipsYaw = 35f;
-            windup.chestYaw = 30f;
-            windup.chestPitch = -15f;
-            windup.footR = V(0.17f, MannequinRig.AnkleHeight, -0.2f);
-            windup.armR = new ArmPose(V(0.5f, 0.8f, -0.35f), V(0.2f, 0.6f, -0.8f), V(0.1f, -0.8f, -0.6f));
-
-            var tremble = windup.Copy();
-            tremble.hips += V(0f, -0.01f, 0f);
-
-            var crush = stance.Copy();
-            crush.hips = V(0f, -0.2f, 0.15f);
-            crush.hipsYaw = -10f;
-            crush.chestYaw = -20f;
-            crush.chestPitch = 35f;
-            crush.footL = V(-0.14f, MannequinRig.AnkleHeight, 0.38f);
-            crush.armR = new ArmPose(V(0.1f, -0.35f, 0.95f), V(0f, -0.95f, -0.3f), V(0f, -0.3f, 0.95f));
-
-            var deep = crush.Copy();
-            deep.armR = new ArmPose(V(0.1f, -0.7f, 0.7f), V(0f, -0.6f, -0.8f), V(0f, -0.8f, 0.6f));
-
-            var charged = new ClipSpec { name = "Mace_Charged" }
-                .Key(0f, stance)
-                .Key(0.32f, windup, Ease.Out)
-                .Key(0.38f, tremble, Ease.Linear)
-                .Key(0.52f, crush, Ease.In)
-                .Key(0.66f, deep, Ease.Out)
-                .Key(0.95f, stance)
-                .Event(0.04f, C.ChargeStartEvent)
-                .Event(0.40f, C.StrikeOpenEvent)
-                .Event(0.66f, C.StrikeCloseEvent);
-
             // Heavier than the others: every shared motion plays 10 % slower.
             // Guard: the handle held level across the body, both hands forward, head to the right.
-            return Complete("Mace", stance, pace: 1.1f, charged,
+            return Complete("Mace", stance, pace: 1.1f,
                 TwoHandGuard("Mace_Guard", stance, new ArmPose(V(0f, -0.55f, 0.8f), V(-0.15f, 0.25f, 1f), V(1f, 0f, 0.15f))));
         }
     }

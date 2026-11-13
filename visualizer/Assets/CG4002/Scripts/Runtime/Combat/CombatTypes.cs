@@ -21,10 +21,7 @@ namespace CG4002.Combat
         VerticalSwing = 2,
         DiagonalSwing = 3,
         Thrust = 4,
-        ChargedAttack = 5,
         SpinAttack = 6,
-        ChargedThrust = 7,
-        Swing = 8,
         OverheadStrike = 9,
         BackStrike = 10,
         Uppercut = 11,
@@ -32,13 +29,12 @@ namespace CG4002.Combat
 
     /// <summary>
     /// Animator attack states: one per motion, each weapon supplying its own clip for every
-    /// state. Several actions may share a slot (e.g. the spear's SWING plays Horizontal). The
-    /// state is named after the member, so adding one means regenerating the models.
+    /// state. Several actions may share a slot. The state is named after the member, so adding
+    /// one means regenerating the models.
     /// </summary>
     public enum AttackSlot
     {
         Horizontal = 0,
-        Charged = 1,
         Vertical = 2,
         Diagonal = 3,
         Thrust = 4,

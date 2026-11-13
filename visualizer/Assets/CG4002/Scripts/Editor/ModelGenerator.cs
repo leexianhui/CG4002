@@ -66,13 +66,13 @@ namespace CG4002.EditorTools
             // The AI classifies the same six attacks for every weapon (ai/config.py MOVE_CLASSES), so every
             // weapon animates all six; the engine's weapons.yaml decides which of them can land.
             var swordDefinition = DefinitionFactory.Create(WeaponType.SwordAndShield, "Sword & Shield", sword, shield, twoHanded: false, swordAnimations, ModelFactory.SwordAccent,
-                ClassifierMoves((ActionType.ChargedAttack, AttackSlot.Charged)));
+                ClassifierMoves);
 
             var spearDefinition = DefinitionFactory.Create(WeaponType.Spear, "Spear", spear, null, twoHanded: true, spearAnimations, ModelFactory.SpearAccent,
-                ClassifierMoves((ActionType.ChargedThrust, AttackSlot.Charged), (ActionType.Swing, AttackSlot.Horizontal)));
+                ClassifierMoves);
 
             var maceDefinition = DefinitionFactory.Create(WeaponType.Mace, "Mace", mace, null, twoHanded: true, maceAnimations, ModelFactory.MaceAccent,
-                ClassifierMoves((ActionType.ChargedAttack, AttackSlot.Charged)));
+                ClassifierMoves);
 
             var catalog = DefinitionFactory.CreateCatalog(swordDefinition, spearDefinition, maceDefinition);
 
@@ -94,8 +94,8 @@ namespace CG4002.EditorTools
                 : $"[CG4002] Generation complete with {errors.Count} contract error(s).");
         }
 
-        /// <summary>The six classifier attacks, each on its own slot, plus the weapon's engine-only moves.</summary>
-        static (ActionType, AttackSlot)[] ClassifierMoves(params (ActionType, AttackSlot)[] extra) => new[]
+        /// <summary>The six classifier attacks, each on its own slot.</summary>
+        static readonly (ActionType, AttackSlot)[] ClassifierMoves =
         {
             (ActionType.HorizontalSwing, AttackSlot.Horizontal),
             (ActionType.VerticalSwing, AttackSlot.Vertical),
@@ -103,7 +103,7 @@ namespace CG4002.EditorTools
             (ActionType.Thrust, AttackSlot.Thrust),
             (ActionType.SpinAttack, AttackSlot.Spin),
             (ActionType.Uppercut, AttackSlot.Uppercut),
-        }.Concat(extra).ToArray();
+        };
 
         static AnimatorOverrideController BakeWeapon(AnimatorFactory.BaseController baseController, WeaponType weapon)
         {
