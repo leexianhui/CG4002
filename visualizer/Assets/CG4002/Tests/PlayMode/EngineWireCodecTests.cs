@@ -35,6 +35,18 @@ namespace CG4002.Tests
         }
 
         [Test]
+        public void GodModeCommandAndSnapshotFlag()
+        {
+            // The engine accepts exactly these keys on /control (comms engine/app.py).
+            Assert.That(JToken.DeepEquals(JObject.Parse(EngineWireCodec.SetGodMode(true)),
+                JObject.Parse(@"{""type"":""SET_GOD_MODE"",""version"":1,""enabled"":true}")), Is.True);
+            Assert.That(EngineWireCodec.Decode(Snapshot).OfType<GodModeMessage>().Single().enabled, Is.False,
+                "an engine without god mode omits the flag: off");
+            var on = Snapshot.Replace(@"""reason"":""NOT_READY"",", @"""reason"":""NOT_READY"",""godMode"":true,");
+            Assert.That(EngineWireCodec.Decode(on).OfType<GodModeMessage>().Single().enabled, Is.True);
+        }
+
+        [Test]
         public void EnumsUseNamesInsteadOfIncompatibleIntegerValues()
         {
             Assert.That(EngineWireCodec.Weapon("SPEAR"), Is.EqualTo(WeaponType.Spear));

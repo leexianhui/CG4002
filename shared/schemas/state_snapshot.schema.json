@@ -234,6 +234,11 @@
       "default": null,
       "title": "Reason"
     },
+    "godMode": {
+      "default": false,
+      "title": "Godmode",
+      "type": "boolean"
+    },
     "players": {
       "items": {
         "$ref": "#/$defs/SnapshotPlayer"

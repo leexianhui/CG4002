@@ -273,6 +273,15 @@ combat, preserves socket registrations and clock anchors, starts a fresh match, 
 In online readiness mode, reset retains physical weapon selections/geometry, clears combat state,
 and waits for readiness/fresh positions before resuming.
 
+### God mode
+
+The same `/control` channel accepts `{"type":"SET_GOD_MODE","version":1,"enabled":true}` (or `false`),
+sent by a phone's GOD MODE button. While enabled, attacks resolve exactly as usual and COMBAT_EVENT
+still reports the outcome and `damage`, but no player's HP drops, so nobody can be defeated. It covers
+both players, is not part of the match (it stays on through `RESET_MATCH` until turned off), and is
+shown to the phones as `godMode` in STATE_SNAPSHOT. Malformed variants are rejected like any other
+unknown control command.
+
 ## 4. Online visualizer boundary
 
 These additive JSON message types use version 1. Existing binary packet layouts and enums do not
@@ -300,7 +309,7 @@ snapshot, not a replay of events. `timestamp` is engine monotonic milliseconds.
 
 ```json
 {"type":"STATE_SNAPSHOT","version":1,"timestamp":5000,"phase":"IN_PROGRESS","winnerId":null,
- "reason":null,"players":[
+ "reason":null,"godMode":false,"players":[
   {"playerId":1,"hp":100,"maxHp":100,"weapon":"SWORD","guardState":"IDLE",
    "connected":true,"ready":true,"position":{"x":0,"y":0,"heading":0},
    "cooldownAction":"HORIZONTAL_SWING",
@@ -314,7 +323,8 @@ Both players occur exactly once. `weapon` is null until selection; `position` is
 or stale. Coordinates use section 2.3. `connected` means relay socket presence, not physical gateway
 health. Guard includes IDLE releases. Cooldowns are per action, in milliseconds; `cooldownAction`
 identifies the last move that started a cooldown for a single-bar display. A missing action is ready.
-During PAUSED, remaining time is frozen. `totalMs` includes applied stagger. Snapshot processing
+During PAUSED, remaining time is frozen. `totalMs` includes applied stagger. `godMode` is true while
+god mode is on (see "God mode" above). Snapshot processing
 must not animate attacks. Use COMBAT_EVENT once for resolved attack/outcome animation; do not also
 animate the same attack from ACTION_RECOGNIZED.
 

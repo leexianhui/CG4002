@@ -164,25 +164,45 @@ namespace CG4002.Net
                 return;
             }
             Status = "Restarting the match";
-            _ = SendReset(endpoint.TrimEnd('/') + "/control", bearerToken);
+            // The engine confirms a reset on this socket once both phones have been told.
+            _ = SendControl(EngineWireCodec.ResetMatch(), awaitReply: true,
+                "Match reset: place the dummy again", "Restart not confirmed by the engine");
         }
 
-        async Task SendReset(string url, string token)
+        /// <summary>
+        /// GOD MODE: asks the engine to switch god mode for both players (SET_GOD_MODE on /control).
+        /// The button shows the engine's answer from its snapshots, so both phones agree.
+        /// </summary>
+        void ToggleGodMode()
+        {
+            if (lifetime == null)
+            {
+                Status = "Connect first: god mode is kept by the engine";
+                return;
+            }
+            bool enable = !gameState.GodMode;
+            Status = enable ? "Turning god mode on" : "Turning god mode off";
+            _ = SendControl(EngineWireCodec.SetGodMode(enable), awaitReply: false,
+                enable ? "God mode on: nobody loses HP" : "God mode off", "God mode not sent");
+        }
+
+        /// <summary>One operator command on a short-lived /control socket, with this phone's token.</summary>
+        async Task SendControl(string command, bool awaitReply, string done, string failed)
         {
             try
             {
                 using var control = new ClientWebSocket();
-                control.Options.SetRequestHeader("Authorization", "Bearer " + token);
+                control.Options.SetRequestHeader("Authorization", "Bearer " + bearerToken);
                 using var timeout = new CancellationTokenSource(5000);
-                await control.ConnectAsync(new Uri(url), timeout.Token);
-                var bytes = Encoding.UTF8.GetBytes(EngineWireCodec.ResetMatch());
+                await control.ConnectAsync(new Uri(endpoint.TrimEnd('/') + "/control"), timeout.Token);
+                var bytes = Encoding.UTF8.GetBytes(command);
                 await control.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, timeout.Token);
-                // The engine confirms on this socket once both phones have been told.
-                await control.ReceiveAsync(new ArraySegment<byte>(new byte[4096]), timeout.Token);
-                Status = "Match reset: place the dummy again";
-                await control.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
+                if (awaitReply)
+                    await control.ReceiveAsync(new ArraySegment<byte>(new byte[4096]), timeout.Token);
+                await control.CloseAsync(WebSocketCloseStatus.NormalClosure, "", timeout.Token);
+                Status = done;
             }
-            catch (Exception e) { Status = "Restart not confirmed by the engine: " + e.GetType().Name; }
+            catch (Exception e) { Status = failed + ": " + e.GetType().Name; }
         }
 
         /// <summary>Back to the start of setup: the dummy is picked up, so calibration is cleared and this phone reports not ready.</summary>
@@ -423,6 +443,7 @@ namespace CG4002.Net
             }
             else if (GUILayout.Button("Disconnect / settings")) { Disconnect(); showSettings = true; }
             if (GUILayout.Button("RESTART (both re-place the dummy)")) Restart();
+            if (GUILayout.Button(gameState.GodMode ? "GOD MODE: ON (nobody loses HP)" : "GOD MODE: OFF")) ToggleGodMode();
             if (weaponSelect != null && weaponSelect.IsSelecting)
                 GUILayout.Label("Choose your weapon: copy a pose in front of you.");
             else

@@ -63,6 +63,10 @@ namespace CG4002.Net
         public static string ResetMatch() =>
             JsonConvert.SerializeObject(new { type = "RESET_MATCH", version = 1 });
 
+        /// <summary>God mode for both players, on /control (shared/protocol/app_messages.md, "God mode").</summary>
+        public static string SetGodMode(bool enabled) =>
+            JsonConvert.SerializeObject(new { type = "SET_GOD_MODE", version = 1, enabled });
+
         /// <summary>
         /// The engine's MATCH_STATE announcing a reset, from the operator's terminal or any phone's
         /// RESTART. Sent once per reset (shared/protocol/app_messages.md §3).
@@ -159,6 +163,7 @@ namespace CG4002.Net
                 output.Add(new CooldownMessage { player = id, seconds = remaining, totalSeconds = total,
                     actionName = displayed, paused = phase == MatchPhase.Paused, entries = entries.ToArray() });
             }
+            output.Add(new GodModeMessage { enabled = root["godMode"]?.Value<bool>() ?? false });
             output.Add(new MatchStateMessage { phase = phase,
                 winner = root["winnerId"]?.Type == JTokenType.Null ? default : Player(root["winnerId"]) });
         }

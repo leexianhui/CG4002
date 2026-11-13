@@ -238,6 +238,8 @@ class StateSnapshot(_Envelope):
     phase: MatchPhase
     winner_id: PlayerId | None = Field(alias="winnerId", default=None)
     reason: str | None = None
+    # SET_GOD_MODE on /control: hits report damage but HP never drops. Stays on through resets.
+    god_mode: bool = Field(alias="godMode", default=False)
     players: list[SnapshotPlayer] = Field(min_length=2, max_length=2)
 
     @field_validator("players")

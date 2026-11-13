@@ -7,8 +7,8 @@ namespace CG4002.UI
 {
     /// <summary>
     /// Screen-space HUD (report 6.1.1), medieval-styled: health for both players, the local player's
-    /// weapon and a cooldown icon per move (bottom left), both players' guard, and short messages for outcomes
-    /// and the match result. Only draws what GameState and the dispatcher announce; it holds no game logic.
+    /// weapon and a cooldown icon per move (bottom left), both players' guard, short messages for outcomes
+    /// and the match result, and a GOD MODE badge while it's on. Only draws what GameState and the dispatcher announce; it holds no game logic.
     ///
     /// The layout lives in the scene (built by CG4002 > Setup Game Scene) so it can be adjusted
     /// in the editor; this class only binds data to it.
@@ -49,6 +49,8 @@ namespace CG4002.UI
         [SerializeField] Text outcomeText;
         [SerializeField] float outcomeSeconds = 0.8f;
         [SerializeField] Text resultText;
+        [Tooltip("Shown while god mode is on (the engine's, for both players).")]
+        [SerializeField] GameObject godModeBadge;
 
         float outcomeHideAt;
 
@@ -58,6 +60,7 @@ namespace CG4002.UI
             gameState.WeaponChanged += OnWeaponChanged;
             gameState.GuardChanged += OnGuardChanged;
             gameState.PhaseChanged += OnPhaseChanged;
+            gameState.GodModeChanged += OnGodModeChanged;
             dispatcher.OutcomeReceived += OnOutcomeReceived;
         }
 
@@ -67,6 +70,7 @@ namespace CG4002.UI
             gameState.WeaponChanged -= OnWeaponChanged;
             gameState.GuardChanged -= OnGuardChanged;
             gameState.PhaseChanged -= OnPhaseChanged;
+            gameState.GodModeChanged -= OnGodModeChanged;
             dispatcher.OutcomeReceived -= OnOutcomeReceived;
         }
 
@@ -79,6 +83,7 @@ namespace CG4002.UI
             opponentGuardIndicator.SetActive(gameState.Opponent.guarding);
             outcomeText.gameObject.SetActive(false);
             resultText.gameObject.SetActive(false);
+            OnGodModeChanged(gameState.GodMode);
         }
 
         // ---- State ------------------------------------------------------------------------
@@ -104,6 +109,12 @@ namespace CG4002.UI
             if (player == gameState.OpponentPlayer)
                 opponentGuardIndicator.SetActive(guarding);
             // Your own guard is drawn in Update: it shares the centre line with hit messages.
+        }
+
+        void OnGodModeChanged(bool enabled)
+        {
+            if (godModeBadge != null)
+                godModeBadge.SetActive(enabled);
         }
 
         void OnPhaseChanged(MatchPhase phase)

@@ -24,6 +24,7 @@ namespace CG4002.EditorTools
     ///      ├─ Outcome      centre:    "HIT -10" / "BLOCKED", shown briefly
     ///      ├─ Guarding     centre:    GUARDING while your guard is up (same spot; hit messages take over briefly)
     ///      ├─ Result       centre:    "ENEMY DEFEATED"
+    ///      ├─ GodMode      bottom centre: GOD MODE while the engine's god mode is on
     ///      └─ Debug        bottom-right: RESET, MOVE DUMMY, TRACKING buttons (DebugPanel)
     ///   WeaponSelect (Canvas + WeaponSelectScreen) └─ View: title and instruction (top centre while
     ///                   choosing, centre for calibration / status messages), and demo mode's CHOOSE
@@ -97,6 +98,14 @@ namespace CG4002.EditorTools
             selfGuard.color = Gold;
             var result = CentreText(root, "Result", 96, y: 0f);
             result.color = Gold;
+            // God mode (the engine's, for both players): bottom centre, clear of the cooldown row.
+            var godMode = CentreText(root, "GodMode", 40, y: 0f);
+            godMode.text = "GOD MODE";
+            godMode.color = Gold;
+            var godModeRect = godMode.rectTransform;
+            godModeRect.anchorMin = godModeRect.anchorMax = godModeRect.pivot = new Vector2(0.5f, 0f);
+            godModeRect.anchoredPosition = new Vector2(0f, 40f);
+            godMode.gameObject.SetActive(false);
 
             var hud = canvasObject.AddComponent<HudController>();
             var settings = new SerializedObject(hud);
@@ -111,11 +120,12 @@ namespace CG4002.EditorTools
             settings.FindProperty("opponentGuardIndicator").objectReferenceValue = guard.gameObject;
             settings.FindProperty("outcomeText").objectReferenceValue = outcome;
             settings.FindProperty("resultText").objectReferenceValue = result;
+            settings.FindProperty("godModeBadge").objectReferenceValue = godMode.gameObject;
             BuildCooldowns(root, settings.FindProperty("cooldownRows"));
             settings.ApplyModifiedPropertiesWithoutUndo();
 
             BuildDebugPanel(root, gameState, dispatcher, placer, trackingOverlay);
-            BuildSplitLayout(canvasObject, root, self, opponent, outcome, selfGuard, result);
+            BuildSplitLayout(canvasObject, root, self, opponent, outcome, selfGuard, result, godModeRect);
         }
 
         /// <summary>
@@ -127,7 +137,7 @@ namespace CG4002.EditorTools
         /// hidden.
         /// </summary>
         static void BuildSplitLayout(GameObject canvasObject, RectTransform root, RectTransform self,
-            RectTransform opponent, Text outcome, Text selfGuard, Text result)
+            RectTransform opponent, Text outcome, Text selfGuard, Text result, RectTransform godMode)
         {
             var layout = canvasObject.AddComponent<SplitLayout>();
             const float edge = 24f;           // the cooldown row, from the eye's sides
@@ -148,6 +158,8 @@ namespace CG4002.EditorTools
                 (outcome.rectTransform, false, new Vector2(0.5f, 0.5f), new Vector2(0f, 120f), 0.8f, false, 0f, 0f),
                 (selfGuard.rectTransform, false, new Vector2(0.5f, 0.5f), new Vector2(0f, 120f), 0.8f, false, 0f, 0f),
                 (result.rectTransform, false, new Vector2(0.5f, 0.5f), Vector2.zero, 0.75f, false, 0f, 0f),
+                // Above the cooldown row (140 up, icons 108 tall).
+                (godMode, false, new Vector2(0.5f, 0f), new Vector2(0f, 270f), 0.8f, false, 0f, 0f),
                 ((RectTransform)root.Find("Debug"), true, Vector2.zero, Vector2.zero, 1f, false, 0f, 0f),
             };
             var settings = new SerializedObject(layout);

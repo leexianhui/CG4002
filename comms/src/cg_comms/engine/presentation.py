@@ -52,6 +52,7 @@ class Presentation:
 
     def snapshot(
         self, state: MatchState, rules: Rules, presence: dict[str, bool], now: int,
+        god_mode: bool = False,
     ) -> StateSnapshot:
         cooldown_now = self.paused_at if self.paused_at is not None else now
         players: list[dict[str, object]] = []
@@ -75,5 +76,5 @@ class Presentation:
         # Validate the complete wire boundary together, including narrowed action/weapon IDs.
         return StateSnapshot.model_validate(dict(
             timestamp=now, phase=state.phase, winner_id=state.winner_id,
-            reason=self.reason, players=players,
+            reason=self.reason, god_mode=god_mode, players=players,
         ))

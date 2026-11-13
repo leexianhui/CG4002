@@ -462,6 +462,7 @@ A Unity IMGUI panel in the top-left corner, scaled to the safe area:
  │ [Player 1] [Player 2]                    │
  │ [Connect]   or [Disconnect / settings]   │
  │ [RESTART (both re-place the dummy)]      │
+ │ [GOD MODE: OFF]                          │
  │ Tap the floor where the opponent should  │
  │ stand, put on the headset, then look at  │
  │ the opponent and hold still for 3 s.     │
@@ -484,6 +485,11 @@ A Unity IMGUI panel in the top-left corner, scaled to the safe area:
   terminal, sends both phones back to placing the dummy**, so both re-place and re-calibrate; the
   match waits until both are ready again. Weapon selection reopens only if the engine reports no weapon.
   Not connected, RESTART still resets this phone.
+- **GOD MODE** (open panel, while connected) sends `SET_GOD_MODE` on the same `/control` path. It
+  covers both players: hits still resolve and show their damage (HIT -10, sounds, buzz, flash), but
+  nobody's HP drops, so nobody loses. The engine keeps it (through RESTART too) and reports it as
+  `godMode` in every snapshot, so the button and the HUD's gold **GOD MODE** badge (bottom centre)
+  match on both phones. Either phone can turn it off.
 - **Setup readings** (always shown in the open panel) answer "why isn't the match starting?": which player has no relay, no
   calibration, no weapon or no position, and how far apart the engine thinks the players are.
 

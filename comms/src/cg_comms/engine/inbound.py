@@ -43,6 +43,14 @@ class ResetMatch:
 
 
 @dataclass(frozen=True)
+class SetGodMode:
+    """Local operator command delivered by the authenticated /control connection (a phone's
+    GOD MODE button): while enabled, hits still resolve and report their damage, but nobody's HP drops."""
+
+    enabled: bool
+
+
+@dataclass(frozen=True)
 class LinkReset:
     player_id: int
     channel: str
@@ -59,8 +67,8 @@ class SnapshotRequest:
     send: Callable[[StateSnapshot], Awaitable[None]]
 
 
-InboundEvent = (InboundAction | InboundWeaponChanged | InboundPosition | ResetMatch | LinkReset
-                | InboundVisualizerReady | SnapshotRequest)
+InboundEvent = (InboundAction | InboundWeaponChanged | InboundPosition | ResetMatch | SetGodMode
+                | LinkReset | InboundVisualizerReady | SnapshotRequest)
 
 
 def route_inbound(path: str, raw: str) -> InboundEvent | None:

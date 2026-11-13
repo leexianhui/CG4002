@@ -18,7 +18,7 @@ import structlog
 from cg_comms.config import EngineSettings
 from cg_comms.engine.broadcaster import broadcast_to_visualizers, send_to_relay
 from cg_comms.engine.game_state_task import GameStateTask
-from cg_comms.engine.inbound import LinkReset, ResetMatch, SnapshotRequest, route_inbound
+from cg_comms.engine.inbound import LinkReset, ResetMatch, SetGodMode, SnapshotRequest, route_inbound
 from cg_comms.engine.rules import Rules
 from cg_comms.engine.ws_server import (
     CONTROL_PATH,
@@ -85,6 +85,11 @@ async def run_engine(settings: EngineSettings) -> None:
             if command == {"type": "RESET_MATCH", "version": 1}:
                 logger.info("match_reset_requested", path=path)
                 await task.submit(ResetMatch())
+            elif (isinstance(command, dict) and command.keys() == {"type", "version", "enabled"}
+                    and command["type"] == "SET_GOD_MODE" and command["version"] == 1
+                    and isinstance(command["enabled"], bool)):
+                logger.info("god_mode_requested", path=path, enabled=command["enabled"])
+                await task.submit(SetGodMode(command["enabled"]))
             else:
                 logger.warning("control_command_rejected")
             return

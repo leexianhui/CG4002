@@ -18,6 +18,7 @@ from cg_comms.engine.inbound import (
     InboundWeaponChanged,
     LinkReset,
     ResetMatch,
+    SetGodMode,
     SnapshotRequest,
 )
 from cg_comms.engine.presentation import Presentation
@@ -103,6 +104,10 @@ class GameStateTask:
     # says so once instead of on every window.
     _logged_post_match: bool = field(default=False, init=False)
 
+    # SET_GOD_MODE (a phone's GOD MODE button): hits resolve and report damage, HP never drops.
+    # Not part of the match: it stays on through resets until turned off.
+    god_mode: bool = field(default=False, init=False)
+
     _reset_floor: int = field(default=-1, init=False)
     # player -> the WEAPON_SELECT_* state last sent to that player's relay (cleared when it reconnects).
     _weapon_select_sent: dict[int, bool] = field(default_factory=dict, init=False)
@@ -123,7 +128,7 @@ class GameStateTask:
             self.state.players[player_id] = PlayerState(player_id=player_id, hp=self.rules.starting_hp)
 
     async def submit(self, event: InboundEvent) -> None:
-        if isinstance(event, (ResetMatch, LinkReset, SnapshotRequest, InboundVisualizerReady)):
+        if isinstance(event, (ResetMatch, SetGodMode, LinkReset, SnapshotRequest, InboundVisualizerReady)):
             await self._inbox.put(event)
             return
         try:
@@ -146,6 +151,10 @@ class GameStateTask:
             if event is not None:
                 if isinstance(event, ResetMatch):
                     await self.reset_match()
+                elif isinstance(event, SetGodMode):
+                    self.god_mode = event.enabled
+                    logger.info("god_mode", enabled=self.god_mode)
+                    self._next_snapshot_ms = 0  # both phones show it at once
                 elif isinstance(event, SnapshotRequest):
                     await event.send(self.current_state_snapshot())
                 elif isinstance(event, InboundVisualizerReady):
@@ -399,7 +408,8 @@ class GameStateTask:
             add_stagger(attacker, self.rules.stagger_ms, ev.timestamp)
 
         defender = self.state.players.get(decision.defender_id) if decision.defender_id is not None else None
-        if defender is not None and decision.damage > 0:
+        # God mode: the hit still resolves and reports its damage, but HP never drops, so nobody loses.
+        if defender is not None and decision.damage > 0 and not self.god_mode:
             defender.hp = max(0, defender.hp - decision.damage)
 
         if (
@@ -501,7 +511,8 @@ class GameStateTask:
         await self.on_match_state(self.current_match_state())
 
     def current_state_snapshot(self) -> StateSnapshot:
-        return self.presentation.snapshot(self.state, self.rules, self.presence(), monotonic_ms())
+        return self.presentation.snapshot(self.state, self.rules, self.presence(), monotonic_ms(),
+                                          god_mode=self.god_mode)
 
     async def _update_weapon_selection(self) -> None:
         """Tells each connected relay whether its hub may lock a weapon: only once that player's

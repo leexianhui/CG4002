@@ -136,6 +136,15 @@ namespace CG4002.State
         public PlayerId winner;
     }
 
+    /// <summary>
+    /// God mode on or off (online: the snapshot's godMode). While on, hits still report damage but
+    /// nobody's HP drops. <see cref="Message.player"/> is unused.
+    /// </summary>
+    public class GodModeMessage : Message
+    {
+        public bool enabled;
+    }
+
     // ── Visualizer to engine (Outbound) ────────────────────────────────────────────
     // PositionMessage and, offline only, ActionMessage above are also sent outbound.
 

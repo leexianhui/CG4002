@@ -60,6 +60,7 @@ namespace CG4002.State
         public event Action<PlayerId, float> CooldownStarted;
         public event Action<PlayerId, Vector3, float> PositionChanged;
         public event Action<MatchPhase> PhaseChanged;
+        public event Action<bool> GodModeChanged;
 
         public PlayerId LocalPlayer => localPlayer;
         public PlayerId OpponentPlayer => localPlayer == PlayerId.P1 ? PlayerId.P2 : PlayerId.P1;
@@ -67,6 +68,8 @@ namespace CG4002.State
         public PlayerState Opponent => Get(OpponentPlayer);
         public MatchPhase Phase => phase;
         public PlayerId Winner => winner;
+        /// <summary>God mode (the engine's): hits report damage but nobody's HP drops.</summary>
+        public bool GodMode { get; private set; }
 
         public PlayerState Get(PlayerId id) => id == PlayerId.P1 ? player1 : player2;
 
@@ -134,6 +137,14 @@ namespace CG4002.State
                     phase = m.phase;
                     winner = m.winner;
                     PhaseChanged?.Invoke(m.phase);
+                    break;
+
+                case GodModeMessage m:
+                    if (GodMode != m.enabled)
+                    {
+                        GodMode = m.enabled;
+                        GodModeChanged?.Invoke(m.enabled);
+                    }
                     break;
 
                 // ActionMessage carries no state: it is an event only, raised by the dispatcher.
