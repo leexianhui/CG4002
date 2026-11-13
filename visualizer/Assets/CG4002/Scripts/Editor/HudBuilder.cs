@@ -24,7 +24,7 @@ namespace CG4002.EditorTools
     ///      ├─ Outcome      centre:    "HIT -10" / "BLOCKED", shown briefly
     ///      ├─ Guarding     centre:    GUARDING while your guard is up (same spot; hit messages take over briefly)
     ///      ├─ Result       centre:    "ENEMY DEFEATED"
-    ///      ├─ GodMode      bottom centre: GOD MODE while the engine's god mode is on
+    ///      ├─ GodMode      top centre:    GOD MODE while the engine's god mode is on
     ///      └─ Debug        bottom-right: RESET, MOVE DUMMY, TRACKING buttons (DebugPanel)
     ///   WeaponSelect (Canvas + WeaponSelectScreen) └─ View: title and instruction (top centre while
     ///                   choosing, centre for calibration / status messages), and demo mode's CHOOSE
@@ -98,13 +98,13 @@ namespace CG4002.EditorTools
             selfGuard.color = Gold;
             var result = CentreText(root, "Result", 96, y: 0f);
             result.color = Gold;
-            // God mode (the engine's, for both players): bottom centre, clear of the cooldown row.
+            // God mode (the engine's, for both players): top centre, between the health bars.
             var godMode = CentreText(root, "GodMode", 40, y: 0f);
             godMode.text = "GOD MODE";
             godMode.color = Gold;
             var godModeRect = godMode.rectTransform;
-            godModeRect.anchorMin = godModeRect.anchorMax = godModeRect.pivot = new Vector2(0.5f, 0f);
-            godModeRect.anchoredPosition = new Vector2(0f, 40f);
+            godModeRect.anchorMin = godModeRect.anchorMax = godModeRect.pivot = new Vector2(0.5f, 1f);
+            godModeRect.anchoredPosition = new Vector2(0f, -Margin);
             godMode.gameObject.SetActive(false);
 
             var hud = canvasObject.AddComponent<HudController>();
@@ -158,8 +158,8 @@ namespace CG4002.EditorTools
                 (outcome.rectTransform, false, new Vector2(0.5f, 0.5f), new Vector2(0f, 120f), 0.8f, false, 0f, 0f),
                 (selfGuard.rectTransform, false, new Vector2(0.5f, 0.5f), new Vector2(0f, 120f), 0.8f, false, 0f, 0f),
                 (result.rectTransform, false, new Vector2(0.5f, 0.5f), Vector2.zero, 0.75f, false, 0f, 0f),
-                // Above the cooldown row (140 up, icons 108 tall).
-                (godMode, false, new Vector2(0.5f, 0f), new Vector2(0f, 270f), 0.8f, false, 0f, 0f),
+                // Top centre, in the gap between the health bars.
+                (godMode, false, new Vector2(0.5f, 1f), new Vector2(0f, -60f), 0.8f, false, 0f, 0f),
                 ((RectTransform)root.Find("Debug"), true, Vector2.zero, Vector2.zero, 1f, false, 0f, 0f),
             };
             var settings = new SerializedObject(layout);
@@ -347,7 +347,8 @@ namespace CG4002.EditorTools
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1920f, 1080f);
             scaler.matchWidthOrHeight = 0.5f;
-            var label = CentreText(ViewRoot(canvasObject, ArCamera(placer)), "MoveName", 56, y: -300f);
+            // Below the centre messages, clear of the split view's cooldown row (its top is ~290 below centre).
+            var label = CentreText(ViewRoot(canvasObject, ArCamera(placer)), "MoveName", 56, y: -220f);
             label.color = Gold;
 
             var view = canvasObject.AddComponent<CG4002.Controllers.FirstPersonAttack>();
