@@ -95,6 +95,7 @@ class FeedbackCode(_WireEnum):
     # engine -> relay -> hub, not a buzz: whether the hub may lock a weapon (the phone has calibrated)
     WEAPON_SELECT_ALLOWED = "WEAPON_SELECT_ALLOWED"
     WEAPON_SELECT_BLOCKED = "WEAPON_SELECT_BLOCKED"
+    WEAPON_UNLOCK = "WEAPON_UNLOCK"  # engine -> relay -> hub on a match reset: drop the locked weapon
 
 
 WIRE_VALUES: dict[_WireEnum, int] = {
@@ -133,4 +134,5 @@ WIRE_VALUES: dict[_WireEnum, int] = {
     FeedbackCode.ACTION_CONFIRMED: 4,
     FeedbackCode.WEAPON_SELECT_ALLOWED: 5,
     FeedbackCode.WEAPON_SELECT_BLOCKED: 6,
+    FeedbackCode.WEAPON_UNLOCK: 7,
 }

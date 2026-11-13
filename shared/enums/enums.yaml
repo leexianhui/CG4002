@@ -91,3 +91,6 @@ FeedbackCode:
     # relay replays the latest one to a reconnected hub. Hubs start BLOCKED. A lock already made stays.
     - { name: WEAPON_SELECT_ALLOWED, wire: 5 }
     - { name: WEAPON_SELECT_BLOCKED, wire: 6 }
+    # Engine -> relay -> hub on a match reset, not a buzz: drop the locked weapon and detect again (the
+    # phone gate above still applies). Kept pending by the engine / relay until that hub is reachable.
+    - { name: WEAPON_UNLOCK,         wire: 7 }

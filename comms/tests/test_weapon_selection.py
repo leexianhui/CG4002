@@ -80,8 +80,52 @@ async def test_relay_replays_the_latest_selection_when_a_hub_session_starts_stre
     latest = CombatFeedback(timestamp=1, player_id=1, code=ALLOWED, intensity_pct=0,
                             duration_ms=1, repeat_count=1)
     subject = session()
-    subject.startup_feedback = lambda: latest
+    subject.startup_feedback = lambda: [latest]
     subject.queue_combat_feedback = Mock()
     subject._stop_event.set()  # stream starts, then stops at once
     await subject._stream()
     subject.queue_combat_feedback.assert_called_once_with(latest)
+
+
+# -- match reset unlocks the hub's weapon (2026-11-13) ------------------------------------------------
+
+UNLOCK = FeedbackCode.WEAPON_UNLOCK
+
+
+async def test_reset_clears_weapons_and_unlocks_both_hubs_before_the_selection_state():
+    from cg_comms.messages.enums import Weapon
+    task, sent, _ = engine()
+    for pid in (1, 2):
+        task.presentation.ready[pid] = True
+        task.state.players[pid].weapon = Weapon.SWORD
+    await task._update_presentation()
+    sent.clear()
+    await task.reset_match()
+    assert all(p.weapon is None for p in task.state.players.values())  # phones show weapon select
+    await task._update_presentation()
+    await task._update_presentation()  # sent once, not on every tick
+    assert sent == [(1, UNLOCK), (2, UNLOCK)]
+
+
+async def test_an_unlock_waits_for_a_relay_that_was_offline_at_reset():
+    task, sent, links = engine(presence={"1": True, "2": False})
+    await task.reset_match()
+    await task._update_presentation()
+    assert (1, UNLOCK) in sent and (2, UNLOCK) not in sent
+    links["2"] = True  # P2's relay comes back
+    await task._update_presentation()
+    assert sent.count((2, UNLOCK)) == 1
+
+
+async def test_relay_sends_a_pending_unlock_before_the_selection_state_when_the_hub_returns():
+    """relay/app.py startup_feedback: an unlock that arrived while the hub was away goes first."""
+    unlock = CombatFeedback(timestamp=1, player_id=1, code=UNLOCK, intensity_pct=0,
+                            duration_ms=1, repeat_count=1)
+    allowed = CombatFeedback(timestamp=2, player_id=1, code=ALLOWED, intensity_pct=0,
+                             duration_ms=1, repeat_count=1)
+    subject = session()
+    subject.startup_feedback = lambda: [unlock, allowed]
+    subject.queue_combat_feedback = Mock()
+    subject._stop_event.set()
+    await subject._stream()
+    assert [c.args[0].code for c in subject.queue_combat_feedback.call_args_list] == [UNLOCK, ALLOWED]

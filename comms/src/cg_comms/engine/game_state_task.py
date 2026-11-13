@@ -106,6 +106,8 @@ class GameStateTask:
     _reset_floor: int = field(default=-1, init=False)
     # player -> the WEAPON_SELECT_* state last sent to that player's relay (cleared when it reconnects).
     _weapon_select_sent: dict[int, bool] = field(default_factory=dict, init=False)
+    # players whose hub still has to be told WEAPON_UNLOCK (set by a match reset, cleared once sent)
+    _unlock_pending: set[int] = field(default_factory=set, init=False)
     # player -> guard_entered_ts whose expiry was already logged/broadcast (once per guard).
     _guard_expiry_seen: dict[int, int] = field(default_factory=dict, init=False)
     # Per-player position warning window: (last warning time, suppressed count).
@@ -236,9 +238,10 @@ class GameStateTask:
         for pid in (1, 2):
             self.state.players[pid] = PlayerState(player_id=pid, hp=self.rules.starting_hp)
             if self.require_visualizer_ready:
-                # Selection/geometry are physical state, independent of a new round.
+                # Geometry is physical state, independent of a new round. The weapon is not: a
+                # reset re-opens weapon selection, on the hub too (WEAPON_UNLOCK below).
                 old, new = previous.players[pid], self.state.players[pid]
-                new.weapon, new.position = old.weapon, old.position
+                new.position = old.position
                 new.heading_deg, new.position_ts = old.heading_deg, old.position_ts
         self._reorder = ReorderBuffer(
             reorder_delay_ms=self.reorder_delay_ms + self.rules.config.guard_grace_ms,
@@ -252,6 +255,7 @@ class GameStateTask:
         if self.require_visualizer_ready:
             self.state.phase = MatchPhase.WAITING
         self.state.started_ts = self._reset_floor
+        self._unlock_pending = {1, 2}  # both hubs drop their weapon; sent by _update_weapon_selection
         logger.info("match_reset")
         snapshot = self.current_match_state().model_copy(update={"reason": "reset"})
         await self.on_match_state(snapshot)
@@ -507,6 +511,12 @@ class GameStateTask:
         for pid in (1, 2):
             if not presence.get(str(pid), False):
                 continue
+            if pid in self._unlock_pending:
+                self._unlock_pending.discard(pid)
+                logger.info("weapon_unlock", player_id=pid)
+                await self.on_combat_feedback(pid, CombatFeedback(
+                    timestamp=monotonic_ms(), player_id=pid,  # type: ignore[arg-type]
+                    code=FeedbackCode.WEAPON_UNLOCK, intensity_pct=0, duration_ms=1, repeat_count=1))
             allowed = not self.require_visualizer_ready or self.presentation.ready[pid]
             if self._weapon_select_sent.get(pid) == allowed:
                 continue

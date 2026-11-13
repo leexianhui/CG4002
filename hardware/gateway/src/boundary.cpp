@@ -28,6 +28,8 @@ uint8_t guardState;
 uint32_t guardMs;
 // Hub: weapon-selection gate from the engine (phone calibrated), BLE task -> hardware loop.
 bool weaponSelectAllowed;
+// Hub: a match reset's WEAPON_UNLOCK, BLE task -> hardware loop.
+bool weaponUnlockPending;
 #if CG_GATEWAY_ROLE == 0 && CG_GATEWAY_EVENT_MODE
 GatewaySegmentQueue segments;
 portMUX_TYPE segmentMux = portMUX_INITIALIZER_UNLOCKED;
@@ -168,8 +170,15 @@ void gatewayReadFrame(cg_payload_sensor_frame_t &frame) {
 bool gatewayQueueFeedback(const uint8_t *payload) {
     cg_payload_combat_feedback_t f;
     memcpy(&f, payload, sizeof(f));
-    // Codes 0-3 combat outcomes, 4 ACTION_CONFIRMED, 5/6 WEAPON_SELECT_ALLOWED/BLOCKED
-    // (shared/enums/enums.yaml FeedbackCode). 5/6 only set the weapon-selection gate, never buzz.
+    // Codes 0-3 combat outcomes, 4 ACTION_CONFIRMED, 5/6 WEAPON_SELECT_ALLOWED/BLOCKED, 7
+    // WEAPON_UNLOCK (shared/enums/enums.yaml FeedbackCode). 5-7 are commands, never a buzz.
+    if (f.feedback_code == 7) {
+        portENTER_CRITICAL(&sampleMux);
+        weaponUnlockPending = true;
+        portEXIT_CRITICAL(&sampleMux);
+        Serial.printf("[setup] match reset: weapon unlocked by the engine\n");
+        return true;
+    }
     if (f.feedback_code == 5 || f.feedback_code == 6) {
         bool allowed = f.feedback_code == 5;
         portENTER_CRITICAL(&sampleMux);
@@ -190,6 +199,13 @@ bool gatewayWeaponSelectAllowed() {
     bool allowed = weaponSelectAllowed;
     portEXIT_CRITICAL(&sampleMux);
     return allowed;
+}
+bool gatewayTakeWeaponUnlock() {
+    portENTER_CRITICAL(&sampleMux);
+    bool pending = weaponUnlockPending;
+    weaponUnlockPending = false;
+    portEXIT_CRITICAL(&sampleMux);
+    return pending;
 }
 void gatewayGuardEvent(bool guarding) {
     uint32_t now = millis();

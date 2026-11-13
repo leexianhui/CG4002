@@ -93,18 +93,31 @@ async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
     # The engine's latest WEAPON_SELECT_* for this player, replayed to every new hub session: a hub
     # that reboots or reconnects starts blocked and must hear whether its phone has calibrated.
     weapon_selection: CombatFeedback | None = None
+    # A match reset's WEAPON_UNLOCK that no hub session has taken yet (hub offline at the time).
+    pending_unlock: CombatFeedback | None = None
 
     async def on_combat_feedback(feedback: CombatFeedback) -> None:
-        nonlocal weapon_selection
+        nonlocal weapon_selection, pending_unlock
+        streaming = session is not None and session.streaming
         if feedback.code in WEAPON_SELECTION_CODES:
             weapon_selection = feedback
             logger.info("weapon_selection", player_id=settings.player_id,
                         allowed=feedback.code is FeedbackCode.WEAPON_SELECT_ALLOWED)
-        if session is None:
-            return
-        if feedback.code in WEAPON_SELECTION_CODES and not session.streaming:
-            return  # the session sends the latest one itself when it starts streaming
-        session.queue_combat_feedback(feedback)
+            if not streaming:
+                return  # the session sends the latest one itself when it starts streaming
+        elif feedback.code is FeedbackCode.WEAPON_UNLOCK:
+            logger.info("weapon_unlock", player_id=settings.player_id, delivered_now=streaming)
+            if not streaming:
+                pending_unlock = feedback
+                return
+        if session is not None:
+            session.queue_combat_feedback(feedback)
+
+    def startup_feedback() -> list[CombatFeedback]:
+        nonlocal pending_unlock
+        commands = [f for f in (pending_unlock, weapon_selection) if f is not None]
+        pending_unlock = None
+        return commands
 
     engine_link = EngineLinkClient(
         url=engine_url,
@@ -155,7 +168,7 @@ async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
                 ultra96=ultra96,
                 on_weapon_changed=on_weapon_changed,
                 on_action_result=on_action_result,
-                startup_feedback=lambda: weapon_selection,
+                startup_feedback=startup_feedback,
             )
             try:
                 await session.run()

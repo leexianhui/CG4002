@@ -174,7 +174,13 @@ async def test_two_phone_combat_guard_release_reconnect_and_operator_reset():
             assert reset["hp"] == {"1": 100, "2": 100}
             restored = await receive_until(replacement,
                 lambda m: snapshot()(m) and all(p["hp"] == 100 for p in m["players"]))
-            assert all(p["weapon"] == "SWORD" and not p["cooldowns"] for p in restored["players"])
+            # A reset re-opens weapon selection (2026-11-13): no weapon in the engine, and each
+            # relay is told WEAPON_UNLOCK for its hub.
+            assert all(p["weapon"] is None and not p["cooldowns"] for p in restored["players"])
+            for relay, pid in ((r1, 1), (r2, 2)):
+                unlock = await receive_until(relay, lambda m: m.get("code") == "WEAPON_UNLOCK")
+                assert (unlock["type"], unlock["playerId"], unlock["intensityPct"]) == (
+                    "COMBAT_FEEDBACK", pid, 0)
     finally:
         for ws in connections:
             await ws.close()

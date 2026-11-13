@@ -307,7 +307,8 @@ comms .env** does the same by hand. Both fields stay editable in the app if you 
    weapon poses (handling the phone often looks like one). The phone's weapon screen opens; hold the
    weapon's pose until the hub buzzes twice (weapon locked). Hub serial: `[setup] weapon selection
    ALLOWED (phone calibrated)` first; relay: `weapon_selection allowed=True`. A weapon already
-   locked stays locked (until the hub reboots), even if the phone loses calibration later.
+   locked stays locked even if the phone loses calibration later; only a match reset (below) or a
+   hub reboot frees it.
 4. The setup readings at the bottom of the phone panel: both relays connected, both ready, positions sensible. Two
    people 1 m apart along +Z should read about (0, 0) and (0, 1).
 5. When all four conditions hold, the engine moves to **IN_PROGRESS**. Swing!
@@ -317,6 +318,12 @@ Reset the match (Ultra96, from `comms/`):
 ```sh
 .venv/bin/python -m cg_comms.tools.reset_match --config configs/engine.integration.yaml --host localhost
 ```
+
+(or the phone panel's **RESTART**). A reset puts both players back to full HP with no cooldowns
+**and no weapon**: the engine sends each hub `WEAPON_UNLOCK` (engine and relay log `weapon_unlock`;
+hub serial `[setup] match reset: weapon unlocked by the engine`, then `weapon_unlocked was=...`).
+Each player then calibrates (if the phone lost it) and holds a weapon pose again. A hub that was
+offline at the reset is unlocked as soon as its relay and session are back.
 
 ---
 

@@ -3164,6 +3164,31 @@ void lockWeapon(WeaponType w, unsigned long now)
     localFeedback(FB_WEAPON_LOCKED, (uint8_t)w); // 2 buzzes + weapon colour
 }
 
+#ifdef CG_HARDWARE_GATEWAY
+// Game build: a match reset (the engine's WEAPON_UNLOCK via the relay) re-opens weapon selection
+// the way a reboot would, but keeps the node and relay links. Back to detecting: the next weapon
+// needs the full hold again, and the phone's calibration (gatewayWeaponSelectAllowed).
+void unlockWeapon(unsigned long now)
+{
+    if (phase != PHASE_LOCKED)
+        return;
+    if (lastGuardState == GUARDING)
+        setHubGuardState(GUARD_IDLE, (uint32_t)now, "weapon_unlocked");
+    resultLog("weapon_unlocked was=" + String(weaponName(lockedWeapon)));
+    lockedWeapon = WEAPON_UNKNOWN;
+    phase = PHASE_DETECTING;
+    candidateWeapon = WEAPON_UNKNOWN;
+    // Drop any half-segmented stroke from the old weapon.
+    state = IDLE;
+    sampleCount = 0;
+    pretrigHead = 0;
+    pretrigFilled = false;
+    lastStrikeValid = false;
+    acceptedCount = 0;
+    ledSampling();
+}
+#endif
+
 // Which gate stopped this tick from classifying as the current candidate.
 // Lists every failing gate, e.g. "r_unstable,l_stale".
 String detectionMissReason(WeaponType w, bool rightStable, bool lFresh, bool tFresh, float matchDist)
@@ -3383,6 +3408,8 @@ void loop()
     updateLed();
     updateFeedback(millis());
 #ifdef CG_HARDWARE_GATEWAY
+    if (gatewayTakeWeaponUnlock())
+        unlockWeapon(millis());
     gatewayPoll(phase == PHASE_LOCKED ? (uint8_t)lockedWeapon : 0);
     int relayDuty = gatewayFeedbackDuty();
     if (relayDuty >= 0)
