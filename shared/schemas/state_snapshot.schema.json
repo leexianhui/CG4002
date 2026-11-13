@@ -142,6 +142,19 @@
           },
           "title": "Cooldowns",
           "type": "array"
+        },
+        "weaponLock": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SnapshotWeaponLock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The weapon pose being held toward the hub's lock (lock-in countdown); null when none.",
+          "title": "Weaponlock"
         }
       },
       "required": [
@@ -183,6 +196,37 @@
         "heading"
       ],
       "title": "SnapshotPosition",
+      "type": "object"
+    },
+    "SnapshotWeaponLock": {
+      "additionalProperties": false,
+      "properties": {
+        "weapon": {
+          "enum": [
+            "SWORD",
+            "SPEAR",
+            "MACE"
+          ],
+          "title": "Weapon",
+          "type": "string"
+        },
+        "heldMs": {
+          "minimum": 0,
+          "title": "Heldms",
+          "type": "integer"
+        },
+        "totalMs": {
+          "minimum": 0,
+          "title": "Totalms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "weapon",
+        "heldMs",
+        "totalMs"
+      ],
+      "title": "SnapshotWeaponLock",
       "type": "object"
     }
   },

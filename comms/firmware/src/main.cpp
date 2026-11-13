@@ -53,6 +53,8 @@ CgReliableSend g_pending_rfid;
 // Hub: the newest guard edge (GUARD_EVENT), ACK + identical-ciphertext retry like RFID_EVENT.
 CgReliableSend g_pending_guard;
 constexpr uint32_t kGuardMaxAgeMs = 1000; // an edge older than this (relay was away) is stale
+// Hub: the newest weapon-candidate edge (WEAPON_CANDIDATE), same delivery as GUARD_EVENT.
+CgReliableSend g_pending_candidate;
 #endif
 CgReliableReceiveCache g_feedback_cache;
 
@@ -436,6 +438,7 @@ void drain_incoming_non_blocking() {
             for (auto &chunk : g_segment_tx) chunk.ack(acked_seq);
 #endif
 #ifdef CG_HARDWARE_GATEWAY
+            g_pending_candidate.ack(acked_seq);
             bool guard_was_pending = g_pending_guard.active;
             g_pending_guard.ack(acked_seq);
             if (guard_was_pending && !g_pending_guard.active)
@@ -496,6 +499,7 @@ bool do_handshake() {
     g_pending_rfid.reset();
 #ifdef CG_HARDWARE_GATEWAY
     g_pending_guard.reset();
+    g_pending_candidate.reset();
 #endif
 #ifdef CG_SEGMENT_UPLINK
     finish_segment("abandoned (relay reconnected)");
@@ -736,6 +740,24 @@ void service_device_logs() {
     last_ms = now;
     send_packet(CG_PKT_DEVICE_LOG, (const uint8_t *)&piece, sizeof(piece), nullptr, 0);
 }
+
+// Hub: forwards the newest weapon-candidate edge (lock-in started / stopped) as a reliable
+// WEAPON_CANDIDATE, for the phones' lock-in countdown. Stale edges (relay away) are dropped.
+void service_weapon_candidate() {
+    uint8_t weapon;
+    uint32_t event_ms;
+    uint16_t lock_ms;
+    if (gatewayTakeWeaponCandidate(weapon, event_ms, lock_ms) && millis() - event_ms <= kGuardMaxAgeMs) {
+        cg_payload_weapon_candidate_t payload = {};
+        payload.device_timestamp_ms = event_ms;
+        payload.weapon_id = weapon;
+        payload.lock_ms = lock_ms;
+        send_packet(CG_PKT_WEAPON_CANDIDATE, (const uint8_t *)&payload, sizeof(payload), nullptr, 0,
+                    nullptr, &g_pending_candidate);
+    }
+    if (g_pending_candidate.poll(millis()) > 0)
+        notify_frame(g_pending_candidate.frame, g_pending_candidate.len);
+}
 #endif
 
 }  // namespace
@@ -843,6 +865,7 @@ void loop() {
     service_pending_rfid_event();
 #ifdef CG_HARDWARE_GATEWAY
     service_guard_events();
+    service_weapon_candidate();
 #endif
 #ifdef CG_SEGMENT_UPLINK
     service_segments();

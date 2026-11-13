@@ -325,6 +325,21 @@ hub serial `[setup] match reset: weapon unlocked by the engine`, then `weapon_un
 Each player then calibrates (if the phone lost it) and holds a weapon pose again. A hub that was
 offline at the reset is unlocked as soon as its relay and session are back.
 
+Set a player's weapon directly (Ultra96, from `comms/`), at any point: during weapon selection or
+mid-match, without a reset:
+
+```sh
+.venv/bin/python -m cg_comms.tools.set_weapon --config configs/engine.integration.yaml --player 1 --weapon SPEAR
+```
+
+The hub locks it at once (no 3 s hold, no phone-calibration wait): engine `weapon_set`, relay
+`weapon_set` then `weapon_changed weapon=SPEAR`, hub serial `[setup] operator set weapon 2` then
+`weapon_set_by_operator=spear`. Weapons: SWORD, SPEAR, MACE.
+
+While a player holds a weapon pose, the phone's weapon screen shows **LOCKING SPEAR** with the
+seconds left and a bar, and brightens that weapon's dummy; it goes back to the instructions if the
+pose is lost (relay: `weapon_candidate weapon=SPEAR`, then `weapon=None`).
+
 ---
 
 ## Troubleshooting

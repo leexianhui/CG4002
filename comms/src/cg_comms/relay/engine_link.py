@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 import structlog
 import websockets
 
-from cg_comms.messages.models import Action, CombatFeedback, WeaponChanged
+from cg_comms.messages.models import Action, CombatFeedback, WeaponCandidate, WeaponChanged
 from cg_comms.messages.validate import MessageDropped, parse_app_message
 from cg_comms.relay.reconnect import ReconnectWorker
 
@@ -90,6 +90,9 @@ class EngineLinkClient:
 
     async def send_weapon_changed(self, weapon_changed: WeaponChanged) -> None:
         await self._send(weapon_changed.model_dump_json(by_alias=True))
+
+    async def send_weapon_candidate(self, candidate: WeaponCandidate) -> None:
+        await self._send(candidate.model_dump_json(by_alias=True))
 
     async def _send(self, payload: str) -> None:
         if not self._worker.connected.is_set():

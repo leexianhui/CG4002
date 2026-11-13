@@ -18,7 +18,15 @@ import structlog
 from cg_comms.config import EngineSettings
 from cg_comms.engine.broadcaster import broadcast_to_visualizers, send_to_relay
 from cg_comms.engine.game_state_task import GameStateTask
-from cg_comms.engine.inbound import LinkReset, ResetMatch, SetGodMode, SnapshotRequest, route_inbound
+from cg_comms.engine.inbound import (
+    LinkReset,
+    ResetMatch,
+    SetGodMode,
+    SetWeapon,
+    SnapshotRequest,
+    route_inbound,
+)
+from cg_comms.messages.enums import Weapon
 from cg_comms.engine.rules import Rules
 from cg_comms.engine.ws_server import (
     CONTROL_PATH,
@@ -90,6 +98,15 @@ async def run_engine(settings: EngineSettings) -> None:
                     and isinstance(command["enabled"], bool)):
                 logger.info("god_mode_requested", path=path, enabled=command["enabled"])
                 await task.submit(SetGodMode(command["enabled"]))
+            elif (isinstance(command, dict)
+                    and command.keys() == {"type", "version", "playerId", "weapon"}
+                    and command["type"] == "SET_WEAPON" and command["version"] == 1
+                    and command["playerId"] in (1, 2)
+                    and command["weapon"] in ("SWORD", "SPEAR", "MACE")):
+                # tools/set_weapon.py: lock that player's weapon on the hub now, from any stage.
+                logger.info("weapon_set_command", path=path, player_id=command["playerId"],
+                            weapon=command["weapon"])
+                await task.submit(SetWeapon(command["playerId"], Weapon(command["weapon"])))
             else:
                 logger.warning("control_command_rejected")
             return

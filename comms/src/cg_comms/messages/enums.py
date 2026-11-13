@@ -96,6 +96,10 @@ class FeedbackCode(_WireEnum):
     WEAPON_SELECT_ALLOWED = "WEAPON_SELECT_ALLOWED"
     WEAPON_SELECT_BLOCKED = "WEAPON_SELECT_BLOCKED"
     WEAPON_UNLOCK = "WEAPON_UNLOCK"  # engine -> relay -> hub on a match reset: drop the locked weapon
+    # engine -> relay -> hub, the operator's SET_WEAPON: lock this weapon now, from any stage
+    WEAPON_SET_SWORD = "WEAPON_SET_SWORD"
+    WEAPON_SET_SPEAR = "WEAPON_SET_SPEAR"
+    WEAPON_SET_MACE = "WEAPON_SET_MACE"
 
 
 WIRE_VALUES: dict[_WireEnum, int] = {
@@ -135,4 +139,7 @@ WIRE_VALUES: dict[_WireEnum, int] = {
     FeedbackCode.WEAPON_SELECT_ALLOWED: 5,
     FeedbackCode.WEAPON_SELECT_BLOCKED: 6,
     FeedbackCode.WEAPON_UNLOCK: 7,
+    FeedbackCode.WEAPON_SET_SWORD: 8,
+    FeedbackCode.WEAPON_SET_SPEAR: 9,
+    FeedbackCode.WEAPON_SET_MACE: 10,
 }

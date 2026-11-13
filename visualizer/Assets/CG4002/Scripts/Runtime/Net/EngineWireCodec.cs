@@ -141,6 +141,14 @@ namespace CG4002.Net
                 string guard = Text(p, "guardState");
                 if (guard != "IDLE" && guard != "GUARDING") throw new FormatException("Unknown guard");
                 output.Add(new GuardMessage { player = id, guarding = guard == "GUARDING" });
+                // The hub's lock-in progress for the weapon screen; null when no pose is being held.
+                if (p["weaponLock"] is JObject weaponLock)
+                    output.Add(new WeaponLockMessage { player = id, locking = true,
+                        weapon = Weapon(Text(weaponLock, "weapon")),
+                        heldSeconds = Number(weaponLock, "heldMs") / 1000f,
+                        totalSeconds = Number(weaponLock, "totalMs") / 1000f });
+                else
+                    output.Add(new WeaponLockMessage { player = id, locking = false });
                 if (p["position"] is JObject position)
                     output.Add(new PositionMessage { player = id,
                         position = new Vector3(Number(position, "x"), 0f, Number(position, "y")),

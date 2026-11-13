@@ -3169,6 +3169,13 @@ void lockWeapon(WeaponType w, unsigned long now)
     cooldownUntil = now + 500;
 
     localFeedback(FB_WEAPON_LOCKED, (uint8_t)w); // 2 buzzes + weapon colour
+#ifdef CG_HARDWARE_GATEWAY
+    if (candidateWeapon != WEAPON_UNKNOWN)
+    {
+        candidateWeapon = WEAPON_UNKNOWN; // locked: the phone's countdown is over
+        gatewayWeaponCandidate(0, (uint32_t)now, (uint16_t)WEAPON_LOCK_HOLD_MS);
+    }
+#endif
 }
 
 #ifdef CG_HARDWARE_GATEWAY
@@ -3193,6 +3200,18 @@ void unlockWeapon(unsigned long now)
     lastStrikeValid = false;
     acceptedCount = 0;
     ledSampling();
+}
+
+// Game build: the operator's SET_WEAPON (tools/set_weapon.py via engine and relay): lock this weapon
+// now, from any stage, without the hold or the phone gate. Reported like any lock.
+void forceWeapon(WeaponType w, unsigned long now)
+{
+    if (w == WEAPON_UNKNOWN)
+        return;
+    if (lastGuardState == GUARDING)
+        setHubGuardState(GUARD_IDLE, (uint32_t)now, "weapon_set");
+    resultLog("weapon_set_by_operator=" + String(weaponName(w)));
+    lockWeapon(w, now);
 }
 #endif
 
@@ -3291,12 +3310,19 @@ void runDetectionTick(float ax_g, float ay_g, float az_g, float gyroMag, unsigne
                               " nearest=" + weaponName(nearest) + " dist=" + String(matchDist, 1) +
                               " margin=" + String(matchMargin, 1) + poseString(right) + ")");
                     candidateWeapon = WEAPON_UNKNOWN;
+#ifdef CG_HARDWARE_GATEWAY
+                    gatewayWeaponCandidate(0, (uint32_t)now, (uint16_t)WEAPON_LOCK_HOLD_MS);
+#endif
                 }
             }
         }
         if (candidateWeapon == WEAPON_UNKNOWN && w != WEAPON_UNKNOWN)
         {
             candidateWeapon = w;
+#ifdef CG_HARDWARE_GATEWAY
+            // Game build: the phone's weapon screen counts the lock-in down from now.
+            gatewayWeaponCandidate((uint8_t)w, (uint32_t)now, (uint16_t)WEAPON_LOCK_HOLD_MS);
+#endif
             candidateSinceMs = now;
             candidateLastSeenMs = now;
             resultLog("weapon_candidate=" + String(weaponName(w)) + " dist=" + String(matchDist, 1) +
@@ -3417,6 +3443,9 @@ void loop()
 #ifdef CG_HARDWARE_GATEWAY
     if (gatewayTakeWeaponUnlock())
         unlockWeapon(millis());
+    uint8_t forcedWeapon;
+    if (gatewayTakeForcedWeapon(forcedWeapon))
+        forceWeapon((WeaponType)forcedWeapon, millis());
     gatewayPoll(phase == PHASE_LOCKED ? (uint8_t)lockedWeapon : 0);
     int relayDuty = gatewayFeedbackDuty();
     if (relayDuty >= 0)

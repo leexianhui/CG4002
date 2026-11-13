@@ -31,6 +31,12 @@ uint32_t guardMs;
 bool weaponSelectAllowed;
 // Hub: a match reset's WEAPON_UNLOCK, BLE task -> hardware loop.
 bool weaponUnlockPending;
+// Hub: newest weapon-candidate edge (hardware loop -> BLE task) and the operator's forced weapon.
+bool candidatePending;
+uint8_t candidateWeaponId;
+uint32_t candidateMs;
+uint16_t candidateLockMs;
+uint8_t forcedWeapon;
 #if CG_GATEWAY_ROLE == 0 && CG_GATEWAY_EVENT_MODE
 GatewaySegmentQueue segments;
 portMUX_TYPE segmentMux = portMUX_INITIALIZER_UNLOCKED;
@@ -174,6 +180,14 @@ bool gatewayQueueFeedback(const uint8_t *payload) {
     memcpy(&f, payload, sizeof(f));
     // Codes 0-3 combat outcomes, 4 ACTION_CONFIRMED, 5/6 WEAPON_SELECT_ALLOWED/BLOCKED, 7
     // WEAPON_UNLOCK (shared/enums/enums.yaml FeedbackCode). 5-7 are commands, never a buzz.
+    if (f.feedback_code >= 8 && f.feedback_code <= 10) {
+        uint8_t weapon = (uint8_t)(f.feedback_code - 7); // 1 sword, 2 spear, 3 mace
+        portENTER_CRITICAL(&sampleMux);
+        forcedWeapon = weapon;
+        portEXIT_CRITICAL(&sampleMux);
+        Serial.printf("[setup] operator set weapon %u\n", (unsigned)weapon);
+        return true;
+    }
     if (f.feedback_code == 7) {
         portENTER_CRITICAL(&sampleMux);
         weaponUnlockPending = true;
@@ -201,6 +215,31 @@ bool gatewayWeaponSelectAllowed() {
     bool allowed = weaponSelectAllowed;
     portEXIT_CRITICAL(&sampleMux);
     return allowed;
+}
+void gatewayWeaponCandidate(uint8_t weapon, uint32_t event_ms, uint16_t lock_ms) {
+    portENTER_CRITICAL(&sampleMux);
+    candidatePending = true;
+    candidateWeaponId = weapon;
+    candidateMs = event_ms;
+    candidateLockMs = lock_ms;
+    portEXIT_CRITICAL(&sampleMux);
+}
+bool gatewayTakeWeaponCandidate(uint8_t &weapon, uint32_t &event_ms, uint16_t &lock_ms) {
+    portENTER_CRITICAL(&sampleMux);
+    bool pending = candidatePending;
+    weapon = candidateWeaponId;
+    event_ms = candidateMs;
+    lock_ms = candidateLockMs;
+    candidatePending = false;
+    portEXIT_CRITICAL(&sampleMux);
+    return pending;
+}
+bool gatewayTakeForcedWeapon(uint8_t &weapon) {
+    portENTER_CRITICAL(&sampleMux);
+    weapon = forcedWeapon;
+    forcedWeapon = 0;
+    portEXIT_CRITICAL(&sampleMux);
+    return weapon != 0;
 }
 bool gatewayTakeWeaponUnlock() {
     portENTER_CRITICAL(&sampleMux);

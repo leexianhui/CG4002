@@ -94,3 +94,8 @@ FeedbackCode:
     # Engine -> relay -> hub on a match reset, not a buzz: drop the locked weapon and detect again (the
     # phone gate above still applies). Kept pending by the engine / relay until that hub is reachable.
     - { name: WEAPON_UNLOCK,         wire: 7 }
+    # Engine -> relay -> hub, the operator's SET_WEAPON (tools/set_weapon.py): lock this weapon now,
+    # from any stage, bypassing the phone gate. The hub then reports it as a normal lock.
+    - { name: WEAPON_SET_SWORD,      wire: 8 }
+    - { name: WEAPON_SET_SPEAR,      wire: 9 }
+    - { name: WEAPON_SET_MACE,       wire: 10 }

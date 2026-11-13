@@ -45,6 +45,7 @@ class PacketType(IntEnum):
     SEGMENT_CHUNK = 0x12
     GUARD_EVENT = 0x13  # hub -> relay: the left wrist entered/left the guard pose
     DEVICE_LOG = 0x14  # hub -> relay, best-effort: a piece of a hub/torso/left-wrist debug line
+    WEAPON_CANDIDATE = 0x15  # hub -> relay: a weapon pose started (or stopped) counting toward the lock
     HEARTBEAT = 0x20
     ACK = 0x21
     COMBAT_FEEDBACK = 0x30
@@ -63,6 +64,7 @@ RELIABLE_PACKET_TYPES: frozenset[PacketType] = frozenset(
         PacketType.RFID_EVENT,
         PacketType.SEGMENT_CHUNK,
         PacketType.GUARD_EVENT,
+        PacketType.WEAPON_CANDIDATE,
         PacketType.COMBAT_FEEDBACK,
     }
 )
@@ -80,6 +82,7 @@ ACK_RETRANSMIT_PACKET_TYPES: frozenset[PacketType] = frozenset(
         PacketType.RFID_EVENT,
         PacketType.SEGMENT_CHUNK,
         PacketType.GUARD_EVENT,
+        PacketType.WEAPON_CANDIDATE,
         PacketType.COMBAT_FEEDBACK,
     }
 )

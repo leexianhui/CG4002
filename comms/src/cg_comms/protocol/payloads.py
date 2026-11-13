@@ -102,6 +102,12 @@ PAYLOAD_TABLES: dict[PacketType, tuple[Field, ...]] = {
         Field("line_seq", FieldKind.U16),
         Field("text", FieldKind.BYTES, DEVICE_LOG_TEXT_LEN),  # ASCII, NUL-padded
     ),
+    PacketType.WEAPON_CANDIDATE: (
+        Field("device_timestamp_ms", FieldKind.U32),  # hub clock: when the hold started (or ended)
+        Field("weapon_id", FieldKind.U8),  # Weapon wire value being held; 0 = no candidate any more
+        Field("reserved", FieldKind.U8),
+        Field("lock_ms", FieldKind.U16),  # how long the pose must be held to lock (hub's setting)
+    ),
     PacketType.SEGMENT_CHUNK: (
         Field("segment_id", FieldKind.U32),
         Field("chunk_index", FieldKind.U8),

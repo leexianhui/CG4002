@@ -282,6 +282,25 @@ both players, is not part of the match (it stays on through `RESET_MATCH` until 
 shown to the phones as `godMode` in STATE_SNAPSHOT. Malformed variants are rejected like any other
 unknown control command.
 
+### Set weapon (operator)
+
+`/control` also accepts `{"type":"SET_WEAPON","version":1,"playerId":1,"weapon":"SPEAR"}` (playerId
+1 or 2; weapon SWORD, SPEAR or MACE), sent by `python -m cg_comms.tools.set_weapon`. The engine sends
+that player's relay COMBAT_FEEDBACK `WEAPON_SET_SWORD` / `_SPEAR` / `_MACE` (codes 8-10, intensity 0,
+not a buzz); the hub locks that weapon at once, from any stage (weapon selection or mid-match),
+without the 3 s hold or the phone-calibration gate, and reports it as a normal lock (WEAPON_CHANGED),
+so the engine and both phones follow. Held per player until that relay (and its hub session) is
+connected; a match reset drops an undelivered one. Malformed variants are rejected.
+
+### Weapon lock-in (relay -> engine -> phones)
+
+While the hub counts a weapon pose toward its lock, the relay sends the engine
+`{"type":"WEAPON_CANDIDATE","version":1,"timestamp":<engine ms when the hold started>,
+"playerId":1,"weapon":"SPEAR","lockMs":3000}`, and the same with `"weapon":null` when the pose is
+lost or locked (from the hub's binary WEAPON_CANDIDATE). The engine shows it in STATE_SNAPSHOT as
+the player's `weaponLock: {"weapon","heldMs","totalMs"}` (null when no pose is held), so the weapon
+screen can say which weapon is locking and count the hold down.
+
 ## 4. Online visualizer boundary
 
 These additive JSON message types use version 1. Existing binary packet layouts and enums do not

@@ -17,10 +17,10 @@ import structlog
 from cg_comms.config import RelaySettings, find_repo_root
 from cg_comms.logging_setup import configure_logging
 from cg_comms.messages.enums import FeedbackCode
-from cg_comms.messages.models import Action, CombatFeedback, WeaponChanged
+from cg_comms.messages.models import Action, CombatFeedback, WeaponCandidate, WeaponChanged
 from cg_comms.relay.device_log import DeviceLogWriter
 from cg_comms.relay.engine_link import EngineLinkClient
-from cg_comms.relay.session import WEAPON_SELECTION_CODES, Session, SessionConfig
+from cg_comms.relay.session import WEAPON_SELECTION_CODES, WEAPON_SET_CODES, Session, SessionConfig
 from cg_comms.relay.tunnel import TunnelConfig, TunnelSupervisor
 from cg_comms.relay.ultra96 import Ultra96Client
 from cg_comms.relay.windowing import PlayerWindower
@@ -102,11 +102,13 @@ async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
     weapon_selection: CombatFeedback | None = None
     # A match reset's WEAPON_UNLOCK that no hub session has taken yet (hub offline at the time).
     pending_unlock: CombatFeedback | None = None
+    # The operator's latest SET_WEAPON that no hub session has taken yet.
+    pending_set: CombatFeedback | None = None
     device_logs_dir = resolve_device_logs_dir(settings)
     device_log = DeviceLogWriter(device_logs_dir, settings.player_id) if device_logs_dir else None
 
     async def on_combat_feedback(feedback: CombatFeedback) -> None:
-        nonlocal weapon_selection, pending_unlock
+        nonlocal weapon_selection, pending_unlock, pending_set
         streaming = session is not None and session.streaming
         if feedback.code is FeedbackCode.WEAPON_UNLOCK and device_log is not None:
             device_log.start_match("match reset")  # the engine sends WEAPON_UNLOCK on every reset
@@ -118,17 +120,27 @@ async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
                 return  # the session sends the latest one itself when it starts streaming
         elif feedback.code is FeedbackCode.WEAPON_UNLOCK:
             logger.info("weapon_unlock", player_id=settings.player_id, delivered_now=streaming)
+            pending_set = None  # the reset supersedes an operator weapon not yet delivered
             if not streaming:
                 pending_unlock = feedback
+                return
+        elif feedback.code in WEAPON_SET_CODES:
+            logger.info("weapon_set", player_id=settings.player_id,
+                        weapon=feedback.code.value.removeprefix("WEAPON_SET_"), delivered_now=streaming)
+            if not streaming:
+                pending_set = feedback
                 return
         if session is not None:
             session.queue_combat_feedback(feedback)
 
     def startup_feedback() -> list[CombatFeedback]:
-        nonlocal pending_unlock
-        commands = [f for f in (pending_unlock, weapon_selection) if f is not None]
-        pending_unlock = None
+        nonlocal pending_unlock, pending_set
+        commands = [f for f in (pending_unlock, pending_set, weapon_selection) if f is not None]
+        pending_unlock = pending_set = None
         return commands
+
+    async def on_weapon_candidate(candidate: WeaponCandidate) -> None:
+        await engine_link.send_weapon_candidate(candidate)
 
     engine_link = EngineLinkClient(
         url=engine_url,
@@ -180,6 +192,7 @@ async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
                 on_weapon_changed=on_weapon_changed,
                 on_action_result=on_action_result,
                 startup_feedback=startup_feedback,
+                on_weapon_candidate=on_weapon_candidate,
                 device_log=device_log,
             )
             try:

@@ -13,7 +13,15 @@ from dataclasses import dataclass
 import structlog
 
 from cg_comms.engine.ws_server import RELAY_PATHS, VISUALIZER_PATHS
-from cg_comms.messages.models import Action, Position, StateSnapshot, VisualizerReady, WeaponChanged
+from cg_comms.messages.enums import Weapon
+from cg_comms.messages.models import (
+    Action,
+    Position,
+    StateSnapshot,
+    VisualizerReady,
+    WeaponCandidate,
+    WeaponChanged,
+)
 from cg_comms.messages.validate import MessageDropped, parse_app_message
 
 logger = structlog.get_logger(__name__)
@@ -51,6 +59,23 @@ class SetGodMode:
 
 
 @dataclass(frozen=True)
+class SetWeapon:
+    """Operator command on /control (tools/set_weapon.py): lock this weapon on that player's hub now,
+    from any stage. The hub then reports it as a normal lock (WEAPON_CHANGED)."""
+
+    player_id: int
+    weapon: Weapon
+
+
+@dataclass(frozen=True)
+class InboundWeaponCandidate:
+    """Relay: the hub's weapon pose started (or stopped) counting toward its lock."""
+
+    player_id: int
+    candidate: WeaponCandidate
+
+
+@dataclass(frozen=True)
 class LinkReset:
     player_id: int
     channel: str
@@ -68,7 +93,8 @@ class SnapshotRequest:
 
 
 InboundEvent = (InboundAction | InboundWeaponChanged | InboundPosition | ResetMatch | SetGodMode
-                | LinkReset | InboundVisualizerReady | SnapshotRequest)
+                | SetWeapon | InboundWeaponCandidate | LinkReset | InboundVisualizerReady
+                | SnapshotRequest)
 
 
 def route_inbound(path: str, raw: str) -> InboundEvent | None:
@@ -91,6 +117,11 @@ def route_inbound(path: str, raw: str) -> InboundEvent | None:
                 logger.warning("inbound_player_id_mismatch", path=path, actual=parsed.player_id)
                 return None
             return InboundWeaponChanged(player_id=expected_player_id, weapon_changed=parsed)
+        if isinstance(parsed, WeaponCandidate):
+            if parsed.player_id != expected_player_id:
+                logger.warning("inbound_player_id_mismatch", path=path, actual=parsed.player_id)
+                return None
+            return InboundWeaponCandidate(player_id=expected_player_id, candidate=parsed)
         logger.warning("inbound_unexpected_type", path=path, msg_type=type(parsed).__name__)
         return None
 

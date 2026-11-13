@@ -237,6 +237,7 @@ PACKET_TYPES = {
     "SEGMENT_CHUNK": 0x12,
     "GUARD_EVENT": 0x13,
     "DEVICE_LOG": 0x14,
+    "WEAPON_CANDIDATE": 0x15,
     "HEARTBEAT": 0x20,
     "ACK": 0x21,
     "COMBAT_FEEDBACK": 0x30,
@@ -399,6 +400,13 @@ vectors.append(normal_vector(
     "DEVICE_LOG", PACKET_TYPES["DEVICE_LOG"],
     session_id=SESSION_ID, player_id=1, direction=0, seq=17, ext_seq=17,
     plaintext=device_log_plaintext,
+))
+
+# WEAPON_CANDIDATE: hub clock 271828 ms, SPEAR (2) held toward a 3000 ms lock.
+vectors.append(normal_vector(
+    "WEAPON_CANDIDATE", PACKET_TYPES["WEAPON_CANDIDATE"],
+    session_id=SESSION_ID, player_id=1, direction=0, seq=15, ext_seq=15,
+    plaintext=struct.pack("<IBBH", 271828, 2, 0, 3000),
 ))
 
 heartbeat_plaintext = struct.pack("<IHHHH", 50000, 3700, 3650, 3600, 0)

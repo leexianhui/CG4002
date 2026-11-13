@@ -47,6 +47,21 @@ namespace CG4002.Tests
         }
 
         [Test]
+        public void WeaponLockInProgressComesFromTheSnapshot()
+        {
+            // No weaponLock (no pose held, or an older engine): not locking, for both players.
+            Assert.That(EngineWireCodec.Decode(Snapshot).OfType<WeaponLockMessage>().Select(m => m.locking),
+                Is.EqualTo(new[] { false, false }));
+            var held = Snapshot.Replace(@"""ready"":false,""position"":null,",
+                @"""ready"":false,""position"":null,""weaponLock"":{""weapon"":""MACE"",""heldMs"":1200,""totalMs"":3000},");
+            var p2 = EngineWireCodec.Decode(held).OfType<WeaponLockMessage>().Single(m => m.player == PlayerId.P2);
+            Assert.That(p2.locking, Is.True);
+            Assert.That(p2.weapon, Is.EqualTo(WeaponType.Mace));
+            Assert.That(p2.heldSeconds, Is.EqualTo(1.2f).Within(1e-4f));
+            Assert.That(p2.totalSeconds, Is.EqualTo(3f).Within(1e-4f));
+        }
+
+        [Test]
         public void EnumsUseNamesInsteadOfIncompatibleIntegerValues()
         {
             Assert.That(EngineWireCodec.Weapon("SPEAR"), Is.EqualTo(WeaponType.Spear));

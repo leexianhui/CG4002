@@ -25,7 +25,16 @@ from cg_comms.messages.enums import ActionClass, FeedbackCode, GuardState, Weapo
 
 # Engine -> hub weapon-selection gate, carried on the COMBAT_FEEDBACK channel (not a buzz).
 WEAPON_SELECTION_CODES = frozenset({FeedbackCode.WEAPON_SELECT_ALLOWED, FeedbackCode.WEAPON_SELECT_BLOCKED})
-from cg_comms.messages.models import Action, CombatFeedback, SensorWindow, WeaponChanged
+# The operator's SET_WEAPON, as hub commands (lock this weapon now).
+WEAPON_SET_CODES = frozenset({FeedbackCode.WEAPON_SET_SWORD, FeedbackCode.WEAPON_SET_SPEAR,
+                              FeedbackCode.WEAPON_SET_MACE})
+from cg_comms.messages.models import (
+    Action,
+    CombatFeedback,
+    SensorWindow,
+    WeaponCandidate,
+    WeaponChanged,
+)
 from cg_comms.protocol import codec
 from cg_comms.protocol.codec import DecodedPacket, DecodeError
 from cg_comms.protocol.constants import PROTOCOL_VERSION, Direction, PacketType
@@ -85,6 +94,8 @@ class Session:
     # WEAPON_UNLOCK, the latest WEAPON_SELECT_*), read then so ones that arrived during the
     # handshake are not lost. Sent in order.
     startup_feedback: Callable[[], list[CombatFeedback]] | None = None
+    # The hub's weapon lock-in progress (WEAPON_CANDIDATE), for the phones' weapon screen.
+    on_weapon_candidate: Callable[[WeaponCandidate], Awaitable[None]] | None = None
     # Hardware debug lines (DEVICE_LOG) -> per-match CSVs. Owned by the relay process, so a
     # reconnect keeps writing the same match's file. None drops them.
     device_log: DeviceLogWriter | None = None
@@ -106,6 +117,7 @@ class Session:
     _streaming: bool = field(default=False, init=False)
     _last_weapon_ts: int = field(default=-1, init=False)
     _last_guard_ts: int = field(default=-1, init=False)
+    _last_candidate_ts: int = field(default=-1, init=False)
     _segments: SegmentAssembler = field(init=False)
     # request_id -> segment_id for in-flight segment-mode windows, for the segment_classified log.
     _segment_requests: dict[int, int] = field(default_factory=dict, init=False)
@@ -430,6 +442,11 @@ class Session:
             await self._send_ack(decoded.header.seq)
             if not decoded.duplicate:
                 self._handle_segment_chunk(decoded)
+        elif packet_type == int(PacketType.WEAPON_CANDIDATE):
+            self._heartbeat_monitor.mark_received()
+            await self._send_ack(decoded.header.seq)
+            if not decoded.duplicate:
+                await self._handle_weapon_candidate(decoded)
         elif packet_type == int(PacketType.GUARD_EVENT):
             self._heartbeat_monitor.mark_received()
             await self._send_ack(decoded.header.seq)
@@ -481,6 +498,25 @@ class Session:
         await self.on_weapon_changed(
             WeaponChanged(timestamp=engine_ts, player_id=self.config.player_id, weapon=weapon)  # type: ignore[arg-type]
         )
+
+    async def _handle_weapon_candidate(self, decoded: DecodedPacket) -> None:
+        """Hub WEAPON_CANDIDATE: a weapon pose started counting toward the lock (or stopped)."""
+        fields = decoded.fields
+        engine_ts = self._time_sync.to_engine_ms(fields["device_timestamp_ms"])
+        if engine_ts < self._last_candidate_ts:
+            return  # an older edge delivered late must not undo a newer one
+        self._last_candidate_ts = engine_ts
+        try:
+            weapon = Weapon.from_wire(fields["weapon_id"])
+        except ValueError:
+            weapon = Weapon.NONE
+        held = None if weapon is Weapon.NONE else weapon
+        logger.info("weapon_candidate", player_id=self.config.player_id,
+                    weapon=held.value if held else None, lock_ms=fields["lock_ms"])
+        if self.on_weapon_candidate is not None:
+            await self.on_weapon_candidate(WeaponCandidate(
+                timestamp=engine_ts, player_id=self.config.player_id,  # type: ignore[arg-type]
+                weapon=held, lock_ms=fields["lock_ms"]))  # type: ignore[arg-type]
 
     async def _handle_guard_event(self, decoded: DecodedPacket) -> None:
         """Hub GUARD_EVENT: the left wrist entered (GUARDING) or left (IDLE) the guard pose.

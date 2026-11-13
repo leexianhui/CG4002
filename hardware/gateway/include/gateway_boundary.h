@@ -27,6 +27,13 @@ bool gatewayWeaponSelectAllowed();
 // Hub, hardware thread: true once per match reset (COMBAT_FEEDBACK code 7 WEAPON_UNLOCK): drop the
 // locked weapon and detect again. Taking it clears it.
 bool gatewayTakeWeaponUnlock();
+// Hub, hardware thread: a weapon pose started counting toward the lock (weapon 1-3) or stopped (0).
+// Keeps only the newest edge. BLE task: takes it once, for a reliable WEAPON_CANDIDATE.
+void gatewayWeaponCandidate(uint8_t weapon, uint32_t event_ms, uint16_t lock_ms);
+bool gatewayTakeWeaponCandidate(uint8_t &weapon, uint32_t &event_ms, uint16_t &lock_ms);
+// Hub, hardware thread: the operator's SET_WEAPON (COMBAT_FEEDBACK codes 8-10): lock this weapon
+// (1-3) now. Taking it clears it.
+bool gatewayTakeForcedWeapon(uint8_t &weapon);
 bool gatewayTakeGuardEvent(uint8_t &state, uint32_t &event_ms);
 // Main-thread haptic PWM; -1 means leave the hardware's local pattern player alone.
 int gatewayFeedbackDuty();

@@ -146,7 +146,10 @@ namespace CG4002.UI
                     else if (!Needs(gameState.Get(choosingFor)))
                         Confirm(gameState.Get(choosingFor).weapon);
                     else
+                    {
                         KeepInView();
+                        ShowLockProgress();
+                    }
                     break;
                 case Stage.Confirming:
                     stageTimer += Time.deltaTime;
@@ -363,6 +366,45 @@ namespace CG4002.UI
             outOfViewTime = visible ? 0f : outOfViewTime + Time.deltaTime;
             if (outOfViewTime > recentreAfter)
                 PlaceInFrontOfCamera();
+        }
+
+        /// <summary>
+        /// The hub's lock-in, live: while a weapon's pose is held toward the lock, say which and count
+        /// the hold down (the snapshot's weaponLock, run on between snapshots), brighten that dummy as
+        /// it fills and dim the others. Back to the instructions when the pose is lost.
+        /// </summary>
+        void ShowLockProgress()
+        {
+            if (PickWeapon != null)
+                return;  // demo mode: picked with buttons, no hold
+            var player = gameState.Get(choosingFor);
+            bool locking = player.locking && player.lockTotalSeconds > 0f;
+            float progress = player.LockProgress;
+            foreach (var (type, dummy) in dummies)
+            {
+                var definition = catalog.Get(type);
+                if (definition == null)
+                    continue;
+                float boost = !locking ? 1f : type == player.lockingWeapon ? 1f + 1.5f * progress : 0.35f;
+                SetColour(dummy, definition.accentColor * boost);
+            }
+            if (locking)
+            {
+                var definition = catalog.Get(player.lockingWeapon);
+                string name = (definition != null ? definition.displayName : player.lockingWeapon.ToString()).ToUpperInvariant();
+                float remaining = player.lockTotalSeconds * (1f - progress);
+                SetText($"LOCKING {name}", $"Hold still  {remaining:0.0}s  {ProgressBar(progress)}");
+            }
+            else
+                SetText(weapons.Length == 1 ? "COPY THIS POSE" : "CHOOSE YOUR WEAPON",
+                    $"Hold the pose for {holdSeconds:0} seconds");
+        }
+
+        static string ProgressBar(float progress)
+        {
+            const int Cells = 12;
+            int filled = Mathf.Clamp(Mathf.RoundToInt(progress * Cells), 0, Cells);
+            return "[" + new string('#', filled) + new string('-', Cells - filled) + "]";
         }
 
         /// <summary>Pulse the chosen dummy brighter, fading out over the confirmation.</summary>

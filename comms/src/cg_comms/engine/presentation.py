@@ -72,6 +72,9 @@ class Presentation:
                 connected=presence.get(str(pid), False),
                 ready=self.ready[pid], position=position, cooldown_action=p.cooldown_action,
                 cooldowns=cooldowns,
+                weapon_lock=None if p.weapon_candidate is None else dict(
+                    weapon=p.weapon_candidate, total_ms=p.candidate_lock_ms,
+                    held_ms=min(max(0, now - p.candidate_since_ts), p.candidate_lock_ms)),
             ))
         # Validate the complete wire boundary together, including narrowed action/weapon IDs.
         return StateSnapshot.model_validate(dict(

@@ -58,6 +58,18 @@ namespace CG4002.State
     }
 
     /// <summary>
+    /// The hub's weapon lock-in (online: the snapshot's weaponLock): while <see cref="locking"/>, the
+    /// player is holding <see cref="weapon"/>'s pose and it locks after <see cref="totalSeconds"/>.
+    /// </summary>
+    public class WeaponLockMessage : Message
+    {
+        public bool locking;
+        public WeaponType weapon;
+        public float heldSeconds;
+        public float totalSeconds;
+    }
+
+    /// <summary>
     /// A player performed an attack; <see cref="Message.player"/> is the attacker.
     /// Inbound it drives the attack animation. Outbound it is sent only in offline mode, by
     /// SwordHitDetector standing in for the IMU and classifier.

@@ -74,6 +74,17 @@ class WeaponChanged(_Envelope):
     weapon: RealWeapon
 
 
+class WeaponCandidate(_Envelope):
+    """relay -> engine. The hub started holding a weapon pose toward its lock (`weapon`), or stopped
+    (`weapon` null). `timestamp` is when that happened; the pose locks after `lockMs` of holding.
+    Presentation only: the engine shows it to the phones as the snapshot's `weaponLock`."""
+
+    type: Literal["WEAPON_CANDIDATE"] = "WEAPON_CANDIDATE"
+    player_id: PlayerId = Field(alias="playerId")
+    weapon: RealWeapon | None
+    lock_ms: int = Field(alias="lockMs", ge=0, le=60000)
+
+
 class Position(_Envelope):
     """visualizer -> engine; online snapshots publish current geometry. app_messages.md §2.3."""
 
@@ -217,6 +228,15 @@ class SnapshotPosition(BaseModel):
     heading: Annotated[float, Field(ge=0.0, lt=360.0)]
 
 
+class SnapshotWeaponLock(BaseModel):
+    """A weapon pose being held toward the hub's lock: which, how long so far, how long needed."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    weapon: RealWeapon
+    held_ms: int = Field(alias="heldMs", ge=0)
+    total_ms: int = Field(alias="totalMs", ge=0)
+
+
 class SnapshotPlayer(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
     player_id: PlayerId = Field(alias="playerId")
@@ -229,6 +249,8 @@ class SnapshotPlayer(BaseModel):
     position: SnapshotPosition | None
     cooldown_action: CombatAction | None = Field(alias="cooldownAction")
     cooldowns: list[CooldownEntry]
+    # The weapon-select screen's lock-in progress; null when no weapon pose is being held.
+    weapon_lock: SnapshotWeaponLock | None = Field(alias="weaponLock", default=None)
 
 
 class StateSnapshot(_Envelope):
@@ -263,4 +285,5 @@ AppMessage = (
     | ActionRecognized
     | VisualizerReady
     | StateSnapshot
+    | WeaponCandidate
 )

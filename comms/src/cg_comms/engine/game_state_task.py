@@ -15,10 +15,12 @@ from cg_comms.engine.inbound import (
     InboundEvent,
     InboundPosition,
     InboundVisualizerReady,
+    InboundWeaponCandidate,
     InboundWeaponChanged,
     LinkReset,
     ResetMatch,
     SetGodMode,
+    SetWeapon,
     SnapshotRequest,
 )
 from cg_comms.engine.presentation import Presentation
@@ -34,6 +36,7 @@ from cg_comms.messages.enums import (
     FeedbackCode,
     GuardState,
     MatchPhase,
+    Weapon,
 )
 from cg_comms.messages.models import (
     Action,
@@ -58,6 +61,12 @@ _FEEDBACK_FOR_OUTCOME: dict[CombatOutcome, tuple[FeedbackCode, FeedbackCode | No
 # different sender that may be running on yet another machine with its own unrelated clock offset.
 # Anchored independently per (player_id, channel) so one channel's offset never leaks into the other.
 _CHANNEL_ACTION = "action"
+# The operator's SET_WEAPON, as the hub command (shared/enums/enums.yaml FeedbackCode 8-10).
+_WEAPON_SET_CODE = {
+    Weapon.SWORD: FeedbackCode.WEAPON_SET_SWORD,
+    Weapon.SPEAR: FeedbackCode.WEAPON_SET_SPEAR,
+    Weapon.MACE: FeedbackCode.WEAPON_SET_MACE,
+}
 _CHANNEL_POSITION = "position"
 
 
@@ -113,6 +122,8 @@ class GameStateTask:
     _weapon_select_sent: dict[int, bool] = field(default_factory=dict, init=False)
     # players whose hub still has to be told WEAPON_UNLOCK (set by a match reset, cleared once sent)
     _unlock_pending: set[int] = field(default_factory=set, init=False)
+    # player -> weapon the operator set (SET_WEAPON), still to be sent to that player's hub
+    _weapon_set_pending: dict[int, Weapon] = field(default_factory=dict, init=False)
     # player -> guard_entered_ts whose expiry was already logged/broadcast (once per guard).
     _guard_expiry_seen: dict[int, int] = field(default_factory=dict, init=False)
     # Per-player position warning window: (last warning time, suppressed count).
@@ -128,7 +139,8 @@ class GameStateTask:
             self.state.players[player_id] = PlayerState(player_id=player_id, hp=self.rules.starting_hp)
 
     async def submit(self, event: InboundEvent) -> None:
-        if isinstance(event, (ResetMatch, SetGodMode, LinkReset, SnapshotRequest, InboundVisualizerReady)):
+        if isinstance(event, (ResetMatch, SetGodMode, SetWeapon, LinkReset, SnapshotRequest,
+                              InboundVisualizerReady)):
             await self._inbox.put(event)
             return
         try:
@@ -155,6 +167,11 @@ class GameStateTask:
                     self.god_mode = event.enabled
                     logger.info("god_mode", enabled=self.god_mode)
                     self._next_snapshot_ms = 0  # both phones show it at once
+                elif isinstance(event, SetWeapon):
+                    # Sent by _update_weapon_selection once that player's relay is connected.
+                    self._weapon_set_pending[event.player_id] = event.weapon
+                    logger.info("weapon_set_requested", player_id=event.player_id,
+                                weapon=event.weapon.value)
                 elif isinstance(event, SnapshotRequest):
                     await event.send(self.current_state_snapshot())
                 elif isinstance(event, InboundVisualizerReady):
@@ -201,6 +218,17 @@ class GameStateTask:
 
     def _absorb(self, event: InboundEvent) -> None:
         now = monotonic_ms()
+        if isinstance(event, InboundWeaponCandidate):
+            # Presentation only, never combat: applied at once, outside the reorder buffer.
+            candidate = event.candidate
+            since = self._anchor(event.player_id, _CHANNEL_ACTION, candidate.timestamp, now)
+            holder = self.state.players.get(event.player_id)
+            if holder is not None:
+                holder.weapon_candidate = candidate.weapon
+                holder.candidate_since_ts = min(since, now)
+                holder.candidate_lock_ms = candidate.lock_ms
+                self._next_snapshot_ms = 0  # the lock-in countdown starts on the phone now
+            return
         message: Action | Position | WeaponChanged
         if isinstance(event, InboundAction):
             message, channel = event.action, _CHANNEL_ACTION
@@ -265,6 +293,7 @@ class GameStateTask:
             self.state.phase = MatchPhase.WAITING
         self.state.started_ts = self._reset_floor
         self._unlock_pending = {1, 2}  # both hubs drop their weapon; sent by _update_weapon_selection
+        self._weapon_set_pending.clear()  # a reset supersedes an operator weapon not yet delivered
         logger.info("match_reset")
         snapshot = self.current_match_state().model_copy(update={"reason": "reset"})
         await self.on_match_state(snapshot)
@@ -279,6 +308,7 @@ class GameStateTask:
                 continue
             if isinstance(event, InboundWeaponChanged):
                 player.weapon = event.weapon_changed.weapon
+                player.weapon_candidate = None  # locked: the countdown is over
                 logger.info("weapon_selected", player_id=event.player_id, weapon=player.weapon.value)
                 if self.on_weapon_changed is not None:
                     await self.on_weapon_changed(event.weapon_changed)
@@ -528,6 +558,12 @@ class GameStateTask:
                 await self.on_combat_feedback(pid, CombatFeedback(
                     timestamp=monotonic_ms(), player_id=pid,  # type: ignore[arg-type]
                     code=FeedbackCode.WEAPON_UNLOCK, intensity_pct=0, duration_ms=1, repeat_count=1))
+            if pid in self._weapon_set_pending:
+                weapon = self._weapon_set_pending.pop(pid)
+                logger.info("weapon_set", player_id=pid, weapon=weapon.value)
+                await self.on_combat_feedback(pid, CombatFeedback(
+                    timestamp=monotonic_ms(), player_id=pid,  # type: ignore[arg-type]
+                    code=_WEAPON_SET_CODE[weapon], intensity_pct=0, duration_ms=1, repeat_count=1))
             allowed = not self.require_visualizer_ready or self.presentation.ready[pid]
             if self._weapon_select_sent.get(pid) == allowed:
                 continue

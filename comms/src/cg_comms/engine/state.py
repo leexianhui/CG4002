@@ -32,6 +32,10 @@ class PlayerState:
     cooldowns: dict[ActionClass, int] = field(default_factory=dict)  # action -> expiry engine-ts-ms
     cooldown_totals: dict[ActionClass, int] = field(default_factory=dict)
     cooldown_action: ActionClass | None = None
+    # The weapon pose the hub is holding toward its lock (presentation only), since when, how long.
+    weapon_candidate: Weapon | None = None
+    candidate_since_ts: int = 0
+    candidate_lock_ms: int = 0
 
     def clone(self) -> "PlayerState":
         return PlayerState(
@@ -47,6 +51,9 @@ class PlayerState:
             cooldowns=dict(self.cooldowns),
             cooldown_totals=dict(self.cooldown_totals),
             cooldown_action=self.cooldown_action,
+            weapon_candidate=self.weapon_candidate,
+            candidate_since_ts=self.candidate_since_ts,
+            candidate_lock_ms=self.candidate_lock_ms,
         )
 
 

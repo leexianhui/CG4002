@@ -61,6 +61,7 @@ extern "C" {
 #define CG_PKT_SEGMENT_CHUNK   0x12 /* device -> laptop   reliable, windowed (up to 4 unACKed) */
 #define CG_PKT_GUARD_EVENT     0x13 /* device -> laptop   reliable    */
 #define CG_PKT_DEVICE_LOG      0x14 /* device -> laptop   best-effort */
+#define CG_PKT_WEAPON_CANDIDATE 0x15 /* device -> laptop   reliable    */
 #define CG_PKT_HEARTBEAT       0x20 /* both               best-effort */
 #define CG_PKT_ACK             0x21 /* both               never acked itself */
 #define CG_PKT_COMBAT_FEEDBACK 0x30 /* laptop -> device   reliable    */
@@ -181,6 +182,15 @@ typedef struct CG_PACKED {
     uint8_t  weapon_id;
     uint16_t reserved;
 } cg_payload_guard_event_t;
+
+/* device -> laptop, hub only: a weapon pose started counting toward the lock (weapon_id 1-3), or
+ * stopped (0: lost, or locked). 8 bytes. Edges only, for the phones' lock-in countdown. */
+typedef struct CG_PACKED {
+    uint32_t device_timestamp_ms; /* hub clock, when the hold started (or ended) */
+    uint8_t  weapon_id;           /* Weapon wire value; 0 = no candidate */
+    uint8_t  reserved;
+    uint16_t lock_ms;             /* how long the pose must be held to lock */
+} cg_payload_weapon_candidate_t;
 
 /* device -> laptop, hub only, best-effort: one piece of a debug log line from the hub or one of its
  * nodes (torso, left wrist), for the relay's per-match hardware log CSVs. 56 bytes. A line longer

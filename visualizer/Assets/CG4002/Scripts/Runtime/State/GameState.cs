@@ -15,6 +15,12 @@ namespace CG4002.State
         public bool weaponSelected = true;
         public bool weaponInitialized;
         public bool guarding;
+        // The hub's weapon lock-in (WeaponLockMessage): which pose is held, how far along.
+        public bool locking;
+        public WeaponType lockingWeapon;
+        public float lockHeldSeconds;
+        public float lockTotalSeconds;
+        public float lockReceivedAt;
         public bool hasPosition;
         public bool cooldownPaused;
         public float pausedCooldownRemaining;
@@ -33,6 +39,10 @@ namespace CG4002.State
 
         public float RemainingFor(ActionType action) => actionCooldowns.TryGetValue(action, out var value)
             ? Mathf.Max(0f, value.remainingSeconds - (cooldownPaused ? 0f : Time.time - cooldownReceivedAt)) : 0f;
+
+        /// <summary>Lock-in progress 0..1, running on between snapshots; 0 when not locking.</summary>
+        public float LockProgress => locking && lockTotalSeconds > 0f
+            ? Mathf.Clamp01((lockHeldSeconds + Time.time - lockReceivedAt) / lockTotalSeconds) : 0f;
 
         /// <summary>The full length of the move's running cooldown, or 0 if it's ready.</summary>
         public float TotalFor(ActionType action) => actionCooldowns.TryGetValue(action, out var value) ? value.totalSeconds : 0f;
@@ -91,6 +101,15 @@ namespace CG4002.State
                     player.weaponSelected = m.selected;
                     player.weaponInitialized = true;
                     WeaponChanged?.Invoke(m.player, m.weapon);
+                    break;
+
+                case WeaponLockMessage m:
+                    // Polled by WeaponSelectScreen every frame; no event needed.
+                    player.locking = m.locking;
+                    player.lockingWeapon = m.weapon;
+                    player.lockHeldSeconds = m.heldSeconds;
+                    player.lockTotalSeconds = m.totalSeconds;
+                    player.lockReceivedAt = Time.time;
                     break;
 
                 case GuardMessage m:

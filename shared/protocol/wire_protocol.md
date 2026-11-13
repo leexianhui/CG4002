@@ -48,6 +48,7 @@ discard a corrupted frame before spending a decrypt on it, which matters on the 
 | `CG_PKT_SEGMENT_CHUNK` | `0x12` | device → laptop | reliable, windowed |
 | `CG_PKT_GUARD_EVENT` | `0x13` | device → laptop | reliable |
 | `CG_PKT_DEVICE_LOG` | `0x14` | device → laptop | best-effort |
+| `CG_PKT_WEAPON_CANDIDATE` | `0x15` | device → laptop | reliable |
 | `CG_PKT_HEARTBEAT` | `0x20` | both | best-effort |
 | `CG_PKT_ACK` | `0x21` | both | never acked itself |
 | `CG_PKT_COMBAT_FEEDBACK` | `0x30` | laptop → device | reliable |
@@ -57,7 +58,7 @@ discard a corrupted frame before spending a decrypt on it, which matters on the 
 |---|---|---|
 | `SENSOR_FRAME`, `HEARTBEAT` | best-effort | Dropped capture frames can cause too_few/span suppression; never fill with unrelated frames |
 | `DEVICE_LOG` | best-effort | Debugging only; a lost piece shows as a gap in that line, never delays gameplay traffic |
-| `RFID_EVENT`, `GUARD_EVENT`, `COMBAT_FEEDBACK` | ACK + identical-ciphertext retry | One application effect; exact duplicates get another ACK |
+| `RFID_EVENT`, `GUARD_EVENT`, `WEAPON_CANDIDATE`, `COMBAT_FEEDBACK` | ACK + identical-ciphertext retry | One application effect; exact duplicates get another ACK |
 | `SEGMENT_CHUNK` | ACK + identical-ciphertext retry, up to 4 unACKed | One classifier request per complete segment; replay-checked by the 64-wide window, not a per-type watermark (several are in flight, so a watermark would reject a lost chunk's retransmit) |
 | `HELLO`, `HELLO_ACK`, `TIME_SYNC_*` | Bounded request/response | Failure restarts handshake with a fresh device nonce and BLE session; no generic ACK exchange |
 | `ACK` | never acked | obviously |
@@ -94,11 +95,14 @@ DEVICE_LOG           (56 B)  deviceTimestampMs u32 (source board's clock) | sour
                              index) | lineSeq u16 (per source) | text[48] (ASCII, NUL-padded).
                              One piece of a hardware debug line; the relay reassembles lines by
                              (source, lineSeq) into hardware/game/ CSVs
+WEAPON_CANDIDATE      (8 B)  deviceTimestampMs u32 (hub clock) | weaponId u8 (0 = none) |
+                             reserved u8 | lockMs u16. A weapon pose started/stopped counting to its lock
 HEARTBEAT            (12 B)  deviceTimestampMs u32 | vbatBelt_mV u16 | vbatDom_mV u16 |
                              vbatOff_mV u16 | statusFlags u16
 ACK                   (2 B)  ackedSeq u16
 COMBAT_FEEDBACK       (6 B)  feedbackCode u8 | intensityPct u8 | durationMs u16 | repeatCount u16
-                             (codes: enums.yaml FeedbackCode; 4 = ACTION_CONFIRMED from the relay)
+                             (codes: enums.yaml FeedbackCode; 4 = ACTION_CONFIRMED from the relay;
+                             5-10 are engine commands, never a buzz: weapon gate, unlock, set weapon)
 ```
 
 `SEGMENT_CHUNK` is the event-mode uplink of the hardware hub (`hardware/gateway`): instead of a
