@@ -157,6 +157,15 @@ namespace CG4002.State
         public bool enabled;
     }
 
+    /// <summary>
+    /// The tutorial (online: the snapshot's tutorialPlayerId): <see cref="Message.player"/> practises
+    /// alone while the engine plays the other player as a dummy. Not <see cref="active"/> in a normal match.
+    /// </summary>
+    public class TutorialMessage : Message
+    {
+        public bool active;
+    }
+
     // ── Visualizer to engine (Outbound) ────────────────────────────────────────────
     // PositionMessage and, offline only, ActionMessage above are also sent outbound.
 

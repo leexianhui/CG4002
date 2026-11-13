@@ -262,6 +262,8 @@ class StateSnapshot(_Envelope):
     reason: str | None = None
     # SET_GOD_MODE on /control: hits report damage but HP never drops. Stays on through resets.
     god_mode: bool = Field(alias="godMode", default=False)
+    # SET_TUTORIAL on /control: this player practises alone; the other player is the engine's dummy.
+    tutorial_player_id: PlayerId | None = Field(alias="tutorialPlayerId", default=None)
     players: list[SnapshotPlayer] = Field(min_length=2, max_length=2)
 
     @field_validator("players")

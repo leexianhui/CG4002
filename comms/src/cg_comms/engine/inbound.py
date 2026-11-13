@@ -76,6 +76,16 @@ class InboundWeaponCandidate:
 
 
 @dataclass(frozen=True)
+class SetTutorial:
+    """Local operator command delivered by the authenticated /control connection (a phone's
+    TUTORIAL button): `player_id` practises alone against a dummy the engine plays as the other
+    player (None ends the tutorial). `dummy_guards` makes the dummy raise its guard now and then."""
+
+    player_id: int | None
+    dummy_guards: bool
+
+
+@dataclass(frozen=True)
 class LinkReset:
     player_id: int
     channel: str
@@ -93,7 +103,7 @@ class SnapshotRequest:
 
 
 InboundEvent = (InboundAction | InboundWeaponChanged | InboundPosition | ResetMatch | SetGodMode
-                | SetWeapon | InboundWeaponCandidate | LinkReset | InboundVisualizerReady
+                | SetTutorial | SetWeapon | InboundWeaponCandidate | LinkReset | InboundVisualizerReady
                 | SnapshotRequest)
 
 

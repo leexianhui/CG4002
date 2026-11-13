@@ -20,6 +20,7 @@ from cg_comms.engine.inbound import (
     LinkReset,
     ResetMatch,
     SetGodMode,
+    SetTutorial,
     SetWeapon,
     SnapshotRequest,
 )
@@ -68,6 +69,8 @@ _WEAPON_SET_CODE = {
     Weapon.MACE: FeedbackCode.WEAPON_SET_MACE,
 }
 _CHANNEL_POSITION = "position"
+# Tutorial dummy (free practice): after each guard (guard_duration_ms) it waits this long to raise the next.
+_DUMMY_GUARD_GAP_MS = 4000
 
 
 @dataclass(frozen=True)
@@ -116,6 +119,14 @@ class GameStateTask:
     # SET_GOD_MODE (a phone's GOD MODE button): hits resolve and report damage, HP never drops.
     # Not part of the match: it stays on through resets until turned off.
     god_mode: bool = field(default=False, init=False)
+    # SET_TUTORIAL (a phone's TUTORIAL button): this player practises alone, and the engine plays the
+    # other player as a dummy (_keep_dummy). None in a normal match. Ended by SET_TUTORIAL with no
+    # player, or by a match reset.
+    tutorial_player: int | None = field(default=None, init=False)
+    tutorial_dummy_guards: bool = field(default=False, init=False)
+    _dummy_next_guard_ms: int = field(default=0, init=False)
+    # The real weapon of the player the dummy stands in for, given back when the tutorial ends.
+    _dummy_real_weapon: Weapon | None = field(default=None, init=False)
 
     _reset_floor: int = field(default=-1, init=False)
     # player -> the WEAPON_SELECT_* state last sent to that player's relay (cleared when it reconnects).
@@ -139,7 +150,7 @@ class GameStateTask:
             self.state.players[player_id] = PlayerState(player_id=player_id, hp=self.rules.starting_hp)
 
     async def submit(self, event: InboundEvent) -> None:
-        if isinstance(event, (ResetMatch, SetGodMode, SetWeapon, LinkReset, SnapshotRequest,
+        if isinstance(event, (ResetMatch, SetGodMode, SetTutorial, SetWeapon, LinkReset, SnapshotRequest,
                               InboundVisualizerReady)):
             await self._inbox.put(event)
             return
@@ -172,6 +183,8 @@ class GameStateTask:
                     self._weapon_set_pending[event.player_id] = event.weapon
                     logger.info("weapon_set_requested", player_id=event.player_id,
                                 weapon=event.weapon.value)
+                elif isinstance(event, SetTutorial):
+                    await self.set_tutorial(event.player_id, event.dummy_guards)
                 elif isinstance(event, SnapshotRequest):
                     await event.send(self.current_state_snapshot())
                 elif isinstance(event, InboundVisualizerReady):
@@ -270,6 +283,7 @@ class GameStateTask:
                 total_dropped_late=self._reorder.dropped_late)
 
     async def reset_match(self) -> None:
+        self._end_tutorial()
         previous = self.state
         self.state = EngineMatchState()
         for pid in (1, 2):
@@ -299,12 +313,94 @@ class GameStateTask:
         await self.on_match_state(snapshot)
         self._next_snapshot_ms = 0
 
+    # ---- Tutorial ---------------------------------------------------------------------
+
+    def _is_dummy(self, player_id: int) -> bool:
+        return self.tutorial_player is not None and player_id != self.tutorial_player
+
+    async def set_tutorial(self, player_id: int | None, dummy_guards: bool) -> None:
+        """Starts, changes or ends the tutorial. Starting or ending one begins a fresh round (full HP,
+        no cooldowns) without the reset broadcast, so phones keep their placement and weapons."""
+        if player_id == self.tutorial_player:
+            self.tutorial_dummy_guards = dummy_guards and player_id is not None
+            self._next_snapshot_ms = 0
+            return
+        self._end_tutorial()
+        if player_id is not None:
+            dummy = self.state.players[3 - player_id]
+            self._dummy_real_weapon = dummy.weapon
+            self.tutorial_player = player_id
+            self.tutorial_dummy_guards = dummy_guards
+            self._dummy_next_guard_ms = 0
+        logger.info("tutorial", player_id=self.tutorial_player, dummy_guards=self.tutorial_dummy_guards)
+        await self._fresh_round()
+
+    def _end_tutorial(self) -> None:
+        """The dummy's player gets its real weapon back; its phone resends its position."""
+        if self.tutorial_player is None:
+            return
+        dummy = self.state.players[3 - self.tutorial_player]
+        dummy.weapon = self._dummy_real_weapon
+        dummy.position = None
+        dummy.guard_state = GuardState.IDLE
+        dummy.guard_entered_ts = 0
+        self.tutorial_player = None
+        self.tutorial_dummy_guards = False
+        self._dummy_real_weapon = None
+
+    async def _fresh_round(self) -> None:
+        now = monotonic_ms()
+        for p in self.state.players.values():
+            p.hp = self.rules.starting_hp
+            p.cooldowns.clear()
+            p.cooldown_totals.clear()
+            p.cooldown_action = None
+            p.guard_state = GuardState.IDLE
+            p.guard_entered_ts = 0
+        self.state.winner_id = None
+        self.state.phase = MatchPhase.WAITING if self.require_visualizer_ready else MatchPhase.IN_PROGRESS
+        self._reorder = ReorderBuffer(
+            reorder_delay_ms=self.reorder_delay_ms + self.rules.config.guard_grace_ms,
+            late_drop_ms=self.late_drop_ms)
+        self.presentation.paused_at = None
+        self.presentation.resume_floor = now
+        self.presentation.reason = None
+        self._logged_post_match = False
+        await self._broadcast_match_state()
+        self._next_snapshot_ms = 0
+
+    def _keep_dummy(self, now: int) -> None:
+        """The tutorial dummy: always standing at the arena origin (where the tutorial player placed
+        the arena, so the avatar appears there), facing the player, holding the player's weapon,
+        never hurt, and (free practice) raising its guard now and then."""
+        if self.tutorial_player is None:
+            return
+        player = self.state.players[self.tutorial_player]
+        dummy = self.state.players[3 - self.tutorial_player]
+        dummy.weapon = player.weapon or Weapon.SWORD
+        dummy.position = Vec2(0.0, 0.0)
+        dummy.position_ts = now
+        if player.position is not None and (player.position.x, player.position.y) != (0.0, 0.0):
+            dummy.heading_deg = _bearing_deg(dummy.position, player.position)
+        dummy.hp = self.rules.starting_hp
+        if (self.tutorial_dummy_guards and self.state.phase == MatchPhase.IN_PROGRESS
+                and not self.rules.guard_active(dummy, now) and now >= self._dummy_next_guard_ms):
+            dummy.guard_state = GuardState.GUARDING
+            dummy.guard_entered_ts = now
+            self._dummy_next_guard_ms = now + self.rules.config.guard_duration_ms + _DUMMY_GUARD_GAP_MS
+
     async def _drain_ready(self) -> None:
         ready = self._reorder.drain_ready(monotonic_ms())
         for index, item in enumerate(ready):
             event, timestamp = item.event, item.timestamp
             player = self.state.players.get(event.player_id)
             if player is None:
+                continue
+            if self._is_dummy(event.player_id):
+                # The engine plays this player in the tutorial: its real hub and phone don't move it,
+                # but a weapon its hub locks meanwhile is kept for after the tutorial.
+                if isinstance(event, InboundWeaponChanged):
+                    self._dummy_real_weapon = event.weapon_changed.weapon
                 continue
             if isinstance(event, InboundWeaponChanged):
                 player.weapon = event.weapon_changed.weapon
@@ -439,7 +535,9 @@ class GameStateTask:
 
         defender = self.state.players.get(decision.defender_id) if decision.defender_id is not None else None
         # God mode: the hit still resolves and reports its damage, but HP never drops, so nobody loses.
-        if defender is not None and decision.damage > 0 and not self.god_mode:
+        # Nor does the tutorial dummy's.
+        if (defender is not None and decision.damage > 0 and not self.god_mode
+                and not self._is_dummy(defender.player_id)):
             defender.hp = max(0, defender.hp - decision.damage)
 
         if (
@@ -542,7 +640,7 @@ class GameStateTask:
 
     def current_state_snapshot(self) -> StateSnapshot:
         return self.presentation.snapshot(self.state, self.rules, self.presence(), monotonic_ms(),
-                                          god_mode=self.god_mode)
+                                          god_mode=self.god_mode, tutorial_player=self.tutorial_player)
 
     async def _update_weapon_selection(self) -> None:
         """Tells each connected relay whether its hub may lock a weapon: only once that player's
@@ -576,7 +674,10 @@ class GameStateTask:
 
     async def _update_presentation(self) -> None:
         now = monotonic_ms()
-        changed = self.presentation.update(self.state, self.rules, self.presence(), now)
+        self._keep_dummy(now)
+        changed = self.presentation.update(
+            self.state, self.rules, self.presence(), now,
+            players=None if self.tutorial_player is None else {self.tutorial_player})
         if changed:
             await self._broadcast_match_state()
         await self._update_weapon_selection()

@@ -301,6 +301,18 @@ lost or locked (from the hub's binary WEAPON_CANDIDATE). The engine shows it in 
 the player's `weaponLock: {"weapon","heldMs","totalMs"}` (null when no pose is held), so the weapon
 screen can say which weapon is locking and count the hold down.
 
+### Tutorial
+
+`{"type":"SET_TUTORIAL","version":1,"playerId":1,"dummyGuards":false}` on `/control` (a phone's
+TUTORIAL button) lets that player practise alone with the real pipeline: only they must be connected,
+ready, armed and positioned for the match to run. The engine plays the other player as a dummy: it
+stands at the arena origin (0, 0, where the tutorial player placed the arena) facing them, holds their
+weapon, never loses HP and never attacks; its own hub, relay and phone are ignored meanwhile (a
+weapon its hub locks is kept for afterwards). `dummyGuards: true` (free practice) makes it raise its
+guard for `guard_duration_ms` every few seconds. `"playerId":null` ends the tutorial, as does
+`RESET_MATCH`. Starting or ending one begins a fresh round (full HP, no cooldowns, WAITING) without
+the reset broadcast, so phones keep their placement. Shown as `tutorialPlayerId` in STATE_SNAPSHOT.
+
 ## 4. Online visualizer boundary
 
 These additive JSON message types use version 1. Existing binary packet layouts and enums do not
@@ -328,7 +340,7 @@ snapshot, not a replay of events. `timestamp` is engine monotonic milliseconds.
 
 ```json
 {"type":"STATE_SNAPSHOT","version":1,"timestamp":5000,"phase":"IN_PROGRESS","winnerId":null,
- "reason":null,"godMode":false,"players":[
+ "reason":null,"godMode":false,"tutorialPlayerId":null,"players":[
   {"playerId":1,"hp":100,"maxHp":100,"weapon":"SWORD","guardState":"IDLE",
    "connected":true,"ready":true,"position":{"x":0,"y":0,"heading":0},
    "cooldownAction":"HORIZONTAL_SWING",
@@ -343,7 +355,7 @@ or stale. Coordinates use section 2.3. `connected` means relay socket presence, 
 health. Guard includes IDLE releases. Cooldowns are per action, in milliseconds; `cooldownAction`
 identifies the last move that started a cooldown for a single-bar display. A missing action is ready.
 During PAUSED, remaining time is frozen. `totalMs` includes applied stagger. `godMode` is true while
-god mode is on (see "God mode" above). Snapshot processing
+god mode is on, and `tutorialPlayerId` names the player in a tutorial (see "God mode" and "Tutorial" above). Snapshot processing
 must not animate attacks. Use COMBAT_EVENT once for resolved attack/outcome animation; do not also
 animate the same attack from ACTION_RECOGNIZED.
 

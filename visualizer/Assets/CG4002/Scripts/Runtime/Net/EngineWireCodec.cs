@@ -68,6 +68,14 @@ namespace CG4002.Net
             JsonConvert.SerializeObject(new { type = "SET_GOD_MODE", version = 1, enabled });
 
         /// <summary>
+        /// Tutorial for <paramref name="player"/> (null ends it), on /control (shared/protocol/app_messages.md,
+        /// "Tutorial"). <paramref name="dummyGuards"/>: the dummy raises its guard now and then (free practice).
+        /// </summary>
+        public static string SetTutorial(PlayerId? player, bool dummyGuards) =>
+            JsonConvert.SerializeObject(new { type = "SET_TUTORIAL", version = 1,
+                playerId = player.HasValue ? (int?)player.Value : null, dummyGuards });
+
+        /// <summary>
         /// The engine's MATCH_STATE announcing a reset, from the operator's terminal or any phone's
         /// RESTART. Sent once per reset (shared/protocol/app_messages.md §3).
         /// </summary>
@@ -172,6 +180,9 @@ namespace CG4002.Net
                     actionName = displayed, paused = phase == MatchPhase.Paused, entries = entries.ToArray() });
             }
             output.Add(new GodModeMessage { enabled = root["godMode"]?.Value<bool>() ?? false });
+            var tutorial = root["tutorialPlayerId"];
+            bool inTutorial = tutorial != null && tutorial.Type != JTokenType.Null;
+            output.Add(new TutorialMessage { active = inTutorial, player = inTutorial ? Player(tutorial) : default });
             output.Add(new MatchStateMessage { phase = phase,
                 winner = root["winnerId"]?.Type == JTokenType.Null ? default : Player(root["winnerId"]) });
         }

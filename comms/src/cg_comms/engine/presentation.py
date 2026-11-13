@@ -18,14 +18,17 @@ class Presentation:
     resume_floor: int = -1
     reason: str | None = None
 
-    def update(self, state: MatchState, rules: Rules, presence: dict[str, bool], now: int) -> bool:
+    def update(self, state: MatchState, rules: Rules, presence: dict[str, bool], now: int,
+               players: set[int] | None = None) -> bool:
+        """`players`: whose readiness the match waits for (all by default; the tutorial player alone
+        in a tutorial, since the engine plays the dummy)."""
         if not self.require_ready or state.phase == MatchPhase.ENDED:
             return False
         available = all(
             self.ready[pid] and presence.get(str(pid), False)
             and p.weapon is not None and p.position is not None
             and 0 <= now - p.position_ts <= rules.position_max_age_ms
-            for pid, p in state.players.items()
+            for pid, p in state.players.items() if players is None or pid in players
         )
         if available and state.phase in (MatchPhase.WAITING, MatchPhase.PAUSED):
             if self.paused_at is not None:
@@ -52,7 +55,7 @@ class Presentation:
 
     def snapshot(
         self, state: MatchState, rules: Rules, presence: dict[str, bool], now: int,
-        god_mode: bool = False,
+        god_mode: bool = False, tutorial_player: int | None = None,
     ) -> StateSnapshot:
         cooldown_now = self.paused_at if self.paused_at is not None else now
         players: list[dict[str, object]] = []
@@ -79,5 +82,5 @@ class Presentation:
         # Validate the complete wire boundary together, including narrowed action/weapon IDs.
         return StateSnapshot.model_validate(dict(
             timestamp=now, phase=state.phase, winner_id=state.winner_id,
-            reason=self.reason, god_mode=god_mode, players=players,
+            reason=self.reason, god_mode=god_mode, tutorial_player_id=tutorial_player, players=players,
         ))

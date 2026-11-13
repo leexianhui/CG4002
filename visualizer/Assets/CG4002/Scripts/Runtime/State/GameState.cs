@@ -71,6 +71,7 @@ namespace CG4002.State
         public event Action<PlayerId, Vector3, float> PositionChanged;
         public event Action<MatchPhase> PhaseChanged;
         public event Action<bool> GodModeChanged;
+        public event Action<PlayerId?> TutorialChanged;
 
         public PlayerId LocalPlayer => localPlayer;
         public PlayerId OpponentPlayer => localPlayer == PlayerId.P1 ? PlayerId.P2 : PlayerId.P1;
@@ -80,6 +81,8 @@ namespace CG4002.State
         public PlayerId Winner => winner;
         /// <summary>God mode (the engine's): hits report damage but nobody's HP drops.</summary>
         public bool GodMode { get; private set; }
+        /// <summary>The player in the tutorial (the other player is the engine's dummy), or null in a normal match.</summary>
+        public PlayerId? TutorialPlayer { get; private set; }
 
         public PlayerState Get(PlayerId id) => id == PlayerId.P1 ? player1 : player2;
 
@@ -156,6 +159,15 @@ namespace CG4002.State
                     phase = m.phase;
                     winner = m.winner;
                     PhaseChanged?.Invoke(m.phase);
+                    break;
+
+                case TutorialMessage m:
+                    PlayerId? tutorial = m.active ? m.player : null;
+                    if (TutorialPlayer != tutorial)
+                    {
+                        TutorialPlayer = tutorial;
+                        TutorialChanged?.Invoke(tutorial);
+                    }
                     break;
 
                 case GodModeMessage m:

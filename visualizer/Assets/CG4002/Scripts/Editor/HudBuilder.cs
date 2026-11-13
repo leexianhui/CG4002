@@ -25,6 +25,7 @@ namespace CG4002.EditorTools
     ///      ├─ Guarding     centre:    GUARDING while your guard is up (same spot; hit messages take over briefly)
     ///      ├─ Result       centre:    "ENEMY DEFEATED"
     ///      ├─ GodMode      top centre:    GOD MODE while the engine's god mode is on
+    ///      ├─ TutorialTitle / TutorialCue  top centre, under it: the tutorial's lesson (TutorialController)
     ///      └─ Debug        bottom-right: RESET, MOVE DUMMY, TRACKING buttons (DebugPanel)
     ///   WeaponSelect (Canvas + WeaponSelectScreen) └─ View: title and instruction (top centre while
     ///                   choosing, centre for calibration / status messages), and demo mode's CHOOSE
@@ -106,6 +107,23 @@ namespace CG4002.EditorTools
             godModeRect.anchorMin = godModeRect.anchorMax = godModeRect.pivot = new Vector2(0.5f, 1f);
             godModeRect.anchoredPosition = new Vector2(0f, -Margin);
             godMode.gameObject.SetActive(false);
+            // Tutorial lessons (TutorialController): top centre under the GOD MODE badge, narrow
+            // enough to sit between the health bars in split view; the cue wraps onto two lines.
+            var tutorialTitle = CentreText(root, "TutorialTitle", 44, y: 0f);
+            tutorialTitle.color = Gold;
+            var tutorialCue = CentreText(root, "TutorialCue", 28, y: 0f);
+            tutorialCue.color = Parchment;
+            tutorialCue.horizontalOverflow = HorizontalWrapMode.Wrap;
+            foreach (var (text, y, height) in new[] { (tutorialTitle, -110f, 62f), (tutorialCue, -172f, 84f) })
+            {
+                var rect = text.rectTransform;
+                rect.anchorMin = rect.anchorMax = new Vector2(0.5f, 1f);
+                rect.pivot = new Vector2(0.5f, 1f);
+                rect.anchoredPosition = new Vector2(0f, y);
+                rect.sizeDelta = new Vector2(460f, height);
+                text.alignment = TextAnchor.UpperCenter;
+                text.enabled = false;
+            }
 
             var hud = canvasObject.AddComponent<HudController>();
             var settings = new SerializedObject(hud);
@@ -125,6 +143,17 @@ namespace CG4002.EditorTools
             settings.ApplyModifiedPropertiesWithoutUndo();
 
             BuildDebugPanel(root, gameState, dispatcher, placer, trackingOverlay);
+
+            var tutorial = canvasObject.AddComponent<TutorialController>();
+            var lessons = new SerializedObject(tutorial);
+            var client = Object.FindAnyObjectByType<CG4002.Net.OnlineEngineClient>(FindObjectsInactive.Include);
+            lessons.FindProperty("gameState").objectReferenceValue = gameState;
+            lessons.FindProperty("dispatcher").objectReferenceValue = dispatcher;
+            lessons.FindProperty("client").objectReferenceValue = client;
+            lessons.FindProperty("dummy").objectReferenceValue = client != null ? client.opponent : null;
+            lessons.FindProperty("title").objectReferenceValue = tutorialTitle;
+            lessons.FindProperty("cue").objectReferenceValue = tutorialCue;
+            lessons.ApplyModifiedPropertiesWithoutUndo();
             BuildSplitLayout(canvasObject, root, self, opponent, outcome, selfGuard, result, godModeRect);
         }
 

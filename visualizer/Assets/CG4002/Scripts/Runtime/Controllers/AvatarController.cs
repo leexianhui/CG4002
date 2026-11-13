@@ -33,6 +33,9 @@ namespace CG4002.Controllers
 
         public void ConfigurePlayer(PlayerId player) => represents = player;
 
+        /// <summary>The body this controller drives (the tutorial uses it to demonstrate moves).</summary>
+        public AvatarView View => avatar;
+
         void Awake()
         {
             targetPosition = transform.localPosition;

@@ -283,6 +283,22 @@
       "title": "Godmode",
       "type": "boolean"
     },
+    "tutorialPlayerId": {
+      "anyOf": [
+        {
+          "enum": [
+            1,
+            2
+          ],
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tutorialplayerid"
+    },
     "players": {
       "items": {
         "$ref": "#/$defs/SnapshotPlayer"

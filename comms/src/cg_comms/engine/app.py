@@ -22,6 +22,7 @@ from cg_comms.engine.inbound import (
     LinkReset,
     ResetMatch,
     SetGodMode,
+    SetTutorial,
     SetWeapon,
     SnapshotRequest,
     route_inbound,
@@ -107,6 +108,13 @@ async def run_engine(settings: EngineSettings) -> None:
                 logger.info("weapon_set_command", path=path, player_id=command["playerId"],
                             weapon=command["weapon"])
                 await task.submit(SetWeapon(command["playerId"], Weapon(command["weapon"])))
+            elif (isinstance(command, dict) and command.keys() == {"type", "version", "playerId", "dummyGuards"}
+                    and command["type"] == "SET_TUTORIAL" and command["version"] == 1
+                    and command["playerId"] in (1, 2, None) and not isinstance(command["playerId"], bool)
+                    and isinstance(command["dummyGuards"], bool)):
+                logger.info("tutorial_requested", path=path, player_id=command["playerId"],
+                            dummy_guards=command["dummyGuards"])
+                await task.submit(SetTutorial(command["playerId"], command["dummyGuards"]))
             else:
                 logger.warning("control_command_rejected")
             return

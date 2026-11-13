@@ -186,6 +186,26 @@ namespace CG4002.Net
                 enable ? "God mode on: nobody loses HP" : "God mode off", "God mode not sent");
         }
 
+        /// <summary>
+        /// TUTORIAL / EXIT TUTORIAL: asks the engine to let <paramref name="who"/> practise alone against
+        /// a dummy (null ends it). The button and the lessons follow the engine's snapshot.
+        /// </summary>
+        public void SetTutorial(PlayerId? who, bool dummyGuards)
+        {
+            if (lifetime == null)
+            {
+                Status = "Connect first: the tutorial runs on the engine";
+                return;
+            }
+            Status = who == null ? "Ending the tutorial" : "Starting the tutorial";
+            _ = SendControl(EngineWireCodec.SetTutorial(who, dummyGuards), awaitReply: false,
+                who == null ? "Tutorial ended" : dummyGuards ? "Free practice" : "Tutorial on: practise alone",
+                "Tutorial not sent");
+        }
+
+        /// <summary>Lessons done (TutorialController): the dummy starts guarding now and then.</summary>
+        public void StartFreePractice() => SetTutorial(player, dummyGuards: true);
+
         /// <summary>One operator command on a short-lived /control socket, with this phone's token.</summary>
         async Task SendControl(string command, bool awaitReply, string done, string failed)
         {
@@ -444,6 +464,10 @@ namespace CG4002.Net
             else if (GUILayout.Button("Disconnect / settings")) { Disconnect(); showSettings = true; }
             if (GUILayout.Button("RESTART (both re-place the dummy)")) Restart();
             if (GUILayout.Button(gameState.GodMode ? "GOD MODE: ON (nobody loses HP)" : "GOD MODE: OFF")) ToggleGodMode();
+            var tutorial = gameState.TutorialPlayer;
+            if (GUILayout.Button(tutorial == null ? "TUTORIAL (practise alone vs a dummy)"
+                    : tutorial == player ? "EXIT TUTORIAL" : "EXIT P" + (int)tutorial.Value + "'s TUTORIAL"))
+                SetTutorial(tutorial == null ? player : (PlayerId?)null, dummyGuards: false);
             if (weaponSelect != null && weaponSelect.IsSelecting)
                 GUILayout.Label("Choose your weapon: copy a pose in front of you.");
             else

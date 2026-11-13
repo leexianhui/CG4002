@@ -62,6 +62,22 @@ namespace CG4002.Tests
         }
 
         [Test]
+        public void TutorialCommandAndSnapshotPlayer()
+        {
+            // The engine accepts exactly these keys on /control (comms engine/app.py).
+            Assert.That(JToken.DeepEquals(JObject.Parse(EngineWireCodec.SetTutorial(PlayerId.P2, true)),
+                JObject.Parse(@"{""type"":""SET_TUTORIAL"",""version"":1,""playerId"":2,""dummyGuards"":true}")), Is.True);
+            Assert.That(JToken.DeepEquals(JObject.Parse(EngineWireCodec.SetTutorial(null, false)),
+                JObject.Parse(@"{""type"":""SET_TUTORIAL"",""version"":1,""playerId"":null,""dummyGuards"":false}")), Is.True);
+            Assert.That(EngineWireCodec.Decode(Snapshot).OfType<TutorialMessage>().Single().active, Is.False,
+                "an engine without the tutorial omits the field: a normal match");
+            var tutorial = EngineWireCodec.Decode(Snapshot.Replace(@"""reason"":""NOT_READY"",",
+                @"""reason"":""NOT_READY"",""tutorialPlayerId"":1,")).OfType<TutorialMessage>().Single();
+            Assert.That(tutorial.active, Is.True);
+            Assert.That(tutorial.player, Is.EqualTo(PlayerId.P1));
+        }
+
+        [Test]
         public void EnumsUseNamesInsteadOfIncompatibleIntegerValues()
         {
             Assert.That(EngineWireCodec.Weapon("SPEAR"), Is.EqualTo(WeaponType.Spear));

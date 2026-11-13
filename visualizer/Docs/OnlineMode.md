@@ -463,6 +463,7 @@ A Unity IMGUI panel in the top-left corner, scaled to the safe area:
  │ [Connect]   or [Disconnect / settings]   │
  │ [RESTART (both re-place the dummy)]      │
  │ [GOD MODE: OFF]                          │
+ │ [TUTORIAL (practise alone vs a dummy)]   │
  │ Tap the floor where the opponent should  │
  │ stand, put on the headset, then look at  │
  │ the opponent and hold still for 3 s.     │
@@ -488,8 +489,19 @@ A Unity IMGUI panel in the top-left corner, scaled to the safe area:
 - **GOD MODE** (open panel, while connected) sends `SET_GOD_MODE` on the same `/control` path. It
   covers both players: hits still resolve and show their damage (HIT -10, sounds, buzz, flash), but
   nobody's HP drops, so nobody loses. The engine keeps it (through RESTART too) and reports it as
-  `godMode` in every snapshot, so the button and the HUD's gold **GOD MODE** badge (bottom centre)
+  `godMode` in every snapshot, so the button and the HUD's gold **GOD MODE** badge (top centre)
   match on both phones. Either phone can turn it off.
+- **TUTORIAL** (open panel, while connected) sends `SET_TUTORIAL` for this player on `/control`:
+  they practise alone with the real pipeline (wearables, AI, engine) while the engine plays the other
+  player as a dummy, standing where the arena was placed and holding the player's weapon. Only this
+  player has to be placed, calibrated and armed. `UI/TutorialController.cs` then runs the lessons,
+  one at a time: the six attacks, then the guard. The dummy (mirrored, so you copy it like a mirror)
+  demonstrates the move every few seconds; the name and a one-line cue sit at the top centre; the
+  move the AI recognised shows as usual, and the asked-for one shows **CORRECT MOVE** and moves on
+  (recognition counts, not hitting the dummy). Afterwards: **TUTORIAL COMPLETE**, then free practice,
+  with the dummy raising its guard now and then. **EXIT TUTORIAL** (or RESTART) ends it: a fresh
+  round, keeping placement, calibration and weapons. The laptop's GIFs of each move are meant to be
+  watched before the headset goes on.
 - **Setup readings** (always shown in the open panel) answer "why isn't the match starting?": which player has no relay, no
   calibration, no weapon or no position, and how far apart the engine thinks the players are.
 
