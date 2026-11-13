@@ -301,7 +301,7 @@ namespace CG4002.EditorTools
                 chestPitch = 4f,
                 // The hub's sword ready stance (and the selection dummy's): sword pointing up,
                 // left forearm across the chest with the shield in front.
-                armR = new ArmPose(V(0.28f, -0.95f, 0.15f), V(0.1f, -0.3f, 1f), V(0f, 1f, 0.55f)),
+                armR = new ArmPose(V(0.28f, -0.9f, 0.25f), V(0.1f, -0.05f, 1f), V(0f, 1f, 0.55f)),
                 armL = new ArmPose(V(-0.2f, -0.75f, 0.6f), V(0.95f, 0.05f, 0.2f), V(0f, 0.1f, 1f)),
             };
 
@@ -351,14 +351,17 @@ namespace CG4002.EditorTools
 
         static WeaponClips Spear()
         {
-            // Ready stance: right hand low at the hip, spear angled forward and up, left hand 40 cm up
-            // the shaft at chest height. Two-handed, so the left arm is solved onto the shaft.
+            // Ready stance: the shaft level beside the right hip at waist height, pointing straight
+            // ahead; right hand just behind the hip, left hand 35 cm ahead of it at the same height.
+            // The body turns 45 degrees to the right so the left hand reaches across (any less and the
+            // solver slides the shaft in toward the middle). Two-handed: the left arm is solved onto the shaft.
             var stance = new Pose
             {
                 hips = V(0f, -0.03f, 0f),
-                hipsYaw = 12f,
-                armR = new ArmPose(V(0.3f, -0.95f, 0.05f), V(0.05f, -0.85f, 0.5f), V(0.05f, 0.55f, 0.85f)),
-                offHandGrip = 0.4f,
+                hipsYaw = 30f,
+                chestYaw = 15f,
+                armR = new ArmPose(V(0.2f, -0.6f, 0.2f), V(0.1f, -0.3f, 0f), V(0f, 0f, 1f)),
+                offHandGrip = 0.35f,
             };
 
             // Charged: overhead javelin grip, then a lunging thrust.
@@ -404,14 +407,15 @@ namespace CG4002.EditorTools
 
         static WeaponClips Mace()
         {
-            // Ready stance: held upright in front of the chest, head up, both hands stacked on the
-            // handle (left just below right).
+            // Ready stance: both hands in front of the right shoulder, close to the body, right hand on
+            // top and the left a small gap below it; the head tilts up and back over the right shoulder.
+            // The forearms stay square to the handle (a fist), so the forearm sets the tilt.
             var stance = new Pose
             {
                 hips = V(0f, -0.04f, 0f),
                 hipsYaw = 8f,
-                armR = new ArmPose(V(0.2f, -0.8f, 0.55f), V(-0.5f, 0f, 0.85f), V(0f, 1f, 0.1f)),
-                offHandGrip = -0.09f,
+                armR = new ArmPose(V(0.1f, -1f, 0.15f), V(-0.3f, 0.495f, 0.9f), V(0.3f, 1f, -0.45f)),
+                offHandGrip = -0.13f,
             };
 
             // Charged: wind far back behind the shoulder, then a crouching slam.

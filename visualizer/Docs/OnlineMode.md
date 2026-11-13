@@ -168,9 +168,11 @@ Hold still 2"), in both eyes.
   copies it like a mirror.
 - **Which weapons are offered:** `weapons` in the Inspector: spear, sword & shield, mace, left to
   right as the player sees them, 1 m apart. Each dummy holds its weapon's ready stance:
-  - **sword:** sword up, shield across the chest;
-  - **spear:** two-handed, diagonal, tip forward-up, right hand at the hip, left hand forward;
-  - **mace:** two-handed, upright in front of the chest, hands stacked.
+  - **sword:** sword up, hand at lower-chest height, shield across the chest;
+  - **spear:** two-handed, level and pointing straight ahead beside the right hip at waist height,
+    left hand in front;
+  - **mace:** two-handed, both hands in front of the right shoulder (right on top, a small gap),
+    head tilted back over the shoulder.
 - **Following the player.** The dummies stand on the lowest detected floor plane (or 1.4 m below
   the camera). If the player turns away for 1.5 s, they move back in front of the camera.
 - **If the hub drops its lock** (reboot), the screen opens again. Placement and calibration are kept.
@@ -387,8 +389,8 @@ Match tuning (HP, parry window, guard arc) lives in `shared/config/match.yaml`. 
   - The six classifier attacks are shared motions.
   - Each weapon authors its own stance, guard and charged attack.
   - The mace plays the shared motions 10 % slower.
-  - **Spear and mace are two-handed.** Their stance sets `Pose.offHandGrip` (spear +0.4 m: left
-    hand 40 cm up the shaft; mace −0.09 m: stacked just below the right). In every clip the solver
+  - **Spear and mace are two-handed.** Their stance sets `Pose.offHandGrip` (spear +0.35 m: left
+    hand 35 cm up the shaft; mace −0.13 m: just below the right, with a small gap). In every clip the solver
     (`PoseSolver.OffHandOnWeapon`) finds the right hand and the weapon's direction, then reaches
     the left hand onto the shaft with two-bone IK. So all six attacks, the charged attack and the
     idle become two-handed without per-move authoring.
