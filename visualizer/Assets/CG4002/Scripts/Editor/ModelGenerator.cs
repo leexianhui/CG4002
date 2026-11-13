@@ -50,6 +50,7 @@ namespace CG4002.EditorTools
             var materials = ModelFactory.CreateMaterials();
             var sword = ModelFactory.BuildSword(materials);
             var shield = ModelFactory.BuildShield(materials);
+            ModelFactory.BuildPropShield(materials);  // the overlay on the player's shield prop (PropTracker)
             var spear = ModelFactory.BuildSpear(materials);
             var mace = ModelFactory.BuildMace(materials);
             var impactBurst = ModelFactory.BuildImpactBurst(materials);

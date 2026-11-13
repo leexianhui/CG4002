@@ -178,11 +178,16 @@ namespace CG4002.EditorTools
                 throw new InvalidOperationException("No PropTracker in the scene: run CG4002 > Setup Game Scene first.");
             var props = new[]
             {
-                (WeaponType.SwordAndShield, new[] { "Sword", "SwordBackup" }, "Prefabs/Weapon_Sword.prefab", 0.155f, 0.8f),
-                // Card on the shaft halfway between the hands (40 cm apart); model's grip-to-tip 1.18 m.
-                (WeaponType.Spear, new[] { "Spear" }, "Prefabs/Weapon_Spear.prefab", 0.2f, 0.98f),
-                // Card on the handle just above the hands; model's grip-to-tip 0.68 m.
-                (WeaponType.Mace, new[] { "Mace" }, "Prefabs/Weapon_Mace.prefab", 0.12f, 0.56f),
+                // 50 cm prop, 10 cm hilt (hand fills it), 12 cm card starting at the top of the hilt:
+                // card centre 16 cm up, grip middle 5 cm up. Drawn at the prop's own size.
+                (WeaponType.SwordAndShield, new[] { "Sword", "SwordBackup" }, "Prefabs/Weapon_Sword.prefab", 0.11f, 0.34f),
+                // 60 cm prop, card's top 18 cm from the tip: card centre 24 cm from the tip. Drawn 1.2 m
+                // long (the shaft runs 60 cm past the prop's end): grip-to-tip 0.76 m on the model's 1.18 m,
+                // so the model's grip point sits 52 cm below the card. Hands anywhere on the prop sit on the shaft.
+                (WeaponType.Spear, new[] { "Spear" }, "Prefabs/Weapon_Spear.prefab", 0.52f, 0.24f),
+                // 50 cm prop, card's top 15 cm below the top: card centre 21 cm down. Drawn at the prop's
+                // size: the model (0.86 m pommel to spike, tip reference 2 cm under the spike) scaled 0.59.
+                (WeaponType.Mace, new[] { "Mace" }, "Prefabs/Weapon_Mace.prefab", 0.2f, 0.2f),
             };
 
             var settings = new SerializedObject(tracker);
@@ -216,7 +221,8 @@ namespace CG4002.EditorTools
                 entry.FindPropertyRelative("markerToTip").floatValue = markerToTip;
             }
             // The shield is tracked alongside the weapon; its size and offset are kept if already set.
-            settings.FindProperty("shieldPrefab").objectReferenceValue = Load<ShieldView>("Prefabs/Weapon_Shield.prefab");
+            // The prop's own heater shape and size (the avatar keeps the round Weapon_Shield).
+            settings.FindProperty("shieldPrefab").objectReferenceValue = Load<ShieldView>("Prefabs/Prop_Shield.prefab");
             settings.ApplyModifiedPropertiesWithoutUndo();
         }
 

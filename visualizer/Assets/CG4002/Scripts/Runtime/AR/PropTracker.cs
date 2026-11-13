@@ -53,12 +53,13 @@ namespace CG4002.AR
         [Tooltip("Reference image names that count as the shield's marker.")]
         [SerializeField] string[] shieldImageNames = { "Shield" };
         [SerializeField] ShieldView shieldPrefab;
-        [Tooltip("How wide to draw the shield, metres (the model is scaled to it). Half the 0.45 m prop: " +
-                 "full size filled too much of the view.")]
-        [SerializeField] float shieldWidth = 0.225f;
+        [Tooltip("How wide to draw the shield, metres (the model is scaled to it). The prop's own width: " +
+                 "a 25 x 38 cm heater shield.")]
+        [SerializeField] float shieldWidth = 0.25f;
         [Tooltip("Along the picture's up direction, from the marker's centre to the shield's centre, metres " +
-                 "(positive when the marker sits below the centre).")]
-        [SerializeField] float markerToShieldCentre;
+                 "(positive when the marker sits below the centre). The card's top edge is at the shield's " +
+                 "top: its centre 6 cm down, the shield's centre 19 cm down.")]
+        [SerializeField] float markerToShieldCentre = -0.13f;
 
         [Header("Tracking")]
         [Tooltip("Keep showing the weapon this long after tracking drops, so brief dropouts don't flicker.")]
@@ -66,8 +67,8 @@ namespace CG4002.AR
         [Tooltip("How quickly the model follows the marker. Higher is snappier but shows more jitter.")]
         [SerializeField] float followSpeed = 25f;
 
-        // The shield model's width across its octagon (ModelFactory.BuildShield).
-        const float ShieldModelWidth = 0.58f;
+        // The prop shield model's width (ModelFactory.PropShieldWidth: Prop_Shield is built at the prop's size).
+        const float ShieldModelWidth = 0.25f;
 
         readonly Dictionary<string, ARTrackedImage> images = new();
         readonly Dictionary<WeaponType, WeaponView> models = new();

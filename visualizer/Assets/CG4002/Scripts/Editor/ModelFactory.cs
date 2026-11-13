@@ -145,6 +145,80 @@ namespace CG4002.EditorTools
             return AssetIO.SavePrefab(root, $"{PrefabDir}/Weapon_Shield.prefab").GetComponent<ShieldView>();
         }
 
+        /// <summary>The prop shield's real width and height, metres (a heater shield: flat top, pointed bottom).</summary>
+        public const float PropShieldWidth = 0.25f, PropShieldHeight = 0.38f;
+
+        /// <summary>
+        /// The overlay drawn on the player's own shield prop (PropTracker): a heater shield at the prop's
+        /// real size, 25 x 38 cm, so it covers the prop exactly. The enemy avatar keeps the round
+        /// Weapon_Shield. Pivot at the shield's centre (half way down), +Z out of the face, +Y to the top.
+        /// </summary>
+        public static ShieldView BuildPropShield(Materials m)
+        {
+            var root = new GameObject("Prop_Shield");
+            var view = root.AddComponent<ShieldView>();
+            Vector2[] outline = HeaterOutline(PropShieldWidth, PropShieldHeight);
+
+            // The outline lofted into a 1.6 cm plate, bevelled at the face and back. The loft's +Y
+            // becomes +Z (out of the face), and the profile's second axis becomes -Y.
+            Quaternion faceForward = Quaternion.Euler(90f, 0f, 0f);
+            var profile = System.Array.ConvertAll(outline, p => new Vector2(p.x, -p.y));
+            var body = new MeshBuilder()
+                .Loft(0, new Vector3(0f, 0f, -0.008f), faceForward, profile,
+                    new Vector3(0f, 0.96f, 0.96f),
+                    new Vector3(0.003f, 1f, 1f),
+                    new Vector3(0.013f, 1f, 1f),
+                    new Vector3(0.016f, 0.96f, 0.96f))
+                .Box(2, new Vector3(0f, 0.02f, -0.018f), new Vector3(0.05f, 0.12f, 0.02f));  // grip strap at the back
+            AddMesh(root, "Body", body, "PropShield_Body", m.shieldFace, m.metal, m.leather);
+
+            // Glowing rim along every edge of the outline, set slightly toward the face.
+            var rim = new MeshBuilder();
+            for (int i = 0; i < outline.Length; i++)
+            {
+                Vector2 a = outline[i], b = outline[(i + 1) % outline.Length];
+                Vector2 along = b - a;
+                float angle = Mathf.Atan2(along.y, along.x) * Mathf.Rad2Deg;
+                rim.Box(0, new Vector3((a.x + b.x) / 2f, (a.y + b.y) / 2f, 0.004f),
+                    new Vector3(along.magnitude + 0.008f, 0.014f, 0.02f), Quaternion.Euler(0f, 0f, angle));
+            }
+            AddMesh(root, "Glow", rim, "PropShield_Glow", m.swordGlow);
+
+            view.blockFace = Anchor(root, "BlockFace", new Vector3(0f, 0f, 0.03f));
+            return AssetIO.SavePrefab(root, $"{PrefabDir}/Prop_Shield.prefab").GetComponent<ShieldView>();
+        }
+
+        /// <summary>
+        /// A heater shield's outline, centred, clockwise from the top left: a flat top, straight sides
+        /// for the top 45%, then on each side a circular arc (vertical where it leaves the side) down to
+        /// the point. Convex, as MeshBuilder needs.
+        /// </summary>
+        static Vector2[] HeaterOutline(float width, float height)
+        {
+            float half = width / 2f, top = height / 2f, bottom = -height / 2f;
+            float shoulder = top - 0.45f * height;  // where the straight sides end
+            // Right arc: centred level with the shoulder, left of the middle by c, through the shoulder
+            // corner (half, shoulder) and the point (0, bottom): (c)^2 + drop^2 = (half + c)^2.
+            float drop = shoulder - bottom;
+            float c = (drop * drop - half * half) / (2f * half);
+            float radius = half + c;
+            float end = Mathf.Acos(c / radius);  // angle below the centre's level at which the arc reaches the point
+            const int steps = 6;
+
+            var points = new List<Vector2> { new(-half, top), new(half, top) };
+            for (int i = 0; i <= steps; i++)
+            {
+                float a = -end * i / steps;
+                points.Add(new Vector2(-c + radius * Mathf.Cos(a), shoulder + radius * Mathf.Sin(a)));
+            }
+            for (int i = steps - 1; i >= 0; i--)  // mirrored, back up the left side (the point isn't repeated)
+            {
+                float a = -end * i / steps;
+                points.Add(new Vector2(c - radius * Mathf.Cos(a), shoulder + radius * Mathf.Sin(a)));
+            }
+            return points.ToArray();
+        }
+
         public static WeaponView BuildSpear(Materials m)
         {
             var root = new GameObject("Weapon_Spear");
