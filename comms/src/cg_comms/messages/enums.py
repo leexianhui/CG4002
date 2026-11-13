@@ -92,6 +92,9 @@ class FeedbackCode(_WireEnum):
     BLOCKED = "BLOCKED"
     PARRIED = "PARRIED"
     ACTION_CONFIRMED = "ACTION_CONFIRMED"  # relay -> hub: classifier confirmed a hub action
+    # engine -> relay -> hub, not a buzz: whether the hub may lock a weapon (the phone has calibrated)
+    WEAPON_SELECT_ALLOWED = "WEAPON_SELECT_ALLOWED"
+    WEAPON_SELECT_BLOCKED = "WEAPON_SELECT_BLOCKED"
 
 
 WIRE_VALUES: dict[_WireEnum, int] = {
@@ -128,4 +131,6 @@ WIRE_VALUES: dict[_WireEnum, int] = {
     FeedbackCode.BLOCKED: 2,
     FeedbackCode.PARRIED: 3,
     FeedbackCode.ACTION_CONFIRMED: 4,
+    FeedbackCode.WEAPON_SELECT_ALLOWED: 5,
+    FeedbackCode.WEAPON_SELECT_BLOCKED: 6,
 }

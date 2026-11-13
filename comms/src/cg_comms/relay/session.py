@@ -22,6 +22,9 @@ import structlog
 
 from cg_comms.clock import monotonic_ms, split_epoch_ms, wall_clock_unix_ms
 from cg_comms.messages.enums import ActionClass, FeedbackCode, GuardState, Weapon
+
+# Engine -> hub weapon-selection gate, carried on the COMBAT_FEEDBACK channel (not a buzz).
+WEAPON_SELECTION_CODES = frozenset({FeedbackCode.WEAPON_SELECT_ALLOWED, FeedbackCode.WEAPON_SELECT_BLOCKED})
 from cg_comms.messages.models import Action, CombatFeedback, SensorWindow, WeaponChanged
 from cg_comms.protocol import codec
 from cg_comms.protocol.codec import DecodedPacket, DecodeError
@@ -77,6 +80,9 @@ class Session:
     ultra96: Ultra96Client
     on_weapon_changed: Callable[[WeaponChanged], Awaitable[None]]
     on_action_result: Callable[[Action], Awaitable[None]]
+    # Called once streaming starts: the engine's latest WEAPON_SELECT_* for this player, read then
+    # (not at construction) so one that arrived during the handshake is not lost.
+    startup_feedback: Callable[[], CombatFeedback | None] | None = None
 
     session_id: int = field(default=0, init=False)
     _rx_tracker: SequenceTracker = field(default_factory=SequenceTracker, init=False)
@@ -263,6 +269,9 @@ class Session:
         # below first polls.
         self._heartbeat_monitor.reset()
         self._streaming = True
+        startup = self.startup_feedback() if self.startup_feedback is not None else None
+        if startup is not None:
+            self.queue_combat_feedback(startup)
         tasks = [
             asyncio.create_task(self._read_loop()),
             asyncio.create_task(self._feedback_loop()),
@@ -357,6 +366,10 @@ class Session:
             await self._reliability_out.send_reliable(seq, frame)
         except LinkDegraded:
             logger.error("combat_feedback_undelivered", player_id=self.config.player_id)
+
+    @property
+    def streaming(self) -> bool:
+        return self._streaming
 
     def queue_combat_feedback(self, feedback: CombatFeedback) -> None:
         if not self._streaming or feedback.player_id != self.config.player_id:

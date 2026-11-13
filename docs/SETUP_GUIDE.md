@@ -211,7 +211,8 @@ from the YAML. Only the BLE address differs per terminal. `$env:` values last on
 terminal, which is what lets two relays share one checkout.
 
 What healthy looks like in each relay:
-1. `session_streaming`, then `weapon_changed` once that player holds the weapon-selection pose
+1. `session_streaming`, `weapon_selection allowed=False` until that player's phone calibrates
+   (`allowed=True` after), then `weapon_changed` once that player holds the weapon-selection pose
    (the hub locks the weapon until it reboots).
 2. Nothing while standing still. Each swing the hub accepts gives exactly one
    `segment_received` (the window the hub sent: weapon, which sensors were measured) and one
@@ -298,10 +299,15 @@ comms .env** does the same by hand. Both fields stay editable in the app if you 
 
 ## 6. Calibrate the arena and play
 
-1. Mark an **origin** on the floor and a straight **forward (+Z) line** from it with tape.
-2. Each phone: tap the origin in AR, stand on the +Z line at least 0.3 m out, and press
-   **Confirm shared +Z direction**.
-3. Each player holds the weapon-selection pose until the hub buzzes twice (weapon locked).
+1. Each phone: connect, then tap the floor where the opponent avatar (the dummy) should stand.
+   **RE-PLACE DUMMY** picks it up again until calibration confirms.
+2. Headset on. Stand at least 0.5 m from the dummy, look at it and hold still for 3 s: the phone
+   calibrates by itself (the panel's **Confirm direction by hand** does it at once).
+3. Only now can the hub lock a weapon: until that player's phone has calibrated, the hub ignores
+   weapon poses (handling the phone often looks like one). The phone's weapon screen opens; hold the
+   weapon's pose until the hub buzzes twice (weapon locked). Hub serial: `[setup] weapon selection
+   ALLOWED (phone calibrated)` first; relay: `weapon_selection allowed=True`. A weapon already
+   locked stays locked (until the hub reboots), even if the phone loses calibration later.
 4. The setup readings at the bottom of the phone panel: both relays connected, both ready, positions sensible. Two
    people 1 m apart along +Z should read about (0, 0) and (0, 1).
 5. When all four conditions hold, the engine moves to **IN_PROGRESS**. Swing!

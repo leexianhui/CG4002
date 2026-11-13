@@ -21,6 +21,9 @@ bool gatewayQueueFeedback(const uint8_t *payload);
 // Hub, hardware thread: the left wrist entered (true) or left (false) the guard pose. Keeps only the
 // newest edge, stamped with the hub's clock now. BLE task: takes it once, for a GUARD_EVENT.
 void gatewayGuardEvent(bool guarding);
+// Hub, hardware thread: whether a weapon may be locked now. False from boot until the relay says the
+// player's phone has calibrated (COMBAT_FEEDBACK code 5 allows, 6 blocks; neither buzzes).
+bool gatewayWeaponSelectAllowed();
 bool gatewayTakeGuardEvent(uint8_t &state, uint32_t &event_ms);
 // Main-thread haptic PWM; -1 means leave the hardware's local pattern player alone.
 int gatewayFeedbackDuty();

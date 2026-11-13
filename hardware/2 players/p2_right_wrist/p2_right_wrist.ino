@@ -3227,6 +3227,13 @@ void runDetectionTick(float ax_g, float ay_g, float az_g, float gyroMag, unsigne
         WeaponType w = WEAPON_UNKNOWN;
         if (rightStable && lFresh && leftStable && tFresh)
             w = match;
+#ifdef CG_HARDWARE_GATEWAY
+        // Game build: no weapon until this player's phone has calibrated (the engine says so via
+        // the relay). Handling the phone before the headset goes on often matches a weapon pose.
+        // Treated as "no weapon", so any candidate lapses and the full hold starts once allowed.
+        if (!gatewayWeaponSelectAllowed())
+            w = WEAPON_UNKNOWN;
+#endif
 
         // Lock timer: the same weapon must hold for WEAPON_LOCK_HOLD_MS, but
         // unknown/stale/unstable/different readings shorter than

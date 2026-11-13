@@ -104,6 +104,8 @@ class GameStateTask:
     _logged_post_match: bool = field(default=False, init=False)
 
     _reset_floor: int = field(default=-1, init=False)
+    # player -> the WEAPON_SELECT_* state last sent to that player's relay (cleared when it reconnects).
+    _weapon_select_sent: dict[int, bool] = field(default_factory=dict, init=False)
     # player -> guard_entered_ts whose expiry was already logged/broadcast (once per guard).
     _guard_expiry_seen: dict[int, int] = field(default_factory=dict, init=False)
     # Per-player position warning window: (last warning time, suppressed count).
@@ -151,6 +153,8 @@ class GameStateTask:
                         self._position_floor[event.player_id] = monotonic_ms()
                 elif isinstance(event, LinkReset):
                     self._clock_anchors.pop((event.player_id, event.channel), None)
+                    if event.channel == _CHANNEL_ACTION:
+                        self._weapon_select_sent.pop(event.player_id, None)  # tell the new relay
                     if event.channel == _CHANNEL_POSITION:
                         self._position_drop_logs.pop(event.player_id, None)
                         self.presentation.ready[event.player_id] = False
@@ -495,11 +499,30 @@ class GameStateTask:
     def current_state_snapshot(self) -> StateSnapshot:
         return self.presentation.snapshot(self.state, self.rules, self.presence(), monotonic_ms())
 
+    async def _update_weapon_selection(self) -> None:
+        """Tells each connected relay whether its hub may lock a weapon: only once that player's
+        phone has calibrated (VISUALIZER_READY), so handling the phone before the headset goes on
+        cannot pick a weapon by accident. Without phones (require_visualizer_ready off), always."""
+        presence = self.presence()
+        for pid in (1, 2):
+            if not presence.get(str(pid), False):
+                continue
+            allowed = not self.require_visualizer_ready or self.presentation.ready[pid]
+            if self._weapon_select_sent.get(pid) == allowed:
+                continue
+            self._weapon_select_sent[pid] = allowed
+            logger.info("weapon_selection", player_id=pid, allowed=allowed)
+            await self.on_combat_feedback(pid, CombatFeedback(
+                timestamp=monotonic_ms(), player_id=pid,  # type: ignore[arg-type]
+                code=FeedbackCode.WEAPON_SELECT_ALLOWED if allowed else FeedbackCode.WEAPON_SELECT_BLOCKED,
+                intensity_pct=0, duration_ms=1, repeat_count=1))
+
     async def _update_presentation(self) -> None:
         now = monotonic_ms()
         changed = self.presentation.update(self.state, self.rules, self.presence(), now)
         if changed:
             await self._broadcast_match_state()
+        await self._update_weapon_selection()
         guard_dropped = False
         for pid, p in self.state.players.items():
             if (p.guard_state == GuardState.GUARDING and not self.rules.guard_active(p, now)

@@ -86,3 +86,8 @@ FeedbackCode:
     # Relay -> that player's hub, once per hub segment the classifier labels non-IDLE above the
     # confidence gate: the hub's only swing buzz (it no longer buzzes on its own accept).
     - { name: ACTION_CONFIRMED, wire: 4 }
+    # Engine -> relay -> hub, not a buzz (intensity 0): whether that player's hub may lock a weapon.
+    # ALLOWED once that player's phone has calibrated (VISUALIZER_READY), BLOCKED before/after; the
+    # relay replays the latest one to a reconnected hub. Hubs start BLOCKED. A lock already made stays.
+    - { name: WEAPON_SELECT_ALLOWED, wire: 5 }
+    - { name: WEAPON_SELECT_BLOCKED, wire: 6 }

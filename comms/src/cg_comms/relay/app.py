@@ -16,9 +16,10 @@ import structlog
 
 from cg_comms.config import RelaySettings, find_repo_root
 from cg_comms.logging_setup import configure_logging
+from cg_comms.messages.enums import FeedbackCode
 from cg_comms.messages.models import Action, CombatFeedback, WeaponChanged
 from cg_comms.relay.engine_link import EngineLinkClient
-from cg_comms.relay.session import Session, SessionConfig
+from cg_comms.relay.session import WEAPON_SELECTION_CODES, Session, SessionConfig
 from cg_comms.relay.tunnel import TunnelConfig, TunnelSupervisor
 from cg_comms.relay.ultra96 import Ultra96Client
 from cg_comms.relay.windowing import PlayerWindower
@@ -89,10 +90,21 @@ async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
     engine_url = f"{scheme}://{settings.engine_link.host}:{settings.engine_link.port}/relay/{settings.player_id}"
 
     session: Session | None = None
+    # The engine's latest WEAPON_SELECT_* for this player, replayed to every new hub session: a hub
+    # that reboots or reconnects starts blocked and must hear whether its phone has calibrated.
+    weapon_selection: CombatFeedback | None = None
 
     async def on_combat_feedback(feedback: CombatFeedback) -> None:
-        if session is not None:
-            session.queue_combat_feedback(feedback)
+        nonlocal weapon_selection
+        if feedback.code in WEAPON_SELECTION_CODES:
+            weapon_selection = feedback
+            logger.info("weapon_selection", player_id=settings.player_id,
+                        allowed=feedback.code is FeedbackCode.WEAPON_SELECT_ALLOWED)
+        if session is None:
+            return
+        if feedback.code in WEAPON_SELECTION_CODES and not session.streaming:
+            return  # the session sends the latest one itself when it starts streaming
+        session.queue_combat_feedback(feedback)
 
     engine_link = EngineLinkClient(
         url=engine_url,
@@ -143,6 +155,7 @@ async def run_relay(settings: RelaySettings, use_tunnel: bool) -> None:
                 ultra96=ultra96,
                 on_weapon_changed=on_weapon_changed,
                 on_action_result=on_action_result,
+                startup_feedback=lambda: weapon_selection,
             )
             try:
                 await session.run()

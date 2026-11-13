@@ -326,8 +326,10 @@ class _RelayHarness:
         )
 
         async def on_combat_feedback(feedback) -> None:
+            # As relay/app.py: through the session's queue, which only sends once streaming (the
+            # engine's weapon-selection gate arrives at connect, before the handshake finishes).
             if self._session is not None:
-                await self._session.send_combat_feedback(feedback)
+                self._session.queue_combat_feedback(feedback)
 
         self._engine_link = EngineLinkClient(
             url=self.engine_url, bearer_token=self.bearer_token, on_combat_feedback=on_combat_feedback

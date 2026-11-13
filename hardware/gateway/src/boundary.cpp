@@ -26,6 +26,8 @@ QueueHandle_t feedbackQueue;
 bool guardPending;
 uint8_t guardState;
 uint32_t guardMs;
+// Hub: weapon-selection gate from the engine (phone calibrated), BLE task -> hardware loop.
+bool weaponSelectAllowed;
 #if CG_GATEWAY_ROLE == 0 && CG_GATEWAY_EVENT_MODE
 GatewaySegmentQueue segments;
 portMUX_TYPE segmentMux = portMUX_INITIALIZER_UNLOCKED;
@@ -166,10 +168,28 @@ void gatewayReadFrame(cg_payload_sensor_frame_t &frame) {
 bool gatewayQueueFeedback(const uint8_t *payload) {
     cg_payload_combat_feedback_t f;
     memcpy(&f, payload, sizeof(f));
-    // Codes 0-3 combat outcomes, 4 ACTION_CONFIRMED (shared/enums/enums.yaml FeedbackCode).
+    // Codes 0-3 combat outcomes, 4 ACTION_CONFIRMED, 5/6 WEAPON_SELECT_ALLOWED/BLOCKED
+    // (shared/enums/enums.yaml FeedbackCode). 5/6 only set the weapon-selection gate, never buzz.
+    if (f.feedback_code == 5 || f.feedback_code == 6) {
+        bool allowed = f.feedback_code == 5;
+        portENTER_CRITICAL(&sampleMux);
+        bool changed = weaponSelectAllowed != allowed;
+        weaponSelectAllowed = allowed;
+        portEXIT_CRITICAL(&sampleMux);
+        if (changed)
+            Serial.printf("[setup] weapon selection %s\n", allowed ? "ALLOWED (phone calibrated)"
+                                                                  : "BLOCKED (phone not calibrated)");
+        return true;
+    }
     if (f.feedback_code > 4 || f.intensity_pct > 100 || !f.duration_ms ||
         f.duration_ms > 2000 || !f.repeat_count || f.repeat_count > 10) return false;
     return feedbackQueue && xQueueSend(feedbackQueue, &f, 0) == pdTRUE;
+}
+bool gatewayWeaponSelectAllowed() {
+    portENTER_CRITICAL(&sampleMux);
+    bool allowed = weaponSelectAllowed;
+    portEXIT_CRITICAL(&sampleMux);
+    return allowed;
 }
 void gatewayGuardEvent(bool guarding) {
     uint32_t now = millis();
